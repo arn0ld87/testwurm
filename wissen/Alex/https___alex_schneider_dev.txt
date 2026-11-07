@@ -1,0 +1,219 @@
+[Zum Inhalt springen](https://alex-schneider.dev/#main-content)
+
+SYSTEMINTEGRATION / DEVOPS / KI
+
+LEIPZIG
+
+Was ich baue  
+und betreibe\*
+=============================
+
+Ich bin Alex und mache meine Umschulung zum Fachinformatiker für Systemintegration in Leipzig. Auf meinen eigenen Servern betreibe ich Linux, Container und KI-Agenten. Hier zeige ich, was ich damit baue und was ich dabei lerne.
+
+[Arbeiten ansehen](https://alex-schneider.dev/#arbeiten)
+
+FIG. 01 / BILDMARKE STANDBILD
+
++ +
+
+                                            
+                                            
+                 .-=++\*\*\*\*++=-:.            
+            .-+#@@@@@@@@@@@@@@@@%\*=.        
+          -#@@@@@@@@@@@@@@@@@@@@@@@@#=      
+       .+%@@@@@@@@@@@@@@@@@@@@@@@@@@@@%-    
+      -%@@@@@@@@@@@%\*+=---=+#@@@@@@@@@@@=   
+     \*@@@@@@@@@@%=.          .+@@@@@@@@@%   
+    \*@@@@@@@@@%-               .#@@@@@%\*=   
+   =@@@@@@@@@+                   #%\*-.      
+   %@@@@@@@@+                               
+  :@@@@@@@@%                                
+  :@@@@@@@@\*                                
+  :@@@@@@@@\*                                
+  :@@@@@@@@\*                                
+  :@@@@@@@@%.                               
+  :@@@@@@@@@%=:...                          
+  :@@@@@@@@@@@@@@@%:                        
+  .%@@@@@@@@@@@@@@@-                        
+    :------------:.                         
+                                            
+                                            
+
+                                            
+                                            
+                                            
+                                            
+                                            
+                                            
+                                            
+                                            
+                                            
+                                            
+                                     ////   
+                                  ///////   
+                               //////////   
+                              ///////////   
+                             ////////////   
+                            /////////////   
+                           //////////////   
+                           //////////////   
+                           //////////////   
+                                            
+                                            
+                                            
+
+AS-BILDMARKE AUS 44 × 22 ZEICHEN
+
+Drehung starten
+
+LINUX, CONTAINER UND KI-AGENTEN AUF EIGENEN SERVERN FISI IN UMSCHULUNG · BFW LEIPZIG
+
+HAUPTPROJEKT
+
+FELDBERICHT · 07.08.2026
+
+### [Agora](https://alex-schneider.dev/blog/agora-mirofish-fork-local-first/)
+
+Viele Perspektiven. Nachvollziehbare Analyse.
+
+Dokumente, Wissensgraphen und simulierte Akteure werden zu einer evidenzorientierten Szenarioanalyse. Quellen bleiben sichtbar. Unsicherheit auch.
+
+*   Multi-Agenten
+*   GraphRAG
+*   Neo4j
+
+[Feldbericht lesen](https://alex-schneider.dev/blog/agora-mirofish-fork-local-first/)
+
+ANALYSEPFAD / SCHEMA ILLUSTRATION
+
+Quellen Wissensgraph Agenten Prüfung Bericht
+
+01 / Quellen
+
+Dokumente und Webseiten werden aufgenommen und strukturiert.
+
+1.  **01 / Quellen** Dokumente und Webseiten werden aufgenommen und strukturiert.
+2.  **02 / Wissensgraph** Neo4j speichert Entitäten, Beziehungen, Quellenfragmente und Embeddings.
+3.  **03 / Agenten** Aus dem Graph entstehen Stakeholder-Personas, die vor dem Lauf geprüft werden können. OASIS und CAMEL orchestrieren die Interaktionen der Agenten.
+4.  **04 / Prüfung** Der Report zerlegt Ergebnisse in Claims und prüft deren Evidenz.
+5.  **05 / Bericht** Der Report trennt Quellen, Simulationsergebnisse, Hypothesen und Datenlücken. Varianten lassen sich vergleichen, exportieren und später erneut untersuchen.
+
+Schematische Darstellung, keine Live-Daten.
+
+### WEITERE ARBEITEN · 6
+
+Alle KI Infrastruktur Web
+
+6 Projekte
+
+*   [02 Ein Linux-Krimi · Staffel 2 · Rechenwerk Ostwind Echtes Alpine Linux im Browser. Staffel 2: Du prüfst als Junior-Pentester die Server der Rechenwerk Ostwind GmbH, findest die Spuren eines Eindringlings und beweist mit selbst gesicherten Belegen, wer es war. Episode 0 bis 3 sind spielbar. v86Alpine Linuxxterm.jsReact 19](https://alex-schneider.dev/projekte/linux-krimi-staffel-2/)
+     Vorschau
+*   [03 Ein Linux-Krimi: Fall Kehrwoche Echtes Alpine Linux im Browser. Staffel 1: Alex ist im Urlaub, auf seinem Server räumt jemand auf. Erster Tag und acht Episoden; geprüft wird der Zustand des Systems, nicht der getippte Befehl. v86Alpine Linuxxterm.jsReact 19](https://alex-schneider.dev/projekte/terminal-missionen/)
+     Vorschau
+*   [04 Docker Compose Builder Ein visueller Generator für Compose-Stacks. Services auswählen, das YAML entsteht live und lässt sich sofort kopieren. AstroTypeScriptDocker ComposeUI Logic](https://alex-schneider.dev/projekte/compose-builder/)
+     Vorschau
+*   [05 Ticket-Routing mit KI-Agenten Classifier Workflow. Ein Agent-System analysiert eingehende Support-Tickets und leitet sie an die passende Fachabteilung weiter. Gemini APINode.jsExpressDocker](https://alex-schneider.dev/projekte/ticket-routing/)
+     Vorschau
+*   [06 CodeHack – C# lernen als Spiel Ein gamifiziertes C#-Lernspiel mit 45 Aufgaben, Boss-Battles, XP-System und Cosmetics-Shop. Direkt im Browser, komplett kostenlos.](https://alex-schneider.dev/projekte/csharp-trainer/)
+     Vorschau
+*   [07 Windows Terminal Missionen – CMD & PowerShell lernen Lerne Windows CMD und PowerShell spielerisch mit interaktiven Terminal-Simulationen. Von Basics bis Expert-Level.](https://alex-schneider.dev/projekte/windows-terminal-missionen/)
+     Vorschau
+
+Keine Projekte in dieser Kategorie.
+
+Wähle eine andere Kategorie oder zeige alle Projekte.
+
+Alle anzeigen
+
+[Alle Projekte ansehen](https://alex-schneider.dev/projekte/)
+
+02 / MEIN ANSATZ
+
+Womit ich mich beschäftige
+--------------------------
+
+Mich interessiert, was unter der Oberfläche passiert: wie Komponenten zusammenspielen und ob ein System im Alltag trägt.
+
+[Auf GitHub ansehen](https://github.com/arn0ld87)
+
+1.  [\[01\] Linux & Server Härtung, Netzwerk und Betrieb auf eigenem VPS — reproduzierbar dokumentiert.](https://alex-schneider.dev/kompetenzen/)
+    
+2.  [\[02\] Container & DevOps Docker, Compose und Traefik. CI/CD-Pipelines, die ohne Überraschungen deployen.](https://alex-schneider.dev/leistungen/)
+    
+3.  [\[03\] Automatisierung Ansible-Rollen und Skripte — wiederkehrende Arbeit einmal sauber lösen.](https://alex-schneider.dev/blog/)
+    
+4.  [\[04\] KI & Tooling Gemini-gestützte Werkzeuge und Agenten, praxisnah in echte Workflows gebracht.](https://alex-schneider.dev/ki-agenten-lab/)
+    
+
+\>\_ Interaktiv
+
+Ein Linux-Krimi · Fall Kehrwoche
+--------------------------------
+
+Echtes Alpine Linux im Browser, ohne Installation und ohne Konto. Alex ist im Urlaub, auf seinem Server räumt jemand auf. Du bist sein Azubi am ersten Tag: Episoden 0 bis 8.
+
+[Fall öffnen](https://alex-schneider.dev/projekte/terminal-missionen/)
+
+Episode 2 · Skript startet nicht
+
+azubi@alex-schneider:~$ ls -l /srv/www/bin/deploy.sh
+
+\-rw-r--r-- 1 azubi azubi 214 /srv/www/bin/deploy.sh
+
+azubi@alex-schneider:~$ chmod u+x /srv/www/bin/deploy.sh
+
+Ausführungsrecht zurück
+
+azubi@alex-schneider:~$ ▋
+
+Alle Notizen AI-Coding Claude Code CLI Docker FISI
+
+Logbuch durchsuchen 
+
+8 Notizen
+
+*   [07.08.26 500 Stunden Agora: evidenzorientierte Multi-Agenten-Analyse Woher Agora kommt, was ich seit dem Fork von MiroFish-Offline selbst gebaut habe, warum Evidence-Gating wichtiger wurde als die nächste Agentenfunktion und was im Oktober 2026 noch nicht trägt. Agora · 14 Min.](https://alex-schneider.dev/blog/agora-mirofish-fork-local-first/)
+     Vorschau
+*   [06.07.26 Traefik v3 hinter Docker: HTTPS & Auto-Rollback Wie ich alexle135.de mit Traefik v3, Let's Encrypt, Astro SSR und getrennten CSP-Middlewares für die WebContainer-Terminal-Missionen produktiv betreibe – inklusive Auto-Rollback über den Healthgate-Smoke. Traefik · 9 Min. Lesezeit](https://alex-schneider.dev/blog/traefik-v3-docker-reverse-proxy/)
+     Vorschau
+*   [27.06.26 Claude Code sicher im DevContainer laufen lassen Einen Coding-Agenten unbeaufsichtigt durchlaufen zu lassen ist verlockend und riskant zugleich. Anthropics Referenz-DevContainer sperrt den Agenten in einen Container mit Outbound-Firewall. So baust du das Setup nach. Claude Code · 5 Min. Lesezeit](https://alex-schneider.dev/blog/claude-code-im-devcontainer-absichern/)
+     Vorschau
+*   [18.06.26 Qwen3-Coder lokal: Coding-Agent ohne API-Rechnung Ein lokales MoE-Modell mit 3B aktiven Parametern reicht für echtes agentisches Coding. Hier der komplette Pfad: Qwen3-Coder über llama-server starten, OpenAI-kompatiblen Endpunkt freigeben und aider drauf zeigen lassen. Local-LLM · 4 Min. Lesezeit](https://alex-schneider.dev/blog/qwen3-coder-lokal-coding-agent/)
+     Vorschau
+*   [12.06.26 Pangolin statt Cloudflare Tunnel: den eigenen Ingress-Pfad zurückholen Cloudflare Tunnel ist bequem, aber dein Traffic läuft komplett über fremde Infrastruktur. Pangolin macht deinen eigenen VPS zum Eingangstor. Hier der komplette Aufbau mit Installer, Traefik und dem Newt-Connector. Self-Hosting · 5 Min. Lesezeit](https://alex-schneider.dev/blog/pangolin-statt-cloudflare-tunnel/)
+     Vorschau
+*   [03.06.26 Jujutsu (jj): das Git-kompatible VCS, zu dem Leute wirklich wechseln Jujutsu legt sich über dein bestehendes Git-Repo und wirft Index und Stash raus. Alles ist ein Commit, nichts geht verloren. Ein praktischer Einstieg mit den Befehlen, die du am ersten Tag brauchst. Git · 4 Min. Lesezeit](https://alex-schneider.dev/blog/jujutsu-jj-statt-git/)
+     Vorschau
+*   [30.05.26 Das Terminal 2026: atuin, zoxide, yazi, lazygit und uv im Alltag Die Rust-Generation der CLI-Tools ist über bat und exa hinaus. Sechs Werkzeuge, die ich täglich nutze, mit den Shell-Init-Zeilen, die du wirklich brauchst, und ohne die übliche Listicle-Beliebigkeit. Linux · 5 Min. Lesezeit](https://alex-schneider.dev/blog/modernes-terminal-2026-cli-tools/)
+     Vorschau
+*   [25.05.26 Eigene Claude-Code-Skills bauen: SKILL.md & Bundling Skills sind keine Tricks, sondern strukturierte Verhaltensregeln für den Agenten. Ich zeige dir am Beispiel eines Writing-Style-Skills, wie du SKILL.md, Bundling und Plugin-Namespacing aufbaust — und wo die Stolpersteine liegen. Claude Code · 7 Min. Lesezeit](https://alex-schneider.dev/blog/eigene-claude-code-skills-bauen-bundling/)
+     Vorschau
+
+Keine passende Notiz.
+
+Probier einen anderen Suchbegriff oder setze die Filter zurück.
+
+Filter zurücksetzen
+
+[Alle Beiträge im Blog](https://alex-schneider.dev/blog/)
+
+04 / KONTAKT
+
+Schreib mir eine Nachricht
+--------------------------
+
+Infrastruktur, Automatisierung oder ein KI-Tooling-Projekt? Kurze Nachricht genügt — Antwort folgt in der Regel werktags innerhalb eines Tages.
+
+Name
+
+E-Mail
+
+Nachricht
+
+Senden
+
+Schließen
+
+Wir messen die Nutzung dieser Seite mit Google Analytics: ohne Zustimmung nur cookielos und ohne Wiedererkennung, mit Zustimmung über Cookies. Deine Daten werden nicht für Werbung genutzt. [Datenschutzerklärung](https://alex-schneider.dev/legal/datenschutz/)
+
+Ablehnen Akzeptieren

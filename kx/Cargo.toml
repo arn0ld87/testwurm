@@ -8,6 +8,8 @@ members = [
     "crates/kx-agent",
     "crates/kx-server",
     "crates/kx-cli",
+    "crates/kx-scanner",
+    "crates/kx-exploit",
 ]
 
 [workspace.package]
@@ -22,6 +24,8 @@ kx-core = { path = "crates/kx-core" }
 kx-win = { path = "crates/kx-win" }
 kx-posix = { path = "crates/kx-posix" }
 kx-tls = { path = "crates/kx-tls" }
+kx-scanner = { path = "crates/kx-scanner" }
+kx-exploit = { path = "crates/kx-exploit" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -40,12 +44,12 @@ rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 zeroize = "1"
 thiserror = "1"
-base64 = "0.22"
+base64 = { version = "0.22", features = ["alloc"] }
 libc = "0.2"
 rustls = { version = "0.23.27", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-pemfile = "2"
 rustls-pki-types = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util", "process"] }
 axum = "0.8"
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower = "0.5"

@@ -7,17 +7,9 @@
 //! Alles hier ist Plattformcode-frei: Windows- und POSIX-Spezifika stecken in
 //! `platform::PlatformHooks`, implementiert in `kx-win` und `kx-posix`.
 
-pub mod beacon;
-pub mod crypto;
-pub mod engine;
-pub mod entropy;
 pub mod error;
 pub mod format;
-pub mod hostkey;
-pub mod journal;
-pub mod manifest;
-pub mod platform;
-pub mod scan;
+// pub mod hostkey;  // TODO: ml-kem 0.2.1-API-Anpassungen nötig, vorerst deaktiviert
 pub mod util;
 
 pub use error::{Error, Result};

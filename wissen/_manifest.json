@@ -1,0 +1,147 @@
+[
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_27_Kali-Linux-Werkzeug-Oekosystem-und-Tool-Chaining.md",
+    "bytes": 12764
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_26_Wiper-Mechanik-vs-Ransomware-Destruktive-Payloads.md",
+    "bytes": 9062
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_25_Kubernetes-und-Cloud-Native-Ransomware.md",
+    "bytes": 9395
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_24_Enterprise-Storage-und-SAN-NAS-API-Targeting.md",
+    "bytes": 11064
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_23_Anti-Forensik-MFT-Manipulation-und-Log-Wiping.md",
+    "bytes": 11821
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_22_OT-ICS-und-SCADA-Targeting-Kritische-Infrastrukturen.md",
+    "bytes": 12504
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_21_C2-Infrastruktur-und-Exfiltrations-Pipelines.md",
+    "bytes": 13547
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_20_EDR-Hook-Evasion-und-Loader-Architektur.md",
+    "bytes": 18604
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_07_Quellen_-Methodik-und-offene-Punkte.md",
+    "bytes": 12843
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_00_Übersicht-dieser-Wissenssammlung.md",
+    "bytes": 10265
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_19_Krypto-Forensik-Key-Recovery-und-Decryptor-Bau.md",
+    "bytes": 8313
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_18_Post-Quantum-Kryptographie-und-Hybride-KEM.md",
+    "bytes": 7347
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_17_Cloud-und-SaaS-Ransomware-Multi-Tier-Extortion.md",
+    "bytes": 9677
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_16_Active-Directory-Intrusion-und-Domaenen-Deployment.md",
+    "bytes": 10667
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_15_Linux-und-ESXi-Implementierungspfad-POSIX-Mechanik.md",
+    "bytes": 10886
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_12_Testharness_-Messgrößen-und-Gegenprobe.md",
+    "bytes": 7930
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_11_C2-und-Steuerungsapp-technisch.md",
+    "bytes": 7807
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_10_Sprachwahl_-Build-Hygiene_-Evasion-Code.md",
+    "bytes": 7112
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_09_Krypto-Implementierung-und-Datenformate.md",
+    "bytes": 9036
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_08_Windows-API-in-der-Implementierung.md",
+    "bytes": 12550
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_06_Meilensteine_-Akteure-und-Einzelfälle.md",
+    "bytes": 8769
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_05_Abwehr_-Incident-Response-und-Rechtslage.md",
+    "bytes": 10322
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_04_Kill-Chain_-MITRE-ATT_CK_-Evasion-und-Detektion.md",
+    "bytes": 8595
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_03_Technische-Mechanik-und-Krypto-Design.md",
+    "bytes": 8733
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_02_Angriffsökonomie_-RaaS-und-Bedingungslage.md",
+    "bytes": 7528
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware_01_Historie-und-Entwicklungslinien.md",
+    "bytes": 6856
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware__13__Pflichtenheft_Teil_1__Architektur_und_Anford.md",
+    "bytes": 18121
+  },
+  {
+    "kb": "HAcking",
+    "file": "Ransomware__14__Pflichtenheft_Teil_2__Meilensteine_Risiken_E.md",
+    "bytes": 10440
+  },
+  {
+    "kb": "Alex",
+    "file": "https___alex_schneider_dev.txt",
+    "bytes": 11296
+  }
+]

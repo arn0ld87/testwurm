@@ -1,17 +1,25 @@
 use crate::Result;
-use base64::Engine as _;
 use sha2::{Digest, Sha256};
 
-pub const B64: base64::engine::general_purpose::STANDARD =
-    base64::engine::general_purpose::STANDARD;
-
 pub fn b64_encode(bytes: &[u8]) -> String {
-    B64.encode(bytes)
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 pub fn b64_decode(text: &str) -> Result<Vec<u8>> {
-    B64.decode(text.trim().as_bytes())
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(text.trim().as_bytes())
         .map_err(|e| crate::Error::State(format!("base64: {e}")))
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 pub fn hex(bytes: &[u8]) -> String {
@@ -29,10 +37,10 @@ pub fn hex_decode(text: &str) -> Result<Vec<u8>> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len() / 2);
     for pair in bytes.chunks(2) {
-        let hi = (pair[0] as u8).to_digit(16).ok_or_else(|| {
+        let hi = hex_val(pair[0]).ok_or_else(|| {
             crate::Error::State(format!("hex: ungueltiges Zeichen {}", pair[0] as char))
         })?;
-        let lo = (pair[1] as u8).to_digit(16).ok_or_else(|| {
+        let lo = hex_val(pair[1]).ok_or_else(|| {
             crate::Error::State(format!("hex: ungueltiges Zeichen {}", pair[1] as char))
         })?;
         out.push((hi * 16 + lo) as u8);

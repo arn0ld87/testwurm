@@ -1,0 +1,16 @@
+[package]
+name = "kx-win"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Windows-Post-Exploitation: Secrets-Extraktion und Persistence"
+
+[dependencies]
+kx-core = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
