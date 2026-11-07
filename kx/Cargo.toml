@@ -1,0 +1,75 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kx-core",
+    "crates/kx-win",
+    "crates/kx-posix",
+    "crates/kx-tls",
+    "crates/kx-agent",
+    "crates/kx-server",
+    "crates/kx-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+authors = ["Red Team Reference"]
+
+[workspace.dependencies]
+kx-core = { path = "crates/kx-core" }
+kx-win = { path = "crates/kx-win" }
+kx-posix = { path = "crates/kx-posix" }
+kx-tls = { path = "crates/kx-tls" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hkdf = "0.12"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+# ml-kem 0.2.1: drei Flags (default=std, deterministic, zeroize), kein `rng`.
+# zeroize an: DecapsulationKey hat Drop/ZeroizeOnDrop nur mit diesem Feature.
+# 0.3.x waere aktueller, hebt aber rand_core auf 0.10 (bricht x25519-dalek 2 und
+# rand 0.8) und hebt die MSRV auf 1.87. API ist in 0.3 grundlegend anders
+# (kem::Kem, ExpandedKeyEncoding), darum ist die Version hier fest genagelt.
+ml-kem = { version = "=0.2.1", default-features = false, features = ["std", "zeroize"] }
+rand = "0.8"
+rand_core = { version = "0.6", features = ["getrandom"] }
+zeroize = "1"
+thiserror = "1"
+base64 = "0.22"
+libc = "0.2"
+rustls = { version = "0.23.27", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pemfile = "2"
+rustls-pki-types = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+axum = "0.8"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+rcgen = { version = "0.13", features = ["x509-parser"] }
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+# panic = "unwind" bleibt: der Encoder faengt pro Datei einen Panic ab, damit ein
+# einzelner Fehler den gesamten Lauf nicht beendet. Abschalten erhoert das Risiko R1/R3.
+panic = "unwind"
+strip = "debuginfo"
+debug = false
+
+# Tests laufen gegen das dev-Profil; --release wuerde Debug-Asserts entfernen und
+# Krypto-Grenzfaelle stillschweigend durchlassen.
+[profile.dev]
+opt-level = 1

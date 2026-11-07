@@ -1,0 +1,13 @@
+# Build-Hygiene (Band 10 / Modul M1b)
+target/
+**/*.rs.bk
+*.pdb
+*.dSYM/
+state/
+*.keybundle.json
+*.lock.json
+.env
+
+# Keine Quelltextpfade ins Binary: --remap-pathlines wird in scripts/build.* gesetzt.
+# Crate-Versionslock ist Pflicht, damit Decryptor und Encoder dasselbe Format erzeugen.
+Cargo.lock

@@ -1,0 +1,13 @@
+# Build-Hygiene: Pfade aus dem Binary entfernen (Band 10, M1b).
+# Windows-Target nur aktivieren, wenn der Toolchain-Eintrag installiert ist:
+#   rustup target add x86_64-pc-windows-gnu
+# Crate-Registry-Offline-Modus fuer Air-gapped-Builds: cargo fetch --locked vorher.
+[build]
+# rustflags werden in scripts/build.sh / build.ps1 gesetzt, damit sie nicht
+# unbeabsichtigt auch fuer Test-Builds gelten.
+[alias]
+kx-agent = "build -p kx-agent --release"
+kx-agent-sys = "build -p kx-agent --release --features syscalls"
+kx-server = "build -p kx-server --release"
+kxctl = "build -p kx-cli --release"
+kx-test = "test -p kx-core --release"
