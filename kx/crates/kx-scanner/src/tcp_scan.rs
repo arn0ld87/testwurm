@@ -28,10 +28,12 @@ pub const COMMON_PORTS: &[u16] = &[
     22,   // SSH
     80,   // HTTP
     135,  // RPC
+    445,  // SMB (Werm-Propagation)
     443,  // HTTPS
     1433, // SQL Server
     1521, // Oracle
     3306, // MySQL
+    3389, // RDP
     5432, // PostgreSQL
     5900, // VNC
     8080, // HTTP-Proxy

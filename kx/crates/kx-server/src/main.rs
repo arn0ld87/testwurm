@@ -86,6 +86,7 @@ struct SecretReq {
 
 /// Registriert einen Host (id = IP für stabile Updates).
 async fn register(
+    _auth: auth::Authenticated,
     State(st): State<AppState>,
     Json(req): Json<RegisterReq>,
 ) -> impl IntoResponse {
@@ -106,7 +107,11 @@ async fn register(
 }
 
 /// Aktualisiert das Last-Seen eines Hosts.
-async fn heartbeat(State(st): State<AppState>, Json(req): Json<HeartbeatReq>) -> impl IntoResponse {
+async fn heartbeat(
+    _auth: auth::Authenticated,
+    State(st): State<AppState>,
+    Json(req): Json<HeartbeatReq>,
+) -> impl IntoResponse {
     let hosts = match st.db.list_hosts() {
         Ok(h) => h,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -126,6 +131,7 @@ async fn heartbeat(State(st): State<AppState>, Json(req): Json<HeartbeatReq>) ->
 
 /// Speichert ein hochgeladenes Secret.
 async fn upload_secret(
+    _auth: auth::Authenticated,
     State(st): State<AppState>,
     Json(req): Json<SecretReq>,
 ) -> impl IntoResponse {
@@ -145,7 +151,7 @@ async fn upload_secret(
 }
 
 /// Liefert alle Hosts als JSON.
-async fn list_hosts(State(st): State<AppState>) -> impl IntoResponse {
+async fn list_hosts(_auth: auth::Authenticated, State(st): State<AppState>) -> impl IntoResponse {
     match st.db.list_hosts() {
         Ok(h) => Json(h).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -153,7 +159,7 @@ async fn list_hosts(State(st): State<AppState>) -> impl IntoResponse {
 }
 
 /// Liefert alle Secrets als JSON.
-async fn list_secrets(State(st): State<AppState>) -> impl IntoResponse {
+async fn list_secrets(_auth: auth::Authenticated, State(st): State<AppState>) -> impl IntoResponse {
     match st.db.list_secrets() {
         Ok(s) => Json(s).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -161,7 +167,7 @@ async fn list_secrets(State(st): State<AppState>) -> impl IntoResponse {
 }
 
 /// Liefert alle Tasks als JSON.
-async fn list_tasks(State(st): State<AppState>) -> impl IntoResponse {
+async fn list_tasks(_auth: auth::Authenticated, State(st): State<AppState>) -> impl IntoResponse {
     match st.db.list_tasks() {
         Ok(t) => Json(t).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),

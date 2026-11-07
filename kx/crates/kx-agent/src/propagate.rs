@@ -49,9 +49,10 @@ pub async fn run_propagation(
     discovered: &[DiscoveredHost],
     relay_script: &str,
     _wmi_script: &str,
+    source_host: &str,
 ) -> PropagationResults {
     let mut results = PropagationResults {
-        source_host: String::new(),
+        source_host: source_host.to_string(),
         new_hosts: Vec::new(),
         new_secrets: Vec::new(),
     };
