@@ -9,3 +9,7 @@ description = "POSIX-Post-Exploitation: Secrets-Extraktion und Persistence"
 
 [dependencies]
 kx-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }

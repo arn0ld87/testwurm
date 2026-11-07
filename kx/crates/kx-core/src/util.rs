@@ -253,9 +253,9 @@ mod tests {
     #[test]
     fn rfc3339_roundtrip() {
         let s = rfc3339_utc(1_762_483_200);
-        assert_eq!(s, "2025-11-07T08:00:00Z", "got {s}");
+        assert_eq!(s, "2025-11-07T02:40:00Z", "got {s}");
         assert_eq!(parse_rfc3339_secs(&s), Some(1_762_483_200));
-        assert_eq!(parse_rfc3339_secs("2025-11-07T09:00:00+01:00"), Some(1_762_483_200));
+        assert_eq!(parse_rfc3339_secs("2025-11-07T03:40:00+01:00"), Some(1_762_483_200));
     }
 
     #[test]

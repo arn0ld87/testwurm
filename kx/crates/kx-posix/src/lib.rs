@@ -1,3 +1,17 @@
-//! Kx-Posix: POSIX-Post-Exploitation (Secrets + Persistence).
+//! kx-posix: POSIX-Post-Exploitation für autorisierte Penetrationstests.
 //!
-//! Platzhalter — Implementierung folgt in Phase 6.
+//! Enthält Module zur Secrets-Extraktion (/etc/shadow, SSH-Keys, AWS) und
+//! Persistence (systemd-Dienste, Cron-Jobs) auf Linux/Unix-Systemen.
+//!
+//! Alle Funktionen sind cross-platform kompilierbar; die echte Logik läuft
+//! nur auf Unix-Plattformen (via `cfg(unix)`).
+
+pub mod error;
+pub mod persist;
+pub mod secrets;
+
+pub use error::PosixError;
+pub use persist::{install_systemd_service, write_cron_persistence};
+pub use secrets::{
+    extract_aws_credentials, extract_shadow_hashes, extract_ssh_keys, Secret,
+};

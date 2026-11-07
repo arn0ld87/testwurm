@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use rcgen::{Certificate, CertificateParams, DistinguishedName, KeyPair};
+use rcgen::{CertificateParams, KeyPair};
 use rustls::server::ServerConfig;
 use rustls::client::ClientConfig;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
@@ -36,12 +36,11 @@ pub struct ServerTls {
 /// Erzeugt ein selbstsigniertes Zertifikat für die angegebene CN und
 /// liefert eine rustls-ServerConfig sowie die PEM-Daten.
 pub fn generate_server_tls(cn: &str) -> Result<ServerTls, TlsError> {
-    let mut params = CertificateParams::new(vec![cn.to_string()]);
-    // 10 Jahre gültig für langfristige C2-Deployment.
-    params.not_after = time::OffsetDateTime::now_utc()
-        + time::Duration::days(3650);
-    let key_pair = KeyPair::generate_for(&rcgen::KeyAlgorithm::RSA2048)
+    let mut params = CertificateParams::new(vec![cn.to_string()])
         .map_err(|e| TlsError::CertGen(e.to_string()))?;
+    // 10 Jahre gültig für langfristige C2-Deployment.
+    params.not_after = time::OffsetDateTime::now_utc() + time::Duration::days(3650);
+    let key_pair = KeyPair::generate().map_err(|e| TlsError::CertGen(e.to_string()))?;
     let cert = params
         .self_signed(&key_pair)
         .map_err(|e| TlsError::CertGen(e.to_string()))?;
@@ -67,8 +66,9 @@ pub fn generate_server_tls(cn: &str) -> Result<ServerTls, TlsError> {
 /// Client-TLS-Config, die dem selbstsignierten Server-Zertifikat vertraut.
 /// `cert_pem` muss das PEM des Servers sein.
 pub fn client_config_trusting(cert_pem: &[u8]) -> Result<Arc<ClientConfig>, TlsError> {
-    let root_store = rustls::RootCertStore::empty();
-    let certs = rustls_pemfile::certs(&mut cert_pem.as_slice())
+    let mut root_store = rustls::RootCertStore::empty();
+    let mut reader = std::io::BufReader::new(std::io::Cursor::new(cert_pem));
+    let certs = rustls_pemfile::certs(&mut reader)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| TlsError::PemLoad(e.to_string()))?;
     for c in certs {

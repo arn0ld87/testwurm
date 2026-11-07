@@ -12,5 +12,6 @@ kx-core = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 rustls-pki-types = { workspace = true }
+rcgen = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
