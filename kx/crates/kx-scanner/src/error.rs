@@ -15,4 +15,7 @@ pub enum ScanError {
     /// Zeitüberschreitung bei der Verbindung.
     #[error("Zeitüberschreitung: {0}")]
     Timeout(String),
+    /// Die Funktion ist auf dieser Plattform nicht verfügbar.
+    #[error("Nicht unterstützt: {0}")]
+    Unsupported(String),
 }
