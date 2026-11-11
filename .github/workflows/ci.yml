@@ -1,0 +1,109 @@
+name: CI
+
+# Gate für den Rust-Workspace unter kx/.
+#
+# Zwei Jobs:
+#   build  — baut und testet auf macOS und Linux (die Projektregel: der
+#            Workspace muss auf beiden Plattformen bauen)
+#   smoke  — startet den C2-Server und prüft die Authentifizierung am laufenden
+#            System. Dieser Job fängt genau die Defekte, die ein reiner
+#            Testlauf nicht sieht: ISSUE-1 (Start panic) und ISSUE-12 (offene API).
+#
+# Bewusst KEIN fmt- und KEIN clippy-Gate: `cargo fmt --check` meldet derzeit 72
+# Formatabweichungen und clippy einige Warnungen. Beides zu erzwingen würde
+# einen großen, sachfremden Reformat-Commit erzwingen. Beides gehört als
+# eigener Arbeitsstrang, nicht in diesen PR.
+
+on:
+  push:
+    branches:
+      - main
+      - 'feat/**'
+      - 'fix/**'
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: build-and-test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: kx
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust installieren
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Abhängigkeiten cachen
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kx
+
+      - name: Bauen
+        run: cargo build --workspace --all-targets
+
+      - name: Testen
+        run: cargo test --workspace
+
+  smoke:
+    name: server-smoke-test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kx
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust installieren
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Abhängigkeiten cachen
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kx
+
+      - name: Release-Build des Servers
+        run: cargo build --release -p kx-server
+
+      - name: Server starten und die API prüfen
+        run: |
+          set -euo pipefail
+
+          ./target/release/kx-server \
+            --host 127.0.0.1 --port 18443 --db /tmp/kx-ci.db --token ci-token &
+          SRV=$!
+          trap 'kill "$SRV" 2>/dev/null || true' EXIT
+
+          # Auf den Listener warten, statt blind zu schlafen.
+          for _ in $(seq 1 30); do
+            if curl -sk -o /dev/null https://127.0.0.1:18443/; then break; fi
+            sleep 1
+          done
+
+          code_ohne_token=$(curl -sk -o /dev/null -w '%{http_code}' \
+            https://127.0.0.1:18443/api/hosts)
+          code_falscher_token=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -H 'Authorization: Bearer falsch' https://127.0.0.1:18443/api/hosts)
+          code_richtiger_token=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -H 'Authorization: Bearer ci-token' https://127.0.0.1:18443/api/hosts)
+          code_unbekannter_pfad=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -H 'Authorization: Bearer ci-token' https://127.0.0.1:18443/gibtsnicht)
+
+          echo "GET /api/hosts ohne Token:     ${code_ohne_token} (erwartet 401)"
+          echo "GET /api/hosts falscher Token:  ${code_falscher_token} (erwartet 401)"
+          echo "GET /api/hosts richtiger Token:  ${code_richtiger_token} (erwartet 200)"
+          echo "GET /gibtsnicht:                ${code_unbekannter_pfad} (erwartet 404)"
+
+          test "$code_ohne_token" = 401
+          test "$code_falscher_token" = 401
+          test "$code_richtiger_token" = 200
+          test "$code_unbekannter_pfad" = 404
