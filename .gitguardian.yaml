@@ -1,0 +1,19 @@
+# GitGuardian-Konfiguration für dieses Repository.
+#
+# kx/crates/kx-core/src/c2.rs ist das Wire-Vertrags-Modul des C2-Protokolls.
+# Es enthält ausschließlich Typdefinitionen, Endpunktpfad-Konstanten und
+# Test-Fixtures für das JSON-Format — kein Laufzeitcode, keine
+# Konfigurationswerte, keine echten Credentials.
+#
+# GitGuardian hat die Passwortwerte in den Test-Fixtures als Secrets
+# gemeldet, weil sie die Form echter Hashes haben (ein 32-stelliger
+# Hex-Wert bzw. ein Default-Passwort). Sie sind synthetische Platzhalter,
+# es ist nichts zu rotieren. Der Pfad wird deshalb ignoriert, statt die
+# Werte zu verbiegen — in einer Datei ohne Laufzeitcode gibt es nichts
+# zu schützen, und der Vertrag soll lesbar bleiben.
+#
+# Der Ignore gilt nur für genau diese Datei. Für kx-server, kx-agent,
+# kx-cli, kx-win und kx-posix läuft die Erkennung uneingeschränkt.
+ignore:
+  paths:
+    - "kx/crates/kx-core/src/c2.rs"
