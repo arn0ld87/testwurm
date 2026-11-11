@@ -1,9 +1,13 @@
 //! HTTP-Client für die kx-server-API mit TLS und Bearer-Auth.
+//!
+//! Die Nachrichtentypen stammen aus `kx_core::c2` — der Client liest genau die
+//! Struktur, die der Server liefert.
 
 use std::io::Write;
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use kx_core::c2::{ExfiltratedSecret, Host, Task, PATH_HOSTS, PATH_SECRETS, PATH_TASKS};
+use serde::Deserialize;
 use thiserror::Error;
 use ureq::Agent;
 
@@ -22,41 +26,6 @@ pub enum ApiError {
     /// Datei-I/O-Fehler.
     #[error("Datei-I/O-Fehler: {0}")]
     Io(String),
-}
-
-/// Registrierter Host (entspricht dem Server-JSON).
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Host {
-    pub id: String,
-    pub ip: String,
-    pub hostname: String,
-    pub os: String,
-    pub status: String,
-    pub first_seen: String,
-    pub last_seen: String,
-}
-
-/// Erbeutetes Secret (entspricht dem Server-JSON).
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Secret {
-    pub id: String,
-    pub host_id: String,
-    pub cred_type: String,
-    pub username: String,
-    pub password: String,
-    pub source: String,
-    pub collected_at: String,
-}
-
-/// Task (entspricht dem Server-JSON).
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Task {
-    pub id: String,
-    pub host_id: String,
-    pub command: String,
-    pub status: String,
-    pub output: Option<String>,
-    pub created_at: String,
 }
 
 /// API-Client mit ureq-Agent und Auth-Token.
@@ -83,17 +52,29 @@ impl Client {
 
     /// Liefert alle Hosts.
     pub async fn hosts(&self) -> Result<Vec<Host>, ApiError> {
-        get_json(&self.agent, &format!("{}/api/hosts", self.base_url), &self.token)
+        get_json(
+            &self.agent,
+            &format!("{}{PATH_HOSTS}", self.base_url),
+            &self.token,
+        )
     }
 
-    /// Liefert alle Secrets.
-    pub async fn secrets(&self) -> Result<Vec<Secret>, ApiError> {
-        get_json(&self.agent, &format!("{}/api/secrets", self.base_url), &self.token)
+    /// Liefert alle exfiltrierten Secrets.
+    pub async fn secrets(&self) -> Result<Vec<ExfiltratedSecret>, ApiError> {
+        get_json(
+            &self.agent,
+            &format!("{}{PATH_SECRETS}", self.base_url),
+            &self.token,
+        )
     }
 
     /// Liefert alle Tasks.
     pub async fn tasks(&self) -> Result<Vec<Task>, ApiError> {
-        get_json(&self.agent, &format!("{}/api/tasks", self.base_url), &self.token)
+        get_json(
+            &self.agent,
+            &format!("{}{PATH_TASKS}", self.base_url),
+            &self.token,
+        )
     }
 }
 
@@ -115,7 +96,7 @@ fn get_json<T: for<'de> Deserialize<'de>>(
 }
 
 /// Exportiert Secrets als JSON oder CSV.
-pub fn export(secrets: &[Secret], path: &Path, format: &str) -> Result<(), ApiError> {
+pub fn export(secrets: &[ExfiltratedSecret], path: &Path, format: &str) -> Result<(), ApiError> {
     let mut file = std::fs::File::create(path).map_err(|e| ApiError::Io(e.to_string()))?;
     match format {
         "csv" => {
@@ -144,7 +125,7 @@ mod tests {
 
     #[test]
     fn export_writes_csv() {
-        let secrets = vec![Secret {
+        let secrets = vec![ExfiltratedSecret {
             id: "1".into(),
             host_id: "h1".into(),
             cred_type: "password".into(),
@@ -159,5 +140,38 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("admin"));
         std::fs::remove_file(path).ok();
+    }
+
+    /// Der Regressionstest für den ausgelieferten Defekt: der Client muss das
+    /// Server-JSON lesen können. Vorher stand hier kein Test — der CLI-Typ
+    /// erwartete `output`, der Server sendete `result`, und der Fehler fiel
+    /// niemandem auf, weil `output` optional war.
+    #[test]
+    fn cli_reads_the_task_result_from_server_json() {
+        let json = r#"[{"id":"t-1","host_id":"10.0.0.5","command":"whoami","status":"done",
+            "result":"nt authority\\system","created_at":"2026-11-11T00:06:00Z"}]"#;
+        let tasks: Vec<Task> = serde_json::from_str(json).expect("Server-JSON lesbar");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].result, "nt authority\\system");
+    }
+
+    /// Und derselbe Weg für Hosts und Secrets — die beiden Typen, die vorher
+    /// zwar passen, aber an zwei Stellen getrennt gepflegt wurden.
+    #[test]
+    fn cli_reads_hosts_and_secrets_from_server_json() {
+        let hosts_json = r#"[{"host_id":"10.0.0.5","ip":"10.0.0.5","hostname":"target",
+            "os":"Windows","status":"compromised","first_seen":"2026-11-11T00:00:00Z",
+            "last_seen":"2026-11-11T00:05:00Z"}]"#;
+        let hosts: Vec<Host> = serde_json::from_str(hosts_json).expect("Server-JSON lesbar");
+        assert_eq!(hosts[0].host_id, "10.0.0.5");
+        assert_eq!(hosts[0].status, "compromised");
+
+        let secrets_json = r#"[{"id":"s-1","host_id":"10.0.0.5","cred_type":"nt_hash",
+            "username":"Administrator","password":"hash","source":"smb_relay",
+            "collected_at":"2026-11-11T00:05:00Z"}]"#;
+        let secrets: Vec<ExfiltratedSecret> =
+            serde_json::from_str(secrets_json).expect("Server-JSON lesbar");
+        assert_eq!(secrets[0].host_id, "10.0.0.5");
+        assert_eq!(secrets[0].cred_type, "nt_hash");
     }
 }
