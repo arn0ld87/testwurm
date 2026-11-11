@@ -24,6 +24,17 @@ pub const PATH_HEARTBEAT: &str = "/api/heartbeat";
 pub const PATH_SECRETS: &str = "/api/secrets";
 pub const PATH_HOSTS: &str = "/api/hosts";
 pub const PATH_TASKS: &str = "/api/tasks";
+/// Anmeldung des Dashboards: der Operator schickt sein Token, der Server
+/// prüft es.
+///
+/// Anders als die fünf Datenpfade ist dieser Pfad **nicht** durch die
+/// Auth-Middleware geschützt — er prüft das Token, das er entgegennimmt.
+/// Das Token wird per Formular geschickt, nicht im Query-String: dort landet
+/// es in Browser-Historie, Adressleiste und Server-Logs.
+///
+/// Weil es eine *Antwort* ist, gilt ADR-0001: der Pfad ist Teil des
+/// Wire-Vertrags und wird im Key-Set-Pinning mitgeführt.
+pub const PATH_LOGIN: &str = "/api/login";
 
 /// Status eines Hosts, der nur gesehen, aber nicht kompromittiert wurde.
 pub const STATUS_DISCOVERED: &str = "discovered";
@@ -31,6 +42,18 @@ pub const STATUS_DISCOVERED: &str = "discovered";
 pub const STATUS_COMPROMISED: &str = "compromised";
 /// Status des Hosts, auf dem der Wurm selbst läuft.
 pub const STATUS_AGENT: &str = "agent";
+
+/// Anmeldung des Dashboards: das gesendete Token.
+///
+/// Ein **Request**-Typ: er ist lenient, damit ein neuerer Client ein
+/// zusätzliches Feld senden kann, ohne einen älteren Server zu brechen.
+/// Das Token selbst wird als reiner String übergeben — es ist kein
+/// JSON-Sonderfall.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoginRequest {
+    /// Das Bearer-Token des Operators.
+    pub token: String,
+}
 
 /// Ein Host, den der C2-Server kennt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -361,5 +384,15 @@ mod tests {
         assert_eq!(PATH_SECRETS, "/api/secrets");
         assert_eq!(PATH_HOSTS, "/api/hosts");
         assert_eq!(PATH_TASKS, "/api/tasks");
+        assert_eq!(PATH_LOGIN, "/api/login");
+    }
+
+    /// Der Login-Request ist ein Request-Typ und damit lenient: ein unbekanntes
+    /// Feld bricht die Deserialisierung nicht ab.
+    #[test]
+    fn login_request_tolerates_unknown_fields() {
+        let req: LoginRequest = serde_json::from_str(r#"{"token":"t","extra":1}"#)
+            .expect("Login-Request lesbar");
+        assert_eq!(req.token, "t");
     }
 }

@@ -14,14 +14,16 @@ hkdf.workspace = true
 argon2.workspace = true
 chacha20poly1305.workspace = true
 x25519-dalek.workspace = true
-# ml-kem 0.2.1 hat genau drei Flags: default(=std), deterministic, zeroize.
+# ml-kem kommt aus dem Workspace: es gibt damit genau EINE Stelle, an der die
+# Version steht. Eine eigene Deklaration hier (mit Caret-Bereich) hatte den
+# Workspace-Pin umgangen — aufgeloest wurde 0.2.3 statt der beabsichtigten
+# Version, und der Pin war damit wirkungslos.
+#
 # `deterministic` ist absichtlich AUS: es verlangt vom Aufrufer, das Kapselungs-
 # geheimnis m selbst mitzubringen (EncapsulateDeterministic) - ein Fehler dort
 # ist ein totaler Schluesselverlust. `zeroize` an, damit der DecapsulationKey
-# beim Drop genullt wird (0.2.1: ZeroizeOnDrop nur mit Feature).
-# 0.3.x waere moeglich, hebt aber rand_core auf 0.10 und breche x25519-dalek 2
-# sowie rand 0.8 auf; MSRV 1.87. Darum bleibt 0.2 mit rand_core 0.6 konsistent.
-ml-kem = { version = "0.2.1", default-features = false, features = ["std", "zeroize"] }
+# beim Drop genullt wird (ZeroizeOnDrop nur mit Feature).
+ml-kem.workspace = true
 rand_core.workspace = true
 zeroize.workspace = true
 thiserror.workspace = true

