@@ -127,6 +127,10 @@ mod tests {
     }"#;
 
     /// Golden-JSON: die exakte Form, die der C2-Server für ein Secret ausliefert.
+    ///
+    /// Die Passwortwerte sind synthetische Platzhalter mit Hash-Form, keine
+    /// erbeuteten Credentials. Ein echter Hash wäre hier auch ein echtes
+    /// Geheimnis im Repository.
     const SECRET_JSON: &str = r#"{
         "id": "6f1c1f0e-0f3a-4a1e-9c3f-2f9f5b2c1d44",
         "host_id": "10.0.0.5",
