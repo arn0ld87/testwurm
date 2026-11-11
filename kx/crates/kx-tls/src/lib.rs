@@ -12,6 +12,24 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 use thiserror::Error;
 
+/// Installiert den CryptoProvider für diesen Prozess.
+///
+/// Der Workspace aktiviert `rustls/ring`; ohne explizite Installation löst
+/// rustls den Provider beim ersten `ServerConfig::builder()` auf. Solange genau
+/// ein Provider im Feature-Set liegt, ist das eindeutig — aber die Auflösung
+/// ist ein `panic!`, kein `Result`, und sie passiert an der Stelle, an der
+/// jemand die TLS-Konfiguration baut.
+///
+/// Deshalb wird der Provider hier festgelegt: `kx-tls` ist der einzige Ort, an
+/// dem TLS-Konfiguration entsteht, und er wird von Server, Agent und CLI
+/// geteilt. Wer `kx-tls` benutzt, bekommt damit überall dasselbe Verhalten.
+///
+/// Ein zweiter Aufruf ist unschädlich: `install_default` liefert in dem Fall
+/// einen Fehler, den wir als „bereits installiert" behandeln.
+pub fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 /// Fehlerarten der TLS-Infrastruktur.
 #[derive(Debug, Error)]
 pub enum TlsError {
@@ -36,6 +54,7 @@ pub struct ServerTls {
 /// Erzeugt ein selbstsigniertes Zertifikat für die angegebene CN und
 /// liefert eine rustls-ServerConfig sowie die PEM-Daten.
 pub fn generate_server_tls(cn: &str) -> Result<ServerTls, TlsError> {
+    install_crypto_provider();
     let mut params = CertificateParams::new(vec![cn.to_string()])
         .map_err(|e| TlsError::CertGen(e.to_string()))?;
     // 10 Jahre gültig für langfristige C2-Deployment.
@@ -66,6 +85,7 @@ pub fn generate_server_tls(cn: &str) -> Result<ServerTls, TlsError> {
 /// Client-TLS-Config, die dem selbstsignierten Server-Zertifikat vertraut.
 /// `cert_pem` muss das PEM des Servers sein.
 pub fn client_config_trusting(cert_pem: &[u8]) -> Result<Arc<ClientConfig>, TlsError> {
+    install_crypto_provider();
     let mut root_store = rustls::RootCertStore::empty();
     let mut reader = std::io::BufReader::new(std::io::Cursor::new(cert_pem));
     let certs = rustls_pemfile::certs(&mut reader)

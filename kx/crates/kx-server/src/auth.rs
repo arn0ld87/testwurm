@@ -3,46 +3,71 @@
 //! Einfache Token-Prüfung für Operator- und Agent-Zugriffe. Das Token wird
 //! via Umgebungsvariable KX_SERVER_TOKEN oder als Argument übergeben.
 
+use axum::extract::Request;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
-
-/// Auth-Kontext, der das erwartete Token trägt.
-#[derive(Clone)]
-pub struct Auth {
-    pub token: String,
-}
+use axum::http::StatusCode;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use subtle::ConstantTimeEq;
 
 /// Prüft das Authorization-Header-Format "Bearer <token>".
+///
+/// Der Vergleich ist constant-time: ein `==` auf Strings liefert bei
+/// unterschiedlichem Präfix früh zurück und gibt damit Information über das
+/// gesuchte Token preis.
 pub fn verify(parts: &Parts, expected: &str) -> bool {
     match parts.headers.get(AUTHORIZATION) {
         Some(h) => h
             .to_str()
             .ok()
             .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|t| t == expected)
+            .map(|t| constant_time_eq(t.as_bytes(), expected.as_bytes()))
             .unwrap_or(false),
         None => false,
     }
 }
 
-/// Axum-Extension für authentizierte Requests.
-#[derive(Clone)]
-pub struct Authenticated;
+/// Middleware, die jede Anfrage ohne korrektes Bearer-Token abweist.
+///
+/// Sie wird per `route_layer` auf dem API-Router angebracht und schützt damit
+/// alle dort registrierten Routen — auch die, die später hinzukommen.
+///
+/// Wichtig: `route_layer` (nicht `layer`) führt die Prüfung nur aus, wenn die
+/// Anfrage überhaupt auf eine Route trifft. Sonst würde ein 404 zu einem 401
+/// und damit verraten, ob ein Pfad existiert.
+///
+/// Der Token wird prozessweit aus `KX_SERVER_TOKEN` gelesen, damit er nicht
+/// durch den State jedes Handlers geschleift werden muss.
+pub async fn require_auth(req: Request, next: Next) -> Response {
+    let expected = std::env::var("KX_SERVER_TOKEN").unwrap_or_default();
+    let (parts, body) = req.into_parts();
 
-impl<S> axum::extract::FromRequestParts<S> for Authenticated
-where
-    S: Send + Sync,
-{
-    type Rejection = axum::http::StatusCode;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        _state: &S,
-    ) -> Result<Self, Self::Rejection> {
-        if verify(parts, std::env::var("KX_SERVER_TOKEN").unwrap_or_default().as_str()) {
-            Ok(Authenticated)
-        } else {
-            Err(axum::http::StatusCode::UNAUTHORIZED)
-        }
+    if verify(&parts, &expected) {
+        next.run(Request::from_parts(parts, body)).await
+    } else {
+        (
+            StatusCode::UNAUTHORIZED,
+            "unauthorized: korrektes Bearer-Token erforderlich",
+        )
+            .into_response()
     }
+}
+
+/// Prüft ein Token ohne Header — für den Login-Endpunkt.
+///
+/// Constant-time, wie `verify`.
+pub fn verify_token(candidate: &str, expected: &str) -> bool {
+    constant_time_eq(candidate.as_bytes(), expected.as_bytes())
+}
+
+/// Vergleicht zwei Bytefolgen constant-time.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    // Der Laengenvergleich ist nicht geheim — die Laenge des Tokens steht im
+    // Klartext im Header. Er muss aber vor dem Inhaltsvergleich stehen, damit
+    // der Inhaltsvergleich bei gleicher Laenge immer vollstaendig laeuft.
+    if a.len() != b.len() {
+        return false;
+    }
+    a.ct_eq(b).into()
 }
