@@ -2,13 +2,22 @@
 //!
 //! Nutzt AF_PACKET-Raw-Sockets (Linux) zum Senden von ARP-Broadcast-Anfragen
 //! und zum Empfangen der Antworten. Erfordert CAP_NET_RAW oder Root-Rechte.
+//!
+//! Der Sweep ist Linux-only. Auf anderen Plattformen liefert `arp_sweep` einen
+//! Fehler — so wie `kx-win` und `kx-posix` ihre Plattformgrenzen ziehen.
 
-use std::collections::HashMap;
-use std::mem;
 use std::net::IpAddr;
+
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::mem;
+#[cfg(target_os = "linux")]
 use std::os::unix::io::RawFd;
 
+#[cfg(target_os = "linux")]
 use libc::{c_void, sockaddr_ll};
+#[cfg(target_os = "linux")]
 use tracing::debug;
 
 use crate::error::ScanError;
@@ -23,6 +32,7 @@ pub struct DiscoveredHost {
 }
 
 /// Erstelle einen AF_PACKET-Socket für ARP-Scans auf dem angegebenen Interface.
+#[cfg(target_os = "linux")]
 fn create_arp_socket(iface: &str) -> Result<RawFd, ScanError> {
     unsafe {
         let sock = libc::socket(libc::AF_PACKET, libc::SOCK_RAW, (libc::ETH_P_ARP as u16).to_be() as i32);
@@ -65,6 +75,7 @@ fn create_arp_socket(iface: &str) -> Result<RawFd, ScanError> {
 }
 
 /// Baue ein ARP-Who-Has-Paket für die angegebene Ziel-IP.
+#[cfg(target_os = "linux")]
 fn build_arp_request(sender_ip: &std::net::Ipv4Addr, sender_mac: &[u8; 6], target_ip: &std::net::Ipv4Addr) -> Vec<u8> {
     let mut pkt = Vec::with_capacity(42);
     pkt.extend_from_slice(&1u16.to_be_bytes()); // Hardware-Type (Ethernet)
@@ -88,6 +99,7 @@ fn build_arp_request(sender_ip: &std::net::Ipv4Addr, sender_mac: &[u8; 6], targe
 ///
 /// # Rückgabe
 /// Liste der entdeckten Hosts mit MAC- und IP-Adresse.
+#[cfg(target_os = "linux")]
 pub fn arp_sweep(
     iface: &str,
     range_start: &std::net::Ipv4Addr,
@@ -168,4 +180,40 @@ pub fn arp_sweep(
         .into_iter()
         .map(|(mac, ip)| DiscoveredHost { mac, ip })
         .collect())
+}
+
+/// Nicht-Linux-Plattformen: der ARP-Sweep braucht AF_PACKET-Raw-Sockets und
+/// existiert nur unter Linux. Der Aufrufer bekommt einen klaren Fehler statt
+/// eines Build-Bruchs.
+#[cfg(not(target_os = "linux"))]
+pub fn arp_sweep(
+    _iface: &str,
+    _range_start: &std::net::Ipv4Addr,
+    _range_end: &std::net::Ipv4Addr,
+    _own_ip: &std::net::Ipv4Addr,
+    _own_mac: &[u8; 6],
+) -> Result<Vec<DiscoveredHost>, ScanError> {
+    Err(ScanError::Unsupported(
+        "ARP-Sweep benötigt AF_PACKET-Raw-Sockets und ist nur unter Linux verfügbar".into(),
+    ))
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+mod tests {
+    use super::*;
+
+    /// Außerhalb von Linux liefert der Sweep einen klaren Fehler statt zu
+    /// fehlschlagen. Der Fehler muss an der Aufrufstelle greifbar sein.
+    #[test]
+    fn arp_sweep_reports_unsupported_off_linux() {
+        let err = arp_sweep(
+            "eth0",
+            &std::net::Ipv4Addr::new(192, 168, 1, 1),
+            &std::net::Ipv4Addr::new(192, 168, 1, 254),
+            &std::net::Ipv4Addr::new(192, 168, 1, 100),
+            &[0u8; 6],
+        )
+        .expect_err("der Sweep ist außerhalb von Linux nicht verfügbar");
+        assert!(matches!(err, ScanError::Unsupported(_)));
+    }
 }
