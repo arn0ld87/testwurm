@@ -30,8 +30,18 @@ pub async fn extract_shadow_hashes() -> Result<Vec<Secret>, PosixError> {
         debug!("/etc/shadow nicht gefunden — keine Hashes extrahiert");
         return Ok(vec![]);
     }
-    let content = std::fs::read_to_string(shadow)
-        .map_err(|e| PosixError::FileAccess(e.to_string()))?;
+    // Ohne Leserechte ist das der Normalfall auf jedem Nicht-Root-Host:
+    // /etc/shadow gehört root:shadow mit Modus 640. Das ist kein Fehler,
+    // sondern "keine Hashes extrahierbar" — extract_ssh_keys verhält sich
+    // genauso (dort schlägt ein Lesefehler nicht fehl).
+    let content = match std::fs::read_to_string(shadow) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            debug!("/etc/shadow nicht lesbar ({e}) — keine Hashes extrahiert");
+            return Ok(vec![]);
+        }
+        Err(e) => return Err(PosixError::FileAccess(e.to_string())),
+    };
     let mut secrets = Vec::new();
     for line in content.lines() {
         let parts: Vec<&str> = line.split(':').collect();
@@ -94,8 +104,16 @@ pub async fn extract_aws_credentials() -> Result<Vec<Secret>, PosixError> {
     if !creds.exists() {
         return Ok(vec![]);
     }
-    let content = std::fs::read_to_string(creds)
-        .map_err(|e| PosixError::FileAccess(e.to_string()))?;
+    // Wie bei /etc/shadow: fehlende Leserechte sind kein Fehler, sondern
+    // "keine Credentials extrahierbar".
+    let content = match std::fs::read_to_string(creds) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            debug!("$HOME/.aws/credentials nicht lesbar ({e}) — keine Credentials extrahiert");
+            return Ok(vec![]);
+        }
+        Err(e) => return Err(PosixError::FileAccess(e.to_string())),
+    };
     let mut secrets = Vec::new();
     let mut profile = "default".to_string();
     for line in content.lines() {
@@ -140,8 +158,11 @@ mod tests {
 
     #[tokio::test]
     async fn shadow_extracts_nothing_on_nonunix_or_missing() {
-        // Auf CI ohne /etc/shadow-Leserechte: kein Panic, egal ob Ok oder
-        // kontrollierter Err (PermissionDenied) zurückkommt.
-        let _ = extract_shadow_hashes().await;
+        // Auf CI ohne /etc/shadow-Leserechte: leerer Vektor, kein Panic.
+        // Fehlende Leserechte sind auf jedem Nicht-Root-Host der Normalfall
+        // und dürfen die Funktion nicht scheitern lassen — der Ubuntu-Runner
+        // liest /etc/shadow als nicht privilegierter User nicht.
+        let res = extract_shadow_hashes().await;
+        assert!(res.is_ok(), "fehlende Leserechte sind kein Fehler: {res:?}");
     }
 }

