@@ -1,0 +1,8 @@
+# Lokale Betriebsartefakte, die nicht ins Repository gehören.
+.DS_Store
+.open-mem/
+
+# Worktrees der Harness-Subagenten (isolation: worktree). Sie entstehen
+# innerhalb des Repos, sind aber reine Arbeitskopien und dürfen nie
+# committet werden.
+.claude/worktrees/
