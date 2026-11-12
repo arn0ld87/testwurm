@@ -31,7 +31,14 @@ pub struct ServiceInfo {
 impl ServiceInfo {
     /// Erzeuge eine neue ServiceInfo-Struktur.
     pub fn new(host: std::net::IpAddr, port: u16, service: String) -> Self {
-        Self { host, port, service, version: None, os: None, banner: String::new() }
+        Self {
+            host,
+            port,
+            service,
+            version: None,
+            os: None,
+            banner: String::new(),
+        }
     }
 }
 
@@ -75,7 +82,11 @@ pub fn identify_service(port: u16) -> &'static str {
 ///
 /// # Rückgabe
 /// ServiceInfo mit OS- und Versionsinformationen, falls erkannt.
-pub async fn fingerprint(host: std::net::IpAddr, port: u16, timeout_ms: u64) -> Option<ServiceInfo> {
+pub async fn fingerprint(
+    host: std::net::IpAddr,
+    port: u16,
+    timeout_ms: u64,
+) -> Option<ServiceInfo> {
     let addr = SocketAddr::new(host, port);
     let banner = match grab_banner(addr, timeout_ms).await {
         Ok(b) => b,

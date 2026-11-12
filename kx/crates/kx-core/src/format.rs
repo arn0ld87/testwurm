@@ -266,7 +266,8 @@ impl Footer {
             for j in (i + 1)..active.len() {
                 let a = &active[i];
                 let b = &active[j];
-                if a.plain_off < b.plain_off + b.plain_len && b.plain_off < a.plain_off + a.plain_len
+                if a.plain_off < b.plain_off + b.plain_len
+                    && b.plain_off < a.plain_off + a.plain_len
                 {
                     return Err(Error::Format("Reichweiten ueberlappen sich".into()));
                 }
@@ -322,11 +323,7 @@ impl Footer {
         buf[off::RANGE_SHA..off::RANGE_SHA + 32].copy_from_slice(&self.range_sha256);
         buf[off::HOST_ID..off::HOST_ID + HOST_ID_LEN].copy_from_slice(&self.host_id);
         buf[off::BUILD_ID..off::BUILD_ID + BUILD_ID_LEN].copy_from_slice(&self.build_id);
-        put_u64(
-            &mut buf,
-            off::CREATED,
-            self.created_unix as u64,
-        );
+        put_u64(&mut buf, off::CREATED, self.created_unix as u64);
         let crc = crc32(&buf[..off::CRC_COVER]);
         put_u32(&mut buf, off::CRC, crc);
         Ok(buf)
@@ -443,12 +440,7 @@ fn read_u64(buf: &[u8], at: usize) -> u64 {
 ///   entsteht eine einzige Reichweite ueber die ganze Datei.
 /// - Die Reichweitenplanung ist **alleinige Quelle** fuer die verschluesselte
 ///   Laenge. Die Dateigroesse wird nie zurueckgerechnet (Risiko R2).
-pub fn plan_ranges(
-    plain_size: u64,
-    head_len: u64,
-    tail_len: u64,
-    min_size: u64,
-) -> Vec<Range> {
+pub fn plan_ranges(plain_size: u64, head_len: u64, tail_len: u64, min_size: u64) -> Vec<Range> {
     if plain_size < min_size || plain_size == 0 {
         return Vec::new();
     }
@@ -726,7 +718,10 @@ mod tests {
 
         let mut f = footer_stub();
         f.ranges[1].plain_off += 1;
-        assert!(f.validate().is_err(), "ct_off muss an der Reichweite haengen");
+        assert!(
+            f.validate().is_err(),
+            "ct_off muss an der Reichweite haengen"
+        );
 
         let mut f = footer_stub();
         f.ranges[1] = Range {
@@ -738,7 +733,10 @@ mod tests {
 
         let mut f = footer_stub();
         f.format_version = FORMAT_VERSION + 7;
-        assert!(f.validate().is_err(), "unbekannte Formatversion muss abgewiesen werden");
+        assert!(
+            f.validate().is_err(),
+            "unbekannte Formatversion muss abgewiesen werden"
+        );
 
         let mut f = footer_stub();
         f.wrapped_dek.pop();

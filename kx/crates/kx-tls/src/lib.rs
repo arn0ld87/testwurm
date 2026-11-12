@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use rcgen::{CertificateParams, KeyPair};
-use rustls::server::ServerConfig;
 use rustls::client::ClientConfig;
+use rustls::server::ServerConfig;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 use thiserror::Error;

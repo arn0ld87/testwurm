@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use kx_core::c2;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 
 /// Zeile der `hosts`-Tabelle.
 #[derive(Debug, Clone)]
@@ -81,7 +81,9 @@ impl Db {
                 status TEXT, result TEXT, created_at TEXT
             );",
         )?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// Registriert einen Host (neu oder bestehend).
@@ -91,7 +93,15 @@ impl Db {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                last_seen=?7, os=?4, status=?5",
-            params![h.id, h.ip, h.hostname, h.os, h.status, h.first_seen, h.last_seen],
+            params![
+                h.id,
+                h.ip,
+                h.hostname,
+                h.os,
+                h.status,
+                h.first_seen,
+                h.last_seen
+            ],
         )?;
         Ok(())
     }
@@ -99,9 +109,8 @@ impl Db {
     /// Liefert alle Hosts.
     pub fn list_hosts(&self) -> Result<Vec<HostRow>, DbError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, ip, hostname, os, status, first_seen, last_seen FROM hosts",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, ip, hostname, os, status, first_seen, last_seen FROM hosts")?;
         let rows = stmt.query_map([], |r| {
             Ok(HostRow {
                 id: r.get(0)?,
@@ -121,7 +130,15 @@ impl Db {
         self.conn.lock().unwrap().execute(
             "INSERT INTO secrets (id, host_id, cred_type, username, password, source, collected_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![s.id, s.host_id, s.cred_type, s.username, s.password, s.source, s.collected_at],
+            params![
+                s.id,
+                s.host_id,
+                s.cred_type,
+                s.username,
+                s.password,
+                s.source,
+                s.collected_at
+            ],
         )?;
         Ok(())
     }
@@ -159,9 +176,8 @@ impl Db {
     /// Liefert alle Tasks.
     pub fn list_tasks(&self) -> Result<Vec<TaskRow>, DbError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, host_id, command, status, result, created_at FROM tasks",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, host_id, command, status, result, created_at FROM tasks")?;
         let rows = stmt.query_map([], |r| {
             Ok(TaskRow {
                 id: r.get(0)?,

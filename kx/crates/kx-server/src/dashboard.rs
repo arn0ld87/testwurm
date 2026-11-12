@@ -268,7 +268,10 @@ mod tests {
             "das Dashboard hat keinen Escaping-Helper"
         );
         for (raw, escaped) in [
-            ("<img src=x onerror=alert(1)>", "&lt;img src=x onerror=alert(1)&gt;"),
+            (
+                "<img src=x onerror=alert(1)>",
+                "&lt;img src=x onerror=alert(1)&gt;",
+            ),
             ("a & b", "a &amp; b"),
             ("\"quoted\"", "&quot;quoted&quot;"),
             ("it's", "it&#39;s"),
@@ -302,4 +305,3 @@ mod tests {
         );
     }
 }
-

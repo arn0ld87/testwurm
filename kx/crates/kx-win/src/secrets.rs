@@ -4,11 +4,11 @@
 //! Auf Nicht-Windows-Plattformen liefern die Funktionen leere Ergebnisse.
 
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 #[cfg(target_os = "windows")]
 use std::process::Stdio;
 #[cfg(target_os = "windows")]
 use tokio::process::Command;
+use tracing::debug;
 #[cfg(target_os = "windows")]
 use tracing::warn;
 
@@ -86,7 +86,10 @@ async fn run_powershell(script: &str) -> Result<String, WinError> {
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr).to_string();
         warn!("PowerShell fehlgeschlagen: {err}");
-        return Err(WinError::ToolFailed(output.status.code().unwrap_or(-1), err));
+        return Err(WinError::ToolFailed(
+            output.status.code().unwrap_or(-1),
+            err,
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -114,7 +117,11 @@ fn parse_lsass_output(output: &str) -> Result<Vec<Secret>, WinError> {
             let pass = line[pos + 2..].to_string();
             if !user.is_empty() && !pass.is_empty() {
                 debug!("LSASS-Credential für {user}");
-                secrets.push(Secret { secret_type: "lsass".into(), target: user, value: pass });
+                secrets.push(Secret {
+                    secret_type: "lsass".into(),
+                    target: user,
+                    value: pass,
+                });
             }
         }
     }

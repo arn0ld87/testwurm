@@ -226,9 +226,7 @@ async fn main() {
     std::env::set_var("KX_SERVER_TOKEN", &token);
 
     let db = Db::open(&cli.db).expect("Datenbank nicht erreichbar");
-    let state = AppState {
-        db: Arc::new(db),
-    };
+    let state = AppState { db: Arc::new(db) };
 
     // TLS-Material: selbstsigniert generieren.
     let tls = kx_tls::generate_server_tls(&cli.cn).expect("TLS-Zertifikat erzeugbar");
@@ -345,7 +343,10 @@ mod tests {
             .route(PATH_SECRETS, get(list_secrets))
             .route(PATH_TASKS, get(list_tasks))
             .route_layer(middleware::from_fn(auth::require_auth));
-        let app = Router::new().route("/", get(dashboard)).merge(api).with_state(state);
+        let app = Router::new()
+            .route("/", get(dashboard))
+            .merge(api)
+            .with_state(state);
 
         for path in [
             PATH_REGISTER,
@@ -416,7 +417,10 @@ mod tests {
         let api = Router::new()
             .route(PATH_HOSTS, get(list_hosts))
             .route_layer(middleware::from_fn(auth::require_auth));
-        let app = Router::new().route("/", get(dashboard)).merge(api).with_state(state);
+        let app = Router::new()
+            .route("/", get(dashboard))
+            .merge(api)
+            .with_state(state);
 
         let res = app
             .oneshot(
@@ -481,4 +485,3 @@ mod tests {
     use axum::extract::Request;
     use tower::ServiceExt;
 }
-

