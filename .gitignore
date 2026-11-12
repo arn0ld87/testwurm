@@ -6,3 +6,12 @@
 # innerhalb des Repos, sind aber reine Arbeitskopien und dürfen nie
 # committet werden.
 .claude/worktrees/
+
+# Kontextdateien, die das claude-mem-Plugin lokal für die jeweils
+# angeschlossenen Agent-Tools erzeugt (Roo, Windsurf, Warp, Copilot).
+# Sie enthalten nur den Platzhaltertext des installierten Plugins, sind
+# maschinenspezifisch und gehören nicht ins Repository.
+.roo/
+.windsurf/
+WARP.md
+.github/copilot-instructions.md
