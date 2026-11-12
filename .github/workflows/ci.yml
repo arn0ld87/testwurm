@@ -9,10 +9,11 @@ name: CI
 #            System. Dieser Job fängt genau die Defekte, die ein reiner
 #            Testlauf nicht sieht: ISSUE-1 (Start panic) und ISSUE-12 (offene API).
 #
-# Bewusst KEIN fmt- und KEIN clippy-Gate: `cargo fmt --check` meldet derzeit 72
-# Formatabweichungen und clippy einige Warnungen. Beides zu erzwingen würde
-# einen großen, sachfremden Reformat-Commit erzwingen. Beides gehört als
-# eigener Arbeitsstrang, nicht in diesen PR.
+# fmt-Gate: der Workspace ist seit Commit 825511b formatiert, `cargo fmt --check`
+# ist grün und wird hier erzwungen.
+# Bewusst NOCH KEIN clippy-Gate: clippy meldet einige Warnungen, darunter das
+# ungenutzte `insert_task` in kx-server (ISSUE-6). Das gehört als eigener
+# Arbeitsstrang.
 
 on:
   push:
@@ -47,6 +48,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: kx
+
+      - name: Formatierung prüfen
+        run: cargo fmt --check
 
       - name: Bauen
         run: cargo build --workspace --all-targets
