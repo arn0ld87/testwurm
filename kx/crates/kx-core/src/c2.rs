@@ -391,8 +391,8 @@ mod tests {
     /// Feld bricht die Deserialisierung nicht ab.
     #[test]
     fn login_request_tolerates_unknown_fields() {
-        let req: LoginRequest = serde_json::from_str(r#"{"token":"t","extra":1}"#)
-            .expect("Login-Request lesbar");
+        let req: LoginRequest =
+            serde_json::from_str(r#"{"token":"t","extra":1}"#).expect("Login-Request lesbar");
         assert_eq!(req.token, "t");
     }
 }

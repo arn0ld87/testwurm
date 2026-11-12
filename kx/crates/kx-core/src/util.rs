@@ -113,7 +113,9 @@ pub fn rfc3339_utc(secs: i64) -> String {
 pub fn parse_rfc3339_secs(text: &str) -> Option<i64> {
     let text = text.trim();
     let (datetime, offset) = split_zone(text)?;
-    let (date, time) = datetime.split_once('T').or_else(|| datetime.split_once(' '))?;
+    let (date, time) = datetime
+        .split_once('T')
+        .or_else(|| datetime.split_once(' '))?;
     let mut di = date.split('-');
     let y: i64 = di.next()?.parse().ok()?;
     let m: i64 = di.next()?.parse().ok()?;
@@ -121,7 +123,14 @@ pub fn parse_rfc3339_secs(text: &str) -> Option<i64> {
     let mut ti = time.split(':');
     let hh: i64 = ti.next()?.parse().ok()?;
     let mm: i64 = ti.next()?.parse().ok()?;
-    let ss: i64 = ti.next().unwrap_or("0").chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().ok()?;
+    let ss: i64 = ti
+        .next()
+        .unwrap_or("0")
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .ok()?;
     let days = days_from_civil(y, m as u32, d as u32);
     Some(days * 86_400 + hh * 3600 + mm * 60 + ss - offset)
 }
@@ -236,7 +245,11 @@ pub fn jitter(base_ms: u64, spread: f64, seed: &mut u64) -> u64 {
         return 0;
     }
     // xorshift64*
-    let mut x = if *seed == 0 { 0x2545_F491_4F6C_DD1D } else { *seed };
+    let mut x = if *seed == 0 {
+        0x2545_F491_4F6C_DD1D
+    } else {
+        *seed
+    };
     x ^= x >> 12;
     x ^= x << 25;
     x ^= x >> 27;
@@ -255,7 +268,10 @@ mod tests {
         let s = rfc3339_utc(1_762_483_200);
         assert_eq!(s, "2025-11-07T02:40:00Z", "got {s}");
         assert_eq!(parse_rfc3339_secs(&s), Some(1_762_483_200));
-        assert_eq!(parse_rfc3339_secs("2025-11-07T03:40:00+01:00"), Some(1_762_483_200));
+        assert_eq!(
+            parse_rfc3339_secs("2025-11-07T03:40:00+01:00"),
+            Some(1_762_483_200)
+        );
     }
 
     #[test]
@@ -291,7 +307,10 @@ mod tests {
     fn crc32_matches_known_vectors() {
         assert_eq!(crc32(b""), 0);
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
-        assert_eq!(crc32(b"The quick brown fox jumps over the lazy dog"), 0x414F_A339);
+        assert_eq!(
+            crc32(b"The quick brown fox jumps over the lazy dog"),
+            0x414F_A339
+        );
     }
 
     #[test]

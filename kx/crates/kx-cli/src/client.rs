@@ -40,8 +40,8 @@ impl Client {
     pub fn new(server: &str, token: &str, cert: &str) -> Result<Self, ApiError> {
         let cert_pem = std::fs::read(cert)
             .map_err(|e| ApiError::Tls(format!("Zertifikat nicht lesbar: {e}")))?;
-        let client_config = kx_tls::client_config_trusting(&cert_pem)
-            .map_err(|e| ApiError::Tls(e.to_string()))?;
+        let client_config =
+            kx_tls::client_config_trusting(&cert_pem).map_err(|e| ApiError::Tls(e.to_string()))?;
         let agent = ureq::AgentBuilder::new().tls_config(client_config).build();
         Ok(Self {
             agent,
@@ -100,8 +100,11 @@ pub fn export(secrets: &[ExfiltratedSecret], path: &Path, format: &str) -> Resul
     let mut file = std::fs::File::create(path).map_err(|e| ApiError::Io(e.to_string()))?;
     match format {
         "csv" => {
-            writeln!(file, "host_id,cred_type,username,password,source,collected_at")
-                .map_err(|e| ApiError::Io(e.to_string()))?;
+            writeln!(
+                file,
+                "host_id,cred_type,username,password,source,collected_at"
+            )
+            .map_err(|e| ApiError::Io(e.to_string()))?;
             for s in secrets {
                 writeln!(
                     file,

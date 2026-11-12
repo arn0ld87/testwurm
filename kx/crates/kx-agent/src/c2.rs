@@ -37,18 +37,12 @@ impl C2Client {
     /// Erzeugt einen Client für den angegebenen Server.
     ///
     /// `server_cert`: PEM-Pfad zum Server-Zertifikat (vertraut gemacht).
-    pub fn new(
-        server: &str,
-        token: &str,
-        server_cert: &str,
-    ) -> Result<Self, C2Error> {
+    pub fn new(server: &str, token: &str, server_cert: &str) -> Result<Self, C2Error> {
         let cert_pem = std::fs::read(server_cert)
             .map_err(|e| C2Error::Tls(format!("Zertifikat nicht lesbar: {e}")))?;
-        let client_config = kx_tls::client_config_trusting(&cert_pem)
-            .map_err(|e| C2Error::Tls(e.to_string()))?;
-        let agent = ureq::AgentBuilder::new()
-            .tls_config(client_config)
-            .build();
+        let client_config =
+            kx_tls::client_config_trusting(&cert_pem).map_err(|e| C2Error::Tls(e.to_string()))?;
+        let agent = ureq::AgentBuilder::new().tls_config(client_config).build();
         Ok(Self {
             agent,
             base_url: server.trim_end_matches('/').to_string(),
@@ -63,8 +57,7 @@ impl C2Client {
             .agent
             .post(&url)
             .set("Authorization", &format!("Bearer {}", self.token))
-            .send_json(ureq::serde_json::to_value(req)
-                .map_err(|e| C2Error::Json(e.to_string()))?)
+            .send_json(ureq::serde_json::to_value(req).map_err(|e| C2Error::Json(e.to_string()))?)
             .map_err(|e| C2Error::Http(e.to_string()))?;
         ensure_ok(resp).await
     }
@@ -77,8 +70,9 @@ impl C2Client {
             .agent
             .post(&url)
             .set("Authorization", &format!("Bearer {}", self.token))
-            .send_json(ureq::serde_json::to_value(upload)
-                .map_err(|e| C2Error::Json(e.to_string()))?)
+            .send_json(
+                ureq::serde_json::to_value(upload).map_err(|e| C2Error::Json(e.to_string()))?,
+            )
             .map_err(|e| C2Error::Http(e.to_string()))?;
         ensure_ok(resp).await
     }
@@ -90,9 +84,7 @@ async fn ensure_ok(resp: ureq::Response) -> Result<(), C2Error> {
         Ok(())
     } else {
         let status = resp.status();
-        let body = resp
-            .into_string()
-            .unwrap_or_else(|_| "<binär>".into());
+        let body = resp.into_string().unwrap_or_else(|_| "<binär>".into());
         Err(C2Error::Http(format!("Status {status}: {body}")))
     }
 }

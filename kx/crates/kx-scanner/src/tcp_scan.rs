@@ -19,7 +19,9 @@ pub struct ScanResults {
 impl ScanResults {
     /// Erzeuge eine leere Ergebnis-Struktur.
     pub fn new() -> Self {
-        Self { open_ports: std::collections::HashMap::new() }
+        Self {
+            open_ports: std::collections::HashMap::new(),
+        }
     }
 }
 

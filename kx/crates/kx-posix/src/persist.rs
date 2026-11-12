@@ -135,7 +135,10 @@ pub async fn install_systemd_service(svc: &SystemdService) -> Result<(), PosixEr
         let err = String::from_utf8_lossy(&out.stderr).to_string();
         return Err(PosixError::Systemd(err));
     }
-    debug!("systemd-Dienst {name} installiert und aktiviert", name = svc.name);
+    debug!(
+        "systemd-Dienst {name} installiert und aktiviert",
+        name = svc.name
+    );
     Ok(())
 }
 
@@ -191,7 +194,9 @@ pub async fn write_cron_persistence(minute: i32, command: &str) -> Result<(), Po
         .await
         .map_err(|e| PosixError::Cron(e.to_string()))?;
     if !status.success() {
-        return Err(PosixError::Cron("crontab-Aktualisierung fehlgeschlagen".into()));
+        return Err(PosixError::Cron(
+            "crontab-Aktualisierung fehlgeschlagen".into(),
+        ));
     }
     debug!("Cron-Persistenz installiert");
     Ok(())
@@ -200,12 +205,16 @@ pub async fn write_cron_persistence(minute: i32, command: &str) -> Result<(), Po
 // Nicht-Unix-Plattformen: Fehler-Implementierungen.
 #[cfg(not(unix))]
 pub async fn install_systemd_service(_svc: &SystemdService) -> Result<(), PosixError> {
-    Err(PosixError::Systemd("nicht auf dieser Plattform verfügbar".into()))
+    Err(PosixError::Systemd(
+        "nicht auf dieser Plattform verfügbar".into(),
+    ))
 }
 
 #[cfg(not(unix))]
 pub async fn write_cron_persistence(_minute: i32, _command: &str) -> Result<(), PosixError> {
-    Err(PosixError::Cron("nicht auf dieser Plattform verfügbar".into()))
+    Err(PosixError::Cron(
+        "nicht auf dieser Plattform verfügbar".into(),
+    ))
 }
 
 #[cfg(test)]
@@ -247,14 +256,11 @@ mod tests {
             .lines()
             .find(|l| l.starts_with("ExecStart="))
             .expect("ExecStart-Zeile");
-        for arg in [
-            "--server",
-            "--token",
-            "--server-cert",
-            "--start",
-            "--end",
-        ] {
-            assert!(exec.contains(arg), "der ExecStart nennt {arg} nicht: {exec}");
+        for arg in ["--server", "--token", "--server-cert", "--start", "--end"] {
+            assert!(
+                exec.contains(arg),
+                "der ExecStart nennt {arg} nicht: {exec}"
+            );
         }
         // Der Pfad zum Binary steht vorn.
         assert!(exec.starts_with("ExecStart=/usr/local/bin/kx-agent "));

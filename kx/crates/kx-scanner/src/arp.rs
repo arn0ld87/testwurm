@@ -35,7 +35,11 @@ pub struct DiscoveredHost {
 #[cfg(target_os = "linux")]
 fn create_arp_socket(iface: &str) -> Result<RawFd, ScanError> {
     unsafe {
-        let sock = libc::socket(libc::AF_PACKET, libc::SOCK_RAW, (libc::ETH_P_ARP as u16).to_be() as i32);
+        let sock = libc::socket(
+            libc::AF_PACKET,
+            libc::SOCK_RAW,
+            (libc::ETH_P_ARP as u16).to_be() as i32,
+        );
         if sock < 0 {
             return Err(ScanError::Socket(format!(
                 "socket() fehlgeschlagen: {}",
@@ -63,7 +67,12 @@ fn create_arp_socket(iface: &str) -> Result<RawFd, ScanError> {
         addr.sll_ifindex = ifr.ifr_ifru.ifru_ifindex as i32;
         addr.sll_hatype = libc::ARPHRD_ETHER;
         addr.sll_pkttype = libc::PACKET_BROADCAST;
-        if libc::bind(sock, &addr as *const _ as *const libc::sockaddr, mem::size_of::<sockaddr_ll>() as u32) < 0 {
+        if libc::bind(
+            sock,
+            &addr as *const _ as *const libc::sockaddr,
+            mem::size_of::<sockaddr_ll>() as u32,
+        ) < 0
+        {
             let _ = libc::close(sock);
             return Err(ScanError::Socket(format!(
                 "bind() fehlgeschlagen: {}",
@@ -76,7 +85,11 @@ fn create_arp_socket(iface: &str) -> Result<RawFd, ScanError> {
 
 /// Baue ein ARP-Who-Has-Paket für die angegebene Ziel-IP.
 #[cfg(target_os = "linux")]
-fn build_arp_request(sender_ip: &std::net::Ipv4Addr, sender_mac: &[u8; 6], target_ip: &std::net::Ipv4Addr) -> Vec<u8> {
+fn build_arp_request(
+    sender_ip: &std::net::Ipv4Addr,
+    sender_mac: &[u8; 6],
+    target_ip: &std::net::Ipv4Addr,
+) -> Vec<u8> {
     let mut pkt = Vec::with_capacity(42);
     pkt.extend_from_slice(&1u16.to_be_bytes()); // Hardware-Type (Ethernet)
     pkt.extend_from_slice(&0x0800u16.to_be_bytes()); // Protokoll (IPv4)
@@ -137,7 +150,10 @@ pub fn arp_sweep(
 
     // Socket auf 2 Sekunden Receive-Timeout setzen
     unsafe {
-        let tv: libc::timeval = libc::timeval { tv_sec: 2, tv_usec: 0 };
+        let tv: libc::timeval = libc::timeval {
+            tv_sec: 2,
+            tv_usec: 0,
+        };
         let _ = libc::setsockopt(
             sock,
             libc::SOL_SOCKET,
@@ -167,7 +183,9 @@ pub fn arp_sweep(
             // ARP-Antwort parsen (Operation = 2, bei Offset 8-9)
             if n as usize >= 24 && buf[8] == 0 && buf[9] == 2 {
                 let sender_mac: [u8; 6] = buf[14..20].try_into().unwrap();
-                let sender_ip = IpAddr::V4(std::net::Ipv4Addr::from([buf[20], buf[21], buf[22], buf[23]]));
+                let sender_ip = IpAddr::V4(std::net::Ipv4Addr::from([
+                    buf[20], buf[21], buf[22], buf[23],
+                ]));
                 if !discovered.contains_key(&sender_mac) {
                     debug!("ARP-Antwort von {}", sender_ip);
                     discovered.insert(sender_mac, sender_ip);
@@ -175,7 +193,9 @@ pub fn arp_sweep(
             }
         }
     }
-    unsafe { libc::close(sock); }
+    unsafe {
+        libc::close(sock);
+    }
     Ok(discovered
         .into_iter()
         .map(|(mac, ip)| DiscoveredHost { mac, ip })

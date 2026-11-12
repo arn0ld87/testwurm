@@ -225,7 +225,10 @@ pub fn class_from_errkind(kind: std::io::ErrorKind, raw: Option<i32>) -> ErrorCl
         K::PermissionDenied => ErrorClass::Access,
         K::AlreadyExists | K::WouldBlock => ErrorClass::Sharing,
         K::StorageFull | K::OutOfMemory => ErrorClass::DiskFull,
-        K::NotConnected | K::ConnectionRefused | K::ConnectionReset | K::BrokenPipe
+        K::NotConnected
+        | K::ConnectionRefused
+        | K::ConnectionReset
+        | K::BrokenPipe
         | K::TimedOut => ErrorClass::Network,
         K::InvalidInput | K::InvalidData => ErrorClass::InvalidInput,
         K::Unsupported => ErrorClass::Other,
