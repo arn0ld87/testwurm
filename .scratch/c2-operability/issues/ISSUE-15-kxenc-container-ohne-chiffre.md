@@ -47,6 +47,17 @@ Betrieb.
 
 ## Technical Notes
 
+**Korrektur bei der Architekturprüfung (2026-11-15):** `format.rs` ist **nicht
+vollständig tot**. `KexId` (`format.rs:89`) ist im lebenden Kryptografie-Pfad
+load-bearing — `kx-core/src/hostkey.rs` greift an 20 Stellen darauf zu, dazu
+kommen `kx-core/examples/gen_server_key.rs` und `kx-server/src/e2e_test.rs`.
+Toter ist nur der Container-Anteil: `Footer`, `Range`, `ChunkRef`,
+`plan_ranges`, `aad_for`, `CipherId`.
+
+**Vorbedingung:** ISSUE-15 muss zuerst `KexId` aus dem Container-Modul herauslösen
+(eigener Typ in `kx-core/src/hostkey.rs` oder ein neues Modul). Wer das
+Container-Modul vorher löscht, bricht die laufende Kryptografie.
+
 - `kx-core/src/format.rs` ist der natürliche Ort für die Chiffre; die
   Layout-Funktionen sind getestet und bleiben unverändert.
 - `kx-core/src/secretbox.rs` bringt ChaCha20-Poly1305 als Dependency mit und
