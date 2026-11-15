@@ -1,9 +1,9 @@
 ---
 id: ISSUE-3
 title: Default-Credential-Angriff ist toter Code — try_default_credentials liefert stets Ok(None)
-status: open
+status: done
 category: bug
-triage_state: ready-for-agent
+triage_state: erledigt
 agent_brief: briefs/ISSUE-3-credential-test-dienstfilter.md
 priority: high
 ---
@@ -20,12 +20,12 @@ Zusätzlich: `DEFAULT_CREDENTIALS` ist ein `&[(&str, &str)]` ohne Dienstangabe �
 
 Related: ISSUE-2, ISSUE-4
 
-## Acceptance Criteria
+## Acceptance Criteria## Acceptance Criteria
 
-- [ ] `try_default_credentials` führt einen echten Authentifizierungsversuch durch und liefert bei Erfolg `Ok(Some(Auth))`. Bevorzugt `russh` 0.54 mit `features = ["ring"]`: reines Rust, `rand_core` 0.6.4 wie der Workspace, und Client **und** Server für den Mock-SSH-Test. `ssh2` würde die C-Toolchain (libssh2) ins Build ziehen, `paramiko` wäre Python. Begründung und verworfene Alternativen: `design_draft.md`, D4 und Alternative G.
-- [ ] Bei Misserfolg wird `Ok(None)` zurückgegeben und **kein** Fehler — das Verhalten bleibt für Aufrufer unkritisch
-- [ ] Der Dienst wird berücksichtigt (die Credentials gelten für SSH, nicht für beliebige Dienste)
-- [ ] Ein Test prüft den Erfolgs- und den Misserfolgsfall gegen einen lokalen Mock-SSH-Dienst
+- [x] `try_default_credentials` führt einen echten Authentifizierungsversuch durch und liefert bei Erfolg `Ok(Some(Auth))`. Der Werkzeugansatz ist `sshpass` — Entscheidung des Maintainers vom 2026-11-15; die ursprünglich vorgesehene rein-Rust-Bibliothek ist damit nicht mehr bindend.
+- [x] Bei Misserfolg wird `Ok(None)` zurückgegeben und **kein** Fehler — das Verhalten bleibt für Aufrufer unkritisch
+- [x] Der Dienst wird berücksichtigt (die Credentials gelten für SSH, nicht für beliebige Dienste)
+- [x] Ein Test deckt den Erfolgs- und den Misserfolgsfall ab
 
 ## Technical Notes
 
@@ -49,3 +49,5 @@ Werkzeugansatz `sshpass` beizubehalten und den Timeout obendrauf zu setzen. Die
 ursprüngliche Vorgabe einer reinen Rust-SSH-Bibliothek mit Mock-Server im Test
 ist damit nicht mehr bindend; die Akzeptanzkriterien wurden entsprechend
 angepasst. Agent Brief: [`briefs/ISSUE-3-credential-test-dienstfilter.md`](briefs/ISSUE-3-credential-test-dienstfilter.md)
+
+**Erledigt am 2026-11-15:** Der Dienstfilter greift jetzt in `try_default_credentials` selbst — nur `ssh` löst einen Versuch aus, jeder andere Dienst liefert kontrolliert `Ok(None)`, ohne einen Prozess zu starten. Der Versuch läuft über `sshpass`, das Passwort geht als eine Zeile über stdin. Sechs Tests decken Dienstfilter, Erfolgs-, Misserfolgs- und Fehlerfall ab. Der Erfolgstest simuliert den gelungenen Login über einen Befehl statt über einen echten SSH-Server — der Test prüft das beobachtbare Verhalten, nicht die Werkzeugkette.
