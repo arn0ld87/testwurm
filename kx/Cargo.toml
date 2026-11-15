@@ -68,6 +68,11 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 rcgen = { version = "0.13", features = ["x509-parser"] }
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
+# Der C2-Transport in kx-core baut seine Requests als `http::Request` — damit
+# derselbe Request im Server-Test in den Axum-Router wandert wie beim Agenten.
+# `http` 1.x ist bereits im Lockfile (axum und ureq benutzen es); die
+# Deklaration hier fuegt keine zweite Version hinzu.
+http = "1"
 clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
 # Constant-Time-Vergleich fuer Token-Pruefungen. Bereits transitiv ueber

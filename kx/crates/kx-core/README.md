@@ -6,7 +6,9 @@
 Dateiformat `KXENC` v1 (Layout, Reichweitenplanung, Nonce- und AAD-Regeln), die
 Fehlerklassifikation, die kryptografischen Hilfsfunktionen, die alle anderen
 Crates konsumieren, und das C2-Protokoll (`c2.rs`) als einzige Definition des
-Wire-Vertrags zwischen Wurm-Agent und Operator-C2.
+Wire-Vertrags zwischen Wurm-Agent und Operator-C2. Der Transport des Protokolls
+(`c2/transport.rs`) liegt daneben: TLS-Aufbau, Bearer-Header, URL-Bildung und
+die Abbildung eines HTTP-Status auf einen Fehler.
 
 Die Schichtgrenzen sind fest vorgegeben: `format` → `crypto` → `engine` → `beacon`.
 Das Beacon kennt den Encoder, der Encoder kennt kein Beacon. Alles in diesem Crate
@@ -15,10 +17,13 @@ ist Plattformcode-frei; Windows- und POSIX-Spezifika stecken in `kx-win` und
 
 Crate-Metadaten aus `Cargo.toml`: Name `kx-core`, Version `0.1.0` (aus
 `[workspace.package]`), Edition `2021`, MSRV `1.77`, Lizenz `MIT`. Abhaengigkeiten:
-`serde`, `serde_json`, `sha2`, `hkdf`, `argon2`, `chacha20poly1305`, `x25519-dalek`,
+`kx-tls`, `ureq`, `http`, `serde`, `serde_json`, `sha2`, `hkdf`, `argon2`, `chacha20poly1305`, `x25519-dalek`,
 `ml-kem` (aus dem Workspace ueber `.workspace = true`, **auf `=0.2.3` gepinnt**;
 Features `std` + `zeroize`), `rand_core`, `zeroize`, `thiserror`,
 `base64`; Dev-Dependency `rand`.
+`kx-tls`, `ureq` und `http` kamen mit dem C2-Transport dazu: das Crate war vorher
+ohne HTTP-Abhaengigkeit. Die Kante `kx-core` → `kx-tls` loest zugleich eine
+Zyklenfrage auf — `kx-tls` deklarierte `kx-core`, ohne es je zu benutzen.
 Es gibt damit genau **eine** Stelle, an der die `ml-kem`-Version steht: der
 Workspace-Pin `ml-kem = { version = "=0.2.3", … }` in `kx/Cargo.toml`. Vorher
 deklarierte `kx-core` die Dependency selbst mit einem Caret-Bereich und umging
@@ -40,12 +45,12 @@ damit Teil der oeffentlichen API — siehe [src/README.md](./src/README.md).
 
 ## Subdirectories & Boundaries
 
-- [src](./src/README.md) - Vollständige Implementierung des Encoder-Kerns: `lib.rs` (Crate-Wurzel mit den Formatkonstanten), `c2.rs` (C2-Protokoll: Endpunktpfade, Host-Status, Wire-Typen), `error.rs` (Fehlerklassifikation `ErrorClass`/`Error`), `format.rs` (KXENC-v1-Dateiformat, Reichweitenplanung, Nonce/AAD) und `util.rs` (plattformneutrale Hilfsfunktionen). `hostkey.rs` liegt im Quellbaum, ist aber nicht kompiliert.
+- [src](./src/README.md) - Vollständige Implementierung des Encoder-Kerns: `lib.rs` (Crate-Wurzel mit den Formatkonstanten), `c2.rs` (C2-Protokoll: Endpunktpfade, Host-Status, Wire-Typen) mit dem Untermodul `c2/transport.rs` (Transport: TLS-Aufbau, Bearer-Header, URL-Bildung, Status→Fehler), `error.rs` (Fehlerklassifikation `ErrorClass`/`Error`), `format.rs` (KXENC-v1-Dateiformat, Reichweitenplanung, Nonce/AAD) und `util.rs` (plattformneutrale Hilfsfunktionen). `hostkey.rs` liegt im Quellbaum, ist aber nicht kompiliert.
 
 ## Interface
 
 - `pub mod c2;` — C2-Protokoll: Endpunktpfade, Host-Status, Wire-Typen `[src/lib.rs:c2]`
-- `pub mod c2;` — C2-Protokoll: Endpunktpfade, Host-Status, Wire-Typen `[src/lib.rs:c2]`
+- `pub mod c2::transport;` — Transport des C2-Protokolls: TLS-Aufbau, Bearer-Header, URL-Bildung, Status→Fehler `[src/c2.rs:transport]`
 - `pub mod error;` — Fehlerklassen und Fehler-Typ `[src/lib.rs:error]`
 - `pub mod format;` — `KXENC`-Dateiformat, Reichweitenplanung, Nonce/AAD `[src/lib.rs:format]`
 - `pub mod util;` — Base64, Hex, SHA-256, CRC-32, Zeit, kanonisches JSON, Jitter `[src/lib.rs:util]`
@@ -77,9 +82,10 @@ damit Teil der oeffentlichen API — siehe [src/README.md](./src/README.md).
 - `format::FooterFlags::insert` und `format::FooterFlags::remove` mutieren den Flag-Wert des Aufrufers in place `[src/format.rs:FooterFlags::insert]` `[src/format.rs:FooterFlags::remove]`
 - `format::aad_for` leert den uebergebenen `&mut Vec<u8>` und befuellt ihn mit den AAD-Bytes `[src/format.rs:aad_for]`
 - `c2.rs` ist reines Datenmodell ohne Datei-, Netzwerk- oder Prozesszugriff; die (De-)Serialisierung allokiert je Wire-Feld einen `String` `[src/c2.rs:Host]` `[src/c2.rs:SecretUpload]`
+- `c2/transport.rs` liest das Server-Zertifikat von der Platte und oeffnet TCP-Verbindungen zum C2-Server; Datei- und Netzwerkzugriff des Crates liegen seit dem Transport hier `[src/c2/transport.rs:Transport::from_cert_file]` `[src/c2/transport.rs:Transport::send]`
 - Zufallsverbrauch, Stack-Nullung von Secrets und der Argon2id-Speicherbedarf liegen im Modul `hostkey` und wirken dort `[src/hostkey.rs:ServerKeyBundle::generate]` `[src/hostkey.rs:MlKemSecret]` `[src/hostkey.rs:argon2id]`
 
 ## Verification
 
 - Run: `cargo test` (ausgefuehrt in `/Volumes/T7/Projekte/testwurm/kx`)
-- Stand: `cargo test --workspace` ist gruen — **59 Tests, 0 Fehler**; davon `cargo test -p kx-core`: **31 Tests, 0 Fehler** (11 in `c2.rs`, 10 in `format.rs`, 7 in `util.rs`, 2 in `error.rs`, 1 in `lib.rs`)
+- Stand: `cargo test --workspace` ist gruen — **130 Tests, 0 Fehler**; davon `cargo test -p kx-core`: **66 Tests, 0 Fehler** (4 in `c2/transport.rs`, der Rest in `c2.rs`, `format.rs`, `util.rs`, `error.rs` und `lib.rs`)

@@ -15,6 +15,12 @@
 //! - **Request-Typen** (`RegisterRequest`, `HeartbeatRequest`, `SecretUpload`) sind
 //!   lenient. Ein neuerer Agent darf ein zusätzliches Feld schicken, ohne dass ein
 //!   älterer Server ihn ablehnt. Additive Erweiterung ist hier harmlos.
+//!
+//! Das Modul [`transport`] ist die Ausübung des Protokolls: TLS-Aufbau,
+//! Bearer-Header, URL-Bildung und die Abbildung eines HTTP-Status auf einen
+//! Fehler. Agent und CLI sind dünne Adapter darüber.
+
+pub mod transport;
 
 use serde::{Deserialize, Serialize};
 
