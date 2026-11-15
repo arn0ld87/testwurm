@@ -126,6 +126,12 @@ nur zu laufen:
 - **`kx-vm-setup.ps1`** — das Skript, das die VM ausführt: lädt den Agenten,
   startet ihn und schickt das Log zurück.
 
+**Windows-Test?** → [`docs/runbooks/windows-test.md`](./docs/runbooks/windows-test.md)
+enthält die Voraussetzungen, den Weg zum ersten Lauf und die Stolperfallen —
+darunter die, die nicht im Code stehen: der C2 erzeugt bei jedem Start ein
+neues Zertifikat, `rsync` überträgt Zeitstempel, und die Windows-Werkzeuge
+schreiben ihre Fehler nach stdout.
+
 ## Architecture
 
 ### Die neun Crates (`kx/crates/`)

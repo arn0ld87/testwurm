@@ -2,9 +2,12 @@ name: CI
 
 # Gate für den Rust-Workspace unter kx/.
 #
-# Drei Jobs:
+# Fuenf Jobs:
 #   build    — baut und testet auf macOS und Linux (die Projektregel: der
 #              Workspace muss auf beiden Plattformen bauen)
+#   windows  — uebersetzt den Windows-Pfad; auf macOS und Linux wird er nie
+#              uebersetzt, ein Fehler dort bleibt sonst still
+#   scripts  — prueft die Werkzeuge unter scripts/
 #   windows  — übersetzt den Windows-Pfad. Die Zweige hinter `cfg(windows)`
 #              werden auf macOS und Linux nie übersetzt; ein Fehler dort
 #              bleibt still, bis jemand das Binary auf Windows baut.
@@ -93,6 +96,31 @@ jobs:
       # muss der Code, linken muss er nur auf einer Windows-Maschine.
       - name: Der Windows-Pfad muss übersetzen
         run: cargo check --workspace --all-targets --target x86_64-pc-windows-gnu
+
+  scripts:
+    name: scripts-check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kx
+    steps:
+      - uses: actions/checkout@v4
+
+      # Die Skripte unter scripts/ sind Werkzeuge, keine Beispiele. Ein
+      # Syntaxfehler faellt hier auf, statt wenn jemand sie auf einem fremden
+      # Host ausfuehrt.
+      - name: Syntax der Skripte pruefen
+        run: |
+          for skript in scripts/*.sh; do
+            bash -n "$skript" || exit 1
+          done
+
+      # Die Zeichenuebersetzung der VM-Steuerung hat schon zweimal Text
+      # verschluckt. Der Selbsttest vergleicht die Anzahl der Keycodes mit
+      # der Anzahl der Zeichen — das faellt beim Tippen in der VM sonst erst
+      # nach drei Minuten Wartezeit auf.
+      - name: Selbsttest der VM-Steuerung
+        run: bash scripts/kx-vm-control.sh selbsttest
 
   smoke:
     name: server-smoke-test
