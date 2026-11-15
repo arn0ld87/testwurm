@@ -75,7 +75,7 @@ struct Args {
     #[arg(long)]
     hosts: Option<String>,
     /// Pfad zu smbrelayx.py.
-    #[arg(long, default_value = "smbrelayx.py")]
+    #[arg(long, default_value = "assets/smbrelayx.py")]
     relay_script: String,
     /// Pfad zum selbstsignierten Server-Zertifikat (PEM).
     #[arg(long)]

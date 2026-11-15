@@ -1,9 +1,9 @@
 ---
 id: ISSUE-2
 title: SMB-Relay ist toter Code — Port 445 fehlt in COMMON_PORTS
-status: open
+status: done
 category: bug
-triage_state: ready-for-agent
+triage_state: erledigt
 agent_brief: briefs/ISSUE-2-smb-relay-betriebsfaehig.md
 priority: high
 ---
@@ -32,12 +32,13 @@ Verifiziert am 2026-11-11 per Quellcode-Prüfung.
 
 Related: ISSUE-3, ISSUE-6
 
-## Acceptance Criteria
+## Acceptance Criteria## Acceptance Criteria
 
-- [ ] Der Agent scannt SMB (445) — entweder durch Aufnahme von 445 in `COMMON_PORTS` oder durch einen eigenen Port-Satz für den Exploit-Pfad
-- [ ] `smb_relay_dcsync` wird im Regelbetrieb erreichbar
-- [ ] `service_for_port` und die gescannte Portmenge sind konsistent — jede Zuordnung im Mapping ist auch erreichbar, oder das Mapping wird entsprechend gekürzt
+- [ ] Das Relay-Skript liegt im Repository, und die Standard-Konfiguration verweist darauf
 - [ ] Ein Test belegt, dass Port 445 im Scan-Ergebnis erscheint
+- [ ] Fehlt das Skript oder Python, entsteht ein kontrollierter Fehler statt eines Hängers
+- [ ] Die Herkunft und Lizenz des Skripts sind im Repository dokumentiert
+- [ ] Jede Zuordnung im Port-zu-Dienst-Mapping ist erreichbar, oder das Mapping wird gekürzt
 
 ## Technical Notes
 
@@ -64,3 +65,20 @@ Related: ISSUE-3, ISSUE-6
 **Triage-Entscheidung:** Der Scope wird erweitert — das Skript wird als
 Repository-Asset mitgeliefert, der Port-Fix bleibt, der fehlende Test wird
 nachgezogen. Agent Brief: [`briefs/ISSUE-2-smb-relay-betriebsfaehig.md`](briefs/ISSUE-2-smb-relay-betriebsfaehig.md)
+**Erledigt am 2026-11-15:** Das Relay-Skript liegt als Asset im Repository
+(`kx/assets/smbrelayx.py`, Impacket 0.11.0, Apache-Lizenz, Herkunft und
+Prüfsumme in `kx/assets/README.md`). Der Aufruf nutzt die reale CLI des Skripts
+(`-h`, `-domain`, `-c`, `-one-shot`) statt der Flags, die es in keiner Version
+gibt. Fehlt das Skript, endet der Versuch kontrolliert mit
+`ExploitError::ImpacketMissing`; der Subprozess läuft unter einer Zeitgrenze von
+120 s. Der Parser liest die drei Hash-Formen von Impacket und Mimikatz.
+`service_for_port` und die Scanliste sind deckungsgleich, ein Test hält das
+fest; 445 ist in der Scanliste, ein Test belegt das und einen offenen Port im
+Scan-Ergebnis.
+
+**Befund zum Issue-Text:** Die ursprüngliche Beschreibung nannte nur den
+fehlenden Port. Der eigentliche Grund war breiter: das Skript fehlte im
+Repository, die aufgerufenen Flags (`-d`, `--dump-command`) existieren in
+keiner Impacket-Version, und der Hash-Parser las das falsche Feld. Ab Impacket
+0.12 gibt es `smbrelayx.py` nicht mehr — das Asset ist deshalb die letzte
+Version mit dem einmaligen Aufruf.

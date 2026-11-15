@@ -230,16 +230,14 @@ liegt in `EPIC.md`, der Designentwurf (Wellenplan, Entscheidungen D1–D7) in
 ISSUE-8 (`ml-kem`-Pin), ISSUE-10 (systemd-Unit), ISSUE-12 (API-Authentifizierung),
 ISSUE-13 (Dashboard-Escaping, Token im Query-String).
 
-**Noch offen (Welle 2):** ISSUE-2 (SMB-Relay toter Code — Port 445 fehlt in
-`COMMON_PORTS`), ISSUE-3 (`try_default_credentials` liefert stets `Ok(None)`),
-ISSUE-4 (Credential Manager liefert bei genau einem Credential eine leere Liste),
-ISSUE-5 (Doc-Fix `--range`),
-ISSUE-9 (Post-Quantum-Verschlüsselung inaktiv),
-ISSUE-11 (Token im Debug-Output), ISSUE-14 (Agent hängt im SSH-Default-Credential-Test).
+**Noch offen (Welle 2):** ISSUE-9 (Post-Quantum-Verschlüsselung inaktiv).
 
-**Anmerkung zum Status:** ISSUE-2 und ISSUE-3 sind im Code bereits behoben
-(Commit `4b6e179`: Port 445/3389 in `COMMON_PORTS`, `sshpass`-basierter
-Credential-Test). Die Issue-Dateien sind dazu noch nicht nachgezogen.
+**Erledigt:** ISSUE-2 (SMB-Relay: Relay-Skript liegt als Asset im Repository,
+der Aufruf nutzt die reale CLI, es gibt einen Port-445-Test), ISSUE-3 und
+ISSUE-14 (Credential-Test prüft den Dienst und läuft unter einer Zeitgrenze),
+ISSUE-4 (Credential Manager liefert bei einem Credential eine Liste),
+ISSUE-5 (Doc-Fix `--range`), ISSUE-7 (der WMI-Pfad wurde entfernt statt
+verdrahtet), ISSUE-11 (das Token-Feld maskiert den Debug-Output).
 
 **Dokumentations-Drift:** Der Modul-Doc von `kx-core/src/lib.rs` beschreibt noch
 eine Schichtung `format → crypto → engine → beacon` aus einem Vorgängerprojekt —
@@ -267,6 +265,7 @@ kx/
     ├── kx-core/            # c2.rs (Wire-Vertrag), format.rs, error.rs, util.rs, hostkey.rs (inaktiv)
     ├── kx-scanner/         # arp.rs (nur Linux), tcp_scan.rs, fingerprint.rs
     ├── kx-exploit/         # smb_relay.rs, credential_stuff.rs, payload.rs, examples/
+    ├── assets/              # smbrelayx.py (Impacket, Apache-Lizenz)
     ├── kx-win/             # secrets.rs, persist.rs
     ├── kx-posix/           # secrets.rs, persist.rs
     ├── kx-tls/             # lib.rs (rustls/rcgen)

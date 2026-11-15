@@ -120,12 +120,12 @@ Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C
 - `try_default_credentials` führt für den Dienst `ssh` einen echten Authentifizierungsversuch durch (`sshpass`), für andere Dienste nicht; jeder Versuch steht unter einer Zeitgrenze [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md).
 - Die Host-ID des Agenten ist die eigene IP (`own_ip.to_string()`), nicht die Prozess-ID [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
 - `PropagationResults` trägt nur noch `new_hosts` und `new_secrets`; ein `source_host`-Feld existiert nicht mehr [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
-- **Der SMB-Relay-Pfad des Agenten ist toter Code.** `run_propagation` scannt ausschließlich `kx_scanner::COMMON_PORTS`, und diese Liste enthält 445 nicht — der Zweig `if *port == 445` wird nie erreicht [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md), [`crates/kx-scanner/src/README.md`](./crates/kx-scanner/src/README.md).
+- **Der SMB-Relay-Pfad des Agenten braucht Impacket auf dem Agentenhost.** Das Relay-Skript liegt als Asset im Repository (`assets/smbrelayx.py`), der Domaincontroller muss Port 445 offen haben und auf dem Ziel muss Mimikatz liegen [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md), [`crates/kx-scanner/src/README.md`](./crates/kx-scanner/src/README.md).
 
 ## Side Effects
 
 - **Netzwerk (Lokal):** ARP-Sweeps auf Layer 2 über `AF_PACKET`-Raw-Sockets und parallele TCP-Connect-Scans [`crates/kx-scanner/src/README.md`](./crates/kx-scanner/src/README.md). Banner-Grabs bis 1024 Byte führt nur das Beispiel-Binary `kx-exploit/examples/demo_worm.rs` aus, nicht der Agent.
-- **Netzwerk (Remote):** SMB-Relay→DCSync läuft als `python3`-Subprozess gegen das Impacket-Skript `smbrelayx.py` [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md).
+- **Netzwerk (Remote):** SMB-Relay→DCSync läuft als `python3`-Subprozess gegen das mitgelieferte Impacket-Skript `assets/smbrelayx.py` [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md).
 - **Netzwerk (C2):** Agent und CLI sprechen den C2-Server über TLS an; der Agent meldet Hosts und Secrets per POST an `/api/register` und `/api/secrets` [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md), [`crates/kx-cli/src/README.md`](./crates/kx-cli/src/README.md).
 - **Prozesse auf Zielsystemen:** `powershell.exe`, `mimikatz.exe`, `cmd.exe`, `sc.exe`, `cmdkey.exe`, `schtasks`, `reg add` auf Windows; `systemctl` und `crontab` auf POSIX [`crates/kx-win/src/README.md`](./crates/kx-win/src/README.md), [`crates/kx-posix/src/README.md`](./crates/kx-posix/src/README.md).
 - **Dateisystem auf Zielsystemen:** Anlegen von systemd-Units unter `/etc/systemd/system/`, Mutieren der Crontab des aufrufenden Users, Registry-Run-Keys und Scheduled Tasks unter Windows [`crates/kx-posix/src/README.md`](./crates/kx-posix/src/README.md), [`crates/kx-win/src/README.md`](./crates/kx-win/src/README.md).
@@ -255,7 +255,7 @@ propagiert sich ins Netzwerk. Er braucht das Server-Zertifikat-Pfad:
   --start 192.168.1.1 \
   --end 192.168.1.254 \
   --own-ip 192.168.1.10 \
-  --relay-script /pfad/zu/impacket/smbrelayx.py \
+  --relay-script assets/smbrelayx.py \
 ```
 
 Der Agent durchläuft folgende Schritte — die lokale Phase läuft **vor** der Netzwerkphase:
@@ -265,7 +265,7 @@ Der Agent durchläuft folgende Schritte — die lokale Phase läuft **vor** der 
 2. systemd- bzw. Windows-Dienst-Persistenz installieren
 3. Den ARP-Sweep auf `eth0` im Bereich `192.168.1.1`–`192.168.1.254` ausführen
 4. Offene Ports scannen
-5. Windows-Systeme per SMB-Relay angreifen (nur Port 445 — **derzeit toter Code**, da `COMMON_PORTS` 445 nicht enthält)
+5. Windows-Systeme per SMB-Relay angreifen (nur Port 445 — braucht Impacket auf dem Agentenhost und Mimikatz auf dem Ziel)
 6. SSH-Systeme mit Default-Credentials testen (erfordert `sshpass` auf dem Agentenhost)
 7. Alle Ergebnisse an den C2-Server melden
 
@@ -334,7 +334,7 @@ zeigt es Hosts, Secrets und Tasks live an.
 | `--start`/`--end` | Scan-Bereich (**Pflichtargumente**, ohne Default) | — |
 | `--own-ip` | Eigene IP | `192.168.1.100` |
 | `--hosts` | Host-Liste (umgeht ARP) | — |
-| `--relay-script` | smbrelayx.py-Pfad | `smbrelayx.py` |
+| `--relay-script` | smbrelayx.py-Pfad | `assets/smbrelayx.py` |
 
 ### kx-cli
 

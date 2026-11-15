@@ -50,7 +50,7 @@ testwurm/
 ## Global Side Effects
 
 - **Netzwerk (Lokal):** ARP-Sweeps auf Layer 2 und parallele TCP-Connect-Scans [`kx/crates/kx-scanner/README.md`](../kx/crates/kx-scanner/README.md). Banner-Grabs führt nur das Beispiel-Binary `kx-exploit/examples/demo_worm.rs` aus — der Agent selbst ruft `fingerprint` nicht auf.
-- **Netzwerk (Remote):** SMB-Relay→DCSync läuft als `python3`-Subprozess gegen das Impacket-Skript `smbrelayx.py` [`kx/crates/kx-exploit/README.md`](../kx/crates/kx-exploit/README.md).
+- **Netzwerk (Remote):** SMB-Relay→DCSync läuft als `python3`-Subprozess gegen das mitgelieferte Impacket-Skript `assets/smbrelayx.py` [`kx/crates/kx-exploit/README.md`](../kx/crates/kx-exploit/README.md).
 - **Netzwerk (C2):** Agent und CLI sprechen den C2-Server über TLS mit `Authorization: Bearer`-Token an; der Agent meldet Hosts und Secrets per POST an `/api/register` und `/api/secrets`. Eine Task-Verarbeitung existiert im Agenten nicht [`kx/crates/kx-agent/README.md`](../kx/crates/kx-agent/README.md), [`kx/crates/kx-cli/README.md`](../kx/crates/kx-cli/README.md).
 - **Prozesse auf Zielsystemen:** `powershell.exe`, `mimikatz.exe`, `cmd.exe`, `sc.exe`, `cmdkey.exe`, `schtasks`, `reg add` auf Windows; `systemctl` und `crontab` auf POSIX [`kx/crates/kx-win/README.md`](../kx/crates/kx-win/README.md), [`kx/crates/kx-posix/README.md`](../kx/crates/kx-posix/README.md).
 - **Dateisystem auf Zielsystemen:** Anlegen von systemd-Units unter `/etc/systemd/system/`, Mutieren der Crontab des aufrufenden Users, Registry-Run-Keys und Scheduled Tasks unter Windows [`kx/crates/kx-posix/README.md`](../kx/crates/kx-posix/README.md), [`kx/crates/kx-win/README.md`](../kx/crates/kx-win/README.md).

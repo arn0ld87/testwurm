@@ -84,3 +84,54 @@ pub async fn scan_tcp(hosts: &[IpAddr], ports: &[u16], timeout_ms: u64) -> ScanR
 pub async fn scan_common_ports(hosts: &[IpAddr], timeout_ms: u64) -> ScanResults {
     scan_tcp(hosts, COMMON_PORTS, timeout_ms).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+    use tokio::net::TcpListener;
+
+    /// Die Scanliste enthält SMB und RDP — ohne 445 ist der SMB-Relay-Zweig
+    /// des Agenten toter Code.
+    ///
+    /// 445 selbst lässt sich im Test nicht binden (privilegierter Port, dafür
+    /// wären Root-Rechte nötig), deshalb wird die Liste geprüft und der Scan
+    /// an einem freien Port nachgewiesen.
+    #[test]
+    fn die_scanliste_enthaelt_smb_und_rdp() {
+        assert!(
+            COMMON_PORTS.contains(&445),
+            "SMB (445) fehlt in der Scanliste"
+        );
+        assert!(
+            COMMON_PORTS.contains(&3389),
+            "RDP (3389) fehlt in der Scanliste"
+        );
+    }
+
+    /// Der Scan meldet einen offenen Port im Ergebnis.
+    #[tokio::test]
+    async fn der_scan_meldet_einen_offenen_port() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("Listener öffnet");
+        let port = listener.local_addr().expect("Adresse").port();
+        tokio::spawn(async move {
+            if let Ok((_socket, _)) = listener.accept().await {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        });
+
+        let host = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let ergebnis = scan_tcp(&[host], &[port], 500).await;
+
+        let offene = ergebnis
+            .open_ports
+            .get(&host)
+            .expect("Ergebnis für den Host");
+        assert!(
+            offene.contains(&port),
+            "der offene Port {port} fehlt im Ergebnis: {offene:?}"
+        );
+    }
+}
