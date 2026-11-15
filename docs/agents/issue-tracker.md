@@ -13,6 +13,8 @@ Issues are tracked as markdown files under `.scratch/<feature>/issues/` in this 
 id: ISSUE-<number>
 title: <Issue Title>
 status: open
+category: bug
+triage_state: needs-triage
 priority: medium
 ---
 
@@ -37,6 +39,22 @@ priority: medium
 - `done`: Completed and merged
 - `blocked`: Cannot proceed due to dependencies
 - `wontfix`: Decided not to implement
+
+## Triage Fields
+
+`status` beschreibt den Arbeitsstand. Die Triage-Rollen stehen daneben, damit
+Triage und Arbeitsstand getrennt geführt werden können:
+
+- `category`: `bug` (etwas ist kaputt) oder `enhancement` (neue Fähigkeit)
+- `triage_state`: `needs-triage`, `needs-info`, `ready-for-agent`,
+  `ready-for-human`, `wontfix` oder `erledigt`
+- `agent_brief`: Pfad zum Agent-Brief unter `.scratch/<feature>/briefs/`,
+  gesetzt sobald `triage_state` auf `ready-for-agent` steht
+
+Ein `ready-for-agent`-Issue trägt zusätzlich einen Abschnitt `## Triage Notes`
+mit dem Verifikationsstand und einen `## Agent Brief` mit Verweis auf die
+Brief-Datei. Der Brief ist die verbindliche Spezifikation für einen AFK-Agenten;
+Description und Triage Notes sind Kontext.
 
 ## Working with Issues
 

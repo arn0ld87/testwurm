@@ -2,6 +2,9 @@
 id: ISSUE-3
 title: Default-Credential-Angriff ist toter Code — try_default_credentials liefert stets Ok(None)
 status: open
+category: bug
+triage_state: ready-for-agent
+agent_brief: briefs/ISSUE-3-credential-test-dienstfilter.md
 priority: high
 ---
 
@@ -30,3 +33,19 @@ Related: ISSUE-2, ISSUE-4
 - Der Agent ruft die Funktion nur bei `service == "ssh"` auf (`propagate.rs:105`) — der Pfad ist also fachlich richtig verdrahtet, nur die Funktion ist ein Stub
 - `Auth` trägt `username`, `password`, `service` — die Felder passen zum geplanten Ergebnis
 - Sicherheitsaspekt: Default-Credentials gegen fremde Hosts sind ohne Autorisierung rechtlich problematisch. Das Repo ist explizit auf autorisierte Tests ausgerichtet (`CLAUDE.md`, `kx/README.md`); die Implementierung sollte einen Scope-Parameter vorsehen, damit sie nicht versehentlich außerhalb des Testnetzes läuft
+
+## Triage Notes
+
+**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+
+- Der tote Code ist beseitigt: es existiert ein echter Authentifizierungsversuch,
+  der bei Erfolg einen Treffer liefert und bei Misserfolg kontrolliert `None`.
+- Offen bleibt der Dienstparameter: er wird entgegengenommen, aber nicht
+  ausgewertet. Jeder Aufruf versucht SSH, unabhängig vom angesprochenen Dienst.
+- Offen bleibt der Timeout (eigene Issue) und ein Test.
+
+**Triage-Entscheidung:** Der Maintainer hat am 2026-11-15 entschieden, den
+Werkzeugansatz `sshpass` beizubehalten und den Timeout obendrauf zu setzen. Die
+ursprüngliche Vorgabe einer reinen Rust-SSH-Bibliothek mit Mock-Server im Test
+ist damit nicht mehr bindend; die Akzeptanzkriterien wurden entsprechend
+angepasst. Agent Brief: [`briefs/ISSUE-3-credential-test-dienstfilter.md`](briefs/ISSUE-3-credential-test-dienstfilter.md)

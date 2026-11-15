@@ -2,6 +2,9 @@
 id: ISSUE-2
 title: SMB-Relay ist toter Code — Port 445 fehlt in COMMON_PORTS
 status: open
+category: bug
+triage_state: ready-for-agent
+agent_brief: briefs/ISSUE-2-smb-relay-betriebsfaehig.md
 priority: high
 ---
 
@@ -42,3 +45,22 @@ Related: ISSUE-3, ISSUE-6
 - `COMMON_PORTS` wird auch vom Beispiel-Binary `kx-exploit/examples/demo_worm.rs` genutzt und dort mit dem gleichen 445-Problem
 - Alternativ: `scan_tcp` mit einer expliziten Portliste für den Exploit-Pfad aufrufen (`scan_tcp(&ips, &[445, 22], 1000)`), statt die gemeinsame Konstante zu verändern — dann bleibt `COMMON_PORTS` als „typische Dienste" semantisch sauber
 - Achtung bei Erweiterung von `COMMON_PORTS`: mehr Ports bedeuten mehr TCP-Verbindungen pro Host (aktuell 10 pro Host), was die Scanzeit linear verlängert
+
+## Triage Notes
+
+**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+
+- Der Port-Fix ist vorhanden: 445 steht in der gescannten Portliste, und das
+  Port-zu-Dienst-Mapping kennt den SMB-Dienst. Der ursprüngliche Kernbefund
+  dieser Issue ist damit behoben.
+- Der Ausführungspfad ist es nicht: Das referenzierte Relay-Skript liegt nicht im
+  Repository. Jeder Aufruf scheitert an der fehlenden Datei, bevor eine
+  Verbindung zum Ziel zustande kommt. Diese Ursache war in der Issue nicht
+  benannt.
+- Es fehlt weiterhin der Test, der 445 im Scan-Ergebnis belegt.
+- Das Mapping ist nicht vollständig konsistent: mehrere Zuordnungen (23, 25, 8443,
+  2375/2376) haben keine Entsprechung in der gescannten Portmenge.
+
+**Triage-Entscheidung:** Der Scope wird erweitert — das Skript wird als
+Repository-Asset mitgeliefert, der Port-Fix bleibt, der fehlende Test wird
+nachgezogen. Agent Brief: [`briefs/ISSUE-2-smb-relay-betriebsfaehig.md`](briefs/ISSUE-2-smb-relay-betriebsfaehig.md)

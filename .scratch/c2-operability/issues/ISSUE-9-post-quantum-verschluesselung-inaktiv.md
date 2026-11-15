@@ -2,6 +2,9 @@
 id: ISSUE-9
 title: Post-Quantum-Verschlüsselung der Beute ist inaktiv — hostkey-Modul nicht kompiliert
 status: open
+category: bug
+triage_state: ready-for-agent
+agent_brief: briefs/ISSUE-9-post-quantum-aktivieren.md
 priority: high
 ---
 
@@ -48,3 +51,16 @@ Related: ISSUE-8
 - `MlRng::try_fill_bytes` gibt stets `Ok(())` zurück und verschluckt Fehler des gewrappten RNG — ein Fehler der Entropiequelle bliebe unbemerkt
 - `ARGON2_SALT_LEN` (16) wird nirgends geprüft — `argon2id` validiert die Salt-Länge nicht
 - Der `TODO`-Kommentar nennt „ml-kem 0.2.1-API-Anpassungen" — das ist die Ursache, die mit ISSUE-8 (falsch aufgelöste Version) zusammenhängt
+
+## Triage Notes
+
+**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+
+- Der Befund ist bestätigt: die Modul-Deklaration des KEM-Moduls ist
+  auskommentiert, das Modul wird nicht kompiliert, und der Agent sendet die
+  Master-Key-Felder des C2-Vertrags leer.
+- Die Voraussetzung ist erfüllt: der `ml-kem`-Pin steht auf einer konkreten
+  Version. Die API des Moduls passt zu dieser aufgelösten Version noch nicht —
+  das ist der eigentliche Arbeitsanteil, kein fehlender Pin.
+
+**Triage-Entscheidung:** Agent Brief: [`briefs/ISSUE-9-post-quantum-aktivieren.md`](briefs/ISSUE-9-post-quantum-aktivieren.md)

@@ -2,6 +2,9 @@
 id: ISSUE-5
 title: demo_worm.rs Nutzungskommentar nennt nicht existierendes Flag --range
 status: open
+category: bug
+triage_state: ready-for-agent
+agent_brief: briefs/ISSUE-5-demo-worm-aufruf.md
 priority: low
 ---
 
@@ -29,3 +32,13 @@ Verifiziert am 2026-11-11 per Quellcode-Prüfung.
 - Betroffen: `kx/crates/kx-exploit/examples/demo_worm.rs:6`
 - Der Bug ist rein dokumentarisch, hat aber praktische Wirkung: wer den Kommentar übernimmt, startet das Beispiel nicht
 - Sinnvoll wäre zusätzlich ein `--help`-Hinweis im Beispiel selbst (clap liefert das automatisch)
+
+## Triage Notes
+
+**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+
+- Der Nutzungskommentar des Beispiels nennt weiterhin ein Bereichs-Flag, das der
+  Argument-Parser nicht kennt — er akzeptiert getrennte Start- und End-Angaben.
+  Der kopierte Aufruf bricht mit einem Parser-Fehler ab.
+
+**Triage-Entscheidung:** Agent Brief: [`briefs/ISSUE-5-demo-worm-aufruf.md`](briefs/ISSUE-5-demo-worm-aufruf.md)

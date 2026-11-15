@@ -2,6 +2,9 @@
 id: ISSUE-11
 title: Args leitet Debug ab — das C2-Token landet in jeder Debug-Ausgabe
 status: open
+category: bug
+triage_state: ready-for-agent
+agent_brief: briefs/ISSUE-11-token-aus-debug-output.md
 priority: medium
 ---
 
@@ -34,3 +37,16 @@ Related: ISSUE-10
 - Der übliche Weg ist eine Wrapper-Struktur: `struct Secret(String)` mit `impl fmt::Debug for Secret { fn fmt(...) { write!(f, "***") } }` und `impl From<String> for Secret`. Das Token bleibt dann in jedem Kontext maskiert
 - `clap` selbst braucht `Debug` nicht — der Derive ist also frei entbehrlich, sofern `Args` nicht in einer Fehlermeldung formatiert wird
 - Gleiches Muster prüfen: `kx-cli/src/main.rs` (`Cli`) — dort leitet die Struktur ebenfalls `Debug` ab und enthält ein Token-Feld
+
+## Triage Notes
+
+**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+
+- Der Befund ist bestätigt: Die Argumentstruktur des Agenten leitet Debug ab und
+  trägt das Token als String in einem Feld. Eine Debug-Ausgabe gibt den
+  Zugangsschlüssel im Klartext aus.
+- Das Ausgabeverhalten ist aktuell harmlos: die Struktur wird nirgends
+  debug-ausgegeben. Die Operator-CLI hat ihre Argumentstruktur ohne
+  Debug-Ableitung — das ist der Zielzustand.
+
+**Triage-Entscheidung:** Agent Brief: [`briefs/ISSUE-11-token-aus-debug-output.md`](briefs/ISSUE-11-token-aus-debug-output.md)

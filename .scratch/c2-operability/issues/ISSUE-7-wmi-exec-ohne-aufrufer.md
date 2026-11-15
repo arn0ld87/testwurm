@@ -2,6 +2,9 @@
 id: ISSUE-7
 title: wmi_exec hat keinen Aufrufer — dokumentierter WMI-Angriffspfad existiert nicht
 status: open
+category: bug
+triage_state: ready-for-agent
+agent_brief: briefs/ISSUE-7-wmi-pfad-entfernen.md
 priority: medium
 ---
 
@@ -29,3 +32,16 @@ Related: ISSUE-2, ISSUE-6
 - Zwei Wege: Implementierung anschließen oder die irreführende Dokumentation entfernen. Die erste Variante ist sinnvoller, weil die Funktion bereits existiert und getestet werden kann
 - WMI-Ausführung benötigt Port 5985/5986 (WinRM) — diese Ports müssten in den Scan einbezogen werden, was ISSUE-2 berührt
 - Das Passwort wird bei `wmi_exec` als Kommandozeilenargument übergeben (`format!("{}{}", domain, username)`) — im Prozess-Listing sichtbar, ein Sicherheitsdetail für die Zielsysteme
+
+## Triage Notes
+
+**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+
+- Der Befund ist bestätigt: der WMI-Ausführungspfad des Exploit-Crates hat keinen
+  Aufrufer, das Agenten-Flag wird geparst, aber nie ausgewertet, und die
+  Betriebsdokumentation beschreibt den Pfad als vorhanden.
+- Wie ISSUE-2 fehlt auch hier das referenzierte WMI-Skript im Repository.
+
+**Triage-Entscheidung:** Der Maintainer hat am 2026-11-15 entschieden, den
+WMI-Pfad zu entfernen statt ihn anzubinden — das ist der in der Issue
+ausdrücklich zugelassene zweite Weg. Agent Brief: [`briefs/ISSUE-7-wmi-pfad-entfernen.md`](briefs/ISSUE-7-wmi-pfad-entfernen.md)

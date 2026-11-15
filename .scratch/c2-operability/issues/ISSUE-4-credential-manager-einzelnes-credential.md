@@ -2,6 +2,9 @@
 id: ISSUE-4
 title: extract_credential_manager liefert bei genau einem Credential eine leere Liste
 status: open
+category: bug
+triage_state: ready-for-agent
+agent_brief: briefs/ISSUE-4-credential-manager-einzelfall.md
 priority: medium
 ---
 
@@ -31,3 +34,16 @@ Related: ISSUE-3
 - Mögliche Lösungen: im Skript `@(...)` um `$results` klammern (erzwingt Array), oder `$results | ConvertTo-Json` mit `-AsArray` (PowerShell 7+), oder im Rust-Code einen Ein-Objekt-Fallback implementieren
 - Die `-AsArray`-Variante setzt PowerShell 7 voraus; die Klammer-Variante funktioniert auch unter Windows PowerShell 5.1, das auf Zielsystemen häufiger vorliegt
 - Achtung: `parse_secrets_from_json` verschluckt jeden Parse-Fehler (`unwrap_or_default()`) — das macht den Bug unsichtbar. Ein `warn!` bei Fehlern wäre die wichtigere Härtung
+
+## Triage Notes
+
+**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+
+- Der Fehler ist bestätigt: Die PowerShell-Sammlung wird serialisiert, ohne den
+  Ergebniscontainer in einen Array-Zwang zu wrappen. Bei genau einem Element
+  entsteht ein JSON-Objekt statt eines Arrays, der Deserialisierer erwartet eine
+  Liste — das Ergebnis ist leer.
+- Der stille Fehlerpfad ist ebenfalls bestätigt: ein Parse-Fehler führt nicht zu
+  einer Log-Warnung.
+
+**Triage-Entscheidung:** Agent Brief: [`briefs/ISSUE-4-credential-manager-einzelfall.md`](briefs/ISSUE-4-credential-manager-einzelfall.md)
