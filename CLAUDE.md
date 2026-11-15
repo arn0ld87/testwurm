@@ -35,7 +35,7 @@ Das Repository-Root enthält keinen Code; die Architektur beginnt unter `kx/`.
   (`rustc 1.99.1` verifiziert auf dem macOS-Host). Cargo-Arbeitsverzeichnis ist
   ausschließlich `kx/` — der Workspace-Root ist `kx/`, nicht das Repo-Root.
 - **PATH:** `export PATH="$HOME/.cargo/bin:$PATH"`, falls rustup pro Shell frisch.
-- **Tests:** `cargo test --workspace` — 73 Tests grün, 0 Fehler.
+- **Tests:** `cargo test --workspace` — 108 Tests grün, 0 Fehler.
 - **Qualität:** `cargo fmt --check` ist grün und wird in der CI **erzwungen**
   (seit Commit 825511b ist der Workspace formatiert). `cargo clippy
   --workspace --all-targets` meldet noch einige Warnungen — clippy ist bewusst
@@ -52,7 +52,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # Bauen (CI-Matrix: Ubuntu und macOS)
 cargo build --workspace --all-targets
 
-# Tests (63 grün); gezielt ein Crate:
+# Tests (108 grün); gezielt ein Crate:
 cargo test --workspace
 cargo test -p kx-core
 
@@ -134,8 +134,8 @@ einbindet. Interne Abhängigkeiten sind ausschließlich `path`-Dependencies übe
 Datenfluss: `kx-agent` scannt und exfiltriert, meldet per `POST /api/register`
 und `POST /api/secrets` an den `kx-server`; der Server schreibt in SQLite
 (`hosts`, `secrets`, `tasks`) und liefert das HTML-Dashboard; `kx-cli` liest
-dieselben Daten per GET. Es gibt **keinen** Task-Abruf im Agenten — der Server
-kann Tasks anlegen, der Agent holt sie aber nicht ab.
+dieselben Daten per GET. Der Agent holt offene Tasks über `GET /api/tasks`, führt
+sie aus und meldet das Ergebnis über `POST /api/tasks/result`.
 
 ### Der C2-Wire-Vertrag (ADR-0001)
 
@@ -178,14 +178,14 @@ Operator entschlüsselt mit `kx-cli secrets --decrypt --server-key <bundle>`.
 ### Binaries und API
 
 - `kx-server`: `--host` (`127.0.0.1`), `--port` (`8443`), `--db` (`kx.db`), `--token`
-  (Env `KX_SERVER_TOKEN`), `--cn` (`kx.local`). Das Token steht im `AppState`, nicht in einer Environment-Variable —
-  eine Variable ist prozessweit und wirkt auf alle Tests.Das Token steht im `AppState`, nicht
-  in einer Environment-Variable — eine Variable ist prozessweit und wirkt auf
-  alle Tests. Zertifikat und Schlüssel bleiben im
+  (Env `KX_SERVER_TOKEN`), `--cn` (`kx.local`). Das Token steht im `AppState`, nicht
+  in einer Environment-Variable — eine Variable ist prozessweit und wirkt auf alle
+  Tests. Zertifikat und Schlüssel bleiben im
   Speicher; es wird keine `kx-server.crt`/`.key` geschrieben.
 - `kx-agent`: `--server`/`--token` (Env `KX_C2_URL`/`KX_C2_TOKEN`), `--server-cert`,
   `--iface` (`eth0`), `--start`/`--end` (Pflichtargumente), `--own-ip`, `--hosts`,
-  `--relay-script`.
+  `--relay-script`, `--server-key` (öffentlicher Server-Schlüssel als JSON-Datei —
+  ohne diese Option versiegelt der Agent nichts).
 - `kx-cli`: globale Flags `--server`, `--token`, `--cert`; Subcommands `hosts`,
   `secrets --user`, `export <pfad> --format`, `tasks`, `task-create --host-id --command`.
 - Routen (Bearer-Auth per `route_layer(require_auth)`, constant-time): `POST
@@ -223,10 +223,13 @@ Operator entschlüsselt mit `kx-cli secrets --decrypt --server-key <bundle>`.
 - `kx-tls` erzeugt ausschließlich selbstsignierte Zertifikate ohne CA-Kette; der
   Client lädt keinen System-Trust-Store.
 - Das Dashboard escaped jeden API-Wert; das Token kommt aus dem Login-Formular,
-  nicht aus dem Query-String.
+  nicht aus dem Query-String. Die Beute erscheint nur im Verschlüsselungszustand —
+  den Klartext holt sich der Operator mit `kx-cli secrets --decrypt`.
 - `kx-core/src/hostkey.rs` ist aktiv: der Agent versiegelt je Host einen
   Master-Key gegen den öffentlichen Server-Schlüssel. Der private ML-KEM-Schlüssel
   wird beim Drop genullt (`zeroize`).
+- Der Task-Kanal führt beliebige Shell-Kommandos aus, aber unter einer Zeitgrenze
+  (300 s) — ein hängendes Kommando blockiert den Agentenlauf nicht.
 
 ## Known Defects / Arbeitsvorrat
 
@@ -239,14 +242,15 @@ liegt in `EPIC.md`, der Designentwurf (Wellenplan, Entscheidungen D1–D7) in
 ISSUE-8 (`ml-kem`-Pin), ISSUE-10 (systemd-Unit), ISSUE-12 (API-Authentifizierung),
 ISSUE-13 (Dashboard-Escaping, Token im Query-String).
 
-**Noch offen (Welle 2):** ISSUE-9 (Post-Quantum-Verschlüsselung inaktiv).
+**Welle 2 (C2 betriebsfähig) ist abgeschlossen** — alle 14 Issues sind erledigt.
 
 **Erledigt:** ISSUE-2 (SMB-Relay: Relay-Skript liegt als Asset im Repository,
 der Aufruf nutzt die reale CLI, es gibt einen Port-445-Test), ISSUE-3 und
 ISSUE-14 (Credential-Test prüft den Dienst und läuft unter einer Zeitgrenze),
 ISSUE-4 (Credential Manager liefert bei einem Credential eine Liste),
 ISSUE-5 (Doc-Fix `--range`), ISSUE-7 (der WMI-Pfad wurde entfernt statt
-verdrahtet), ISSUE-11 (das Token-Feld maskiert den Debug-Output).
+verdrahtet), ISSUE-9 (das Hybrid-KEM ist aktiv, der Master-Key wird je Host
+versiegelt gemeldet), ISSUE-11 (das Token-Feld maskiert den Debug-Output).
 
 **Dokumentations-Drift:** Der Modul-Doc von `kx-core/src/lib.rs` beschreibt noch
 eine Schichtung `format → crypto → engine → beacon` aus einem Vorgängerprojekt —
@@ -269,17 +273,17 @@ kx/
 ├── Cargo.toml              # Workspace: members, [workspace.package], [workspace.dependencies], Profile
 ├── .cargo/config.toml      # Build-Hygiene und Cargo-Aliase
 ├── docs/00-recherche-phase0.md
+├── assets/              # smbrelayx.py (Impacket, Apache-Lizenz)
 ├── HANDOFF.md              # Übergabenotiz zum Arbeitsstand
 └── crates/
     ├── kx-core/            # c2.rs (Wire-Vertrag), format.rs, error.rs, util.rs, hostkey.rs
     ├── kx-scanner/         # arp.rs (nur Linux), tcp_scan.rs, fingerprint.rs
     ├── kx-exploit/         # smb_relay.rs, credential_stuff.rs, payload.rs, examples/
-    ├── assets/              # smbrelayx.py (Impacket, Apache-Lizenz)
     ├── kx-win/             # secrets.rs, persist.rs
     ├── kx-posix/           # secrets.rs, persist.rs
     ├── kx-tls/             # lib.rs (rustls/rcgen)
-    ├── kx-server/          # main.rs, auth.rs, db.rs, dashboard.rs
-    ├── kx-agent/           # main.rs, propagate.rs, c2.rs
+    ├── kx-server/          # main.rs, auth.rs, db.rs, dashboard.rs, e2e_test.rs
+    ├── kx-agent/           # main.rs, propagate.rs, c2.rs, tasks.rs, hostkey.rs
     └── kx-cli/             # main.rs, client.rs
 ```
 
