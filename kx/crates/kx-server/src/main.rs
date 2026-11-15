@@ -413,18 +413,18 @@ mod tests {
     }
 
     /// Der Router registriert genau die Endpunkte des C2-Protokolls.
+    ///
+    /// Geprüft wird der Router, den der Server selbst benutzt. Vorher hat der
+    /// Test seinen eigenen gebaut — eine aus `app()` entfernte Route liess den
+    /// Test gruen, und der Name versprach das Gegenteil.
     #[test]
     fn router_registers_the_contract_paths() {
-        let app = Router::new()
-            .route("/", get(dashboard))
-            .route(PATH_REGISTER, post(register))
-            .route(PATH_HEARTBEAT, post(heartbeat))
-            .route(PATH_SECRETS, post(upload_secret))
-            .route(PATH_HOSTS, get(list_hosts))
-            .route(PATH_SECRETS, get(list_secrets))
-            .route(PATH_TASKS, get(list_tasks))
-            .route(PATH_TASKS_CREATE, post(create_task))
-            .route(PATH_TASKS_RESULT, post(report_task_result));
+        let path = std::env::temp_dir().join(format!("kx-routes-{}.db", uuid::Uuid::new_v4()));
+        let state = AppState {
+            db: Arc::new(Db::open(&path).expect("db")),
+            token: Arc::new(TEST_ZUGANG.to_string()),
+        };
+        let app = app(state);
         // Ohne State lässt sich der Router nicht in einen Request schicken —
         // die Route-Pfade lassen sich aber über die Debug-Ausgabe prüfen.
         let debug = format!("{app:?}");
@@ -455,23 +455,7 @@ mod tests {
             token: Arc::new(TEST_ZUGANG.to_string()),
         };
 
-        let api = Router::new()
-            .route(PATH_REGISTER, post(register))
-            .route(PATH_HEARTBEAT, post(heartbeat))
-            .route(PATH_SECRETS, post(upload_secret))
-            .route(PATH_HOSTS, get(list_hosts))
-            .route(PATH_SECRETS, get(list_secrets))
-            .route(PATH_TASKS, get(list_tasks))
-            .route(PATH_TASKS_CREATE, post(create_task))
-            .route(PATH_TASKS_RESULT, post(report_task_result))
-            .route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth::require_auth,
-            ));
-        let app = Router::new()
-            .route("/", get(dashboard))
-            .merge(api)
-            .with_state(state);
+        let app = app(state);
 
         for path in [
             PATH_REGISTER,
@@ -546,16 +530,7 @@ mod tests {
             token: Arc::new(TEST_ZUGANG.to_string()),
         };
 
-        let api = Router::new()
-            .route(PATH_HOSTS, get(list_hosts))
-            .route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth::require_auth,
-            ));
-        let app = Router::new()
-            .route("/", get(dashboard))
-            .merge(api)
-            .with_state(state);
+        let app = app(state);
 
         let res = app
             .oneshot(
@@ -579,17 +554,7 @@ mod tests {
             token: Arc::new(TEST_ZUGANG.to_string()),
         };
 
-        let api = Router::new()
-            .route(PATH_HOSTS, get(list_hosts))
-            .route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth::require_auth,
-            ));
-        let app = Router::new()
-            .route("/", get(dashboard))
-            .route(PATH_LOGIN, post(login))
-            .merge(api)
-            .with_state(state);
+        let app = app(state);
 
         // Falsches Token → 401.
         let res = app
@@ -637,15 +602,7 @@ mod tests {
             db,
             token: Arc::new(TEST_ZUGANG.to_string()),
         };
-        let api = Router::new()
-            .route(PATH_TASKS, get(list_tasks))
-            .route(PATH_TASKS_CREATE, post(create_task))
-            .route(PATH_TASKS_RESULT, post(report_task_result))
-            .route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth::require_auth,
-            ));
-        let app = Router::new().merge(api).with_state(state);
+        let app = app(state);
 
         let res = app
             .clone()
@@ -705,15 +662,7 @@ mod tests {
             db,
             token: Arc::new(TEST_ZUGANG.to_string()),
         };
-        let api = Router::new()
-            .route(PATH_TASKS, get(list_tasks))
-            .route(PATH_TASKS_CREATE, post(create_task))
-            .route(PATH_TASKS_RESULT, post(report_task_result))
-            .route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth::require_auth,
-            ));
-        let app = Router::new().merge(api).with_state(state);
+        let app = app(state);
 
         // 1. Der Operator legt den Task an.
         let res = app
@@ -813,13 +762,7 @@ mod tests {
             db,
             token: Arc::new(TEST_ZUGANG.to_string()),
         };
-        let api = Router::new()
-            .route(PATH_TASKS_RESULT, post(report_task_result))
-            .route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth::require_auth,
-            ));
-        let app = Router::new().merge(api).with_state(state);
+        let app = app(state);
 
         let res = app
             .oneshot(
