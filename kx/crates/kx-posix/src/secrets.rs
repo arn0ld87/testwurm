@@ -3,21 +3,11 @@
 //! Erfordert in der Regel Root-Rechte. Auf Nicht-Unix-Plattformen liefern die
 //! Funktionen leere Ergebnisse oder einen Fehler.
 
-use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::error::PosixError;
+pub use kx_core::secret::Secret;
 
-/// Extrahiertes Secret von einem POSIX-System.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Secret {
-    /// Typ des Secrets (z.B. "shadow", "ssh_key", "aws").
-    pub secret_type: String,
-    /// Benutzername oder Ziel.
-    pub target: String,
-    /// Passwort, Hash oder Key-Inhalt.
-    pub value: String,
-}
+use crate::error::PosixError;
 
 /// Extrahiere Passwort-Hashes aus /etc/shadow.
 ///
@@ -56,6 +46,7 @@ pub async fn extract_shadow_hashes() -> Result<Vec<Secret>, PosixError> {
                 secret_type: "shadow".into(),
                 target: user,
                 value: hash,
+                source: "/etc/shadow".into(),
             });
         }
     }
@@ -84,8 +75,9 @@ pub async fn extract_ssh_keys() -> Result<Vec<Secret>, PosixError> {
                 if content.contains("PRIVATE KEY") {
                     secrets.push(Secret {
                         secret_type: "ssh_key".into(),
-                        target: name,
+                        target: name.clone(),
                         value: content,
+                        source: format!("{ssh_dir}/{name}"),
                     });
                 }
             }
@@ -128,6 +120,7 @@ pub async fn extract_aws_credentials() -> Result<Vec<Secret>, PosixError> {
                     secret_type: "aws".into(),
                     target: format!("{profile}/{key}"),
                     value: val.to_string(),
+                    source: creds_path.clone(),
                 });
             }
         }

