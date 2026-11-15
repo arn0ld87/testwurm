@@ -55,7 +55,12 @@ struct Cli {
     /// Bearer-Token für die API (leer => zufällig erzeugen).
     #[arg(long, env = "KX_SERVER_TOKEN")]
     token: Option<String>,
-    /// Common Name für das selbstsignierte Zertifikat.
+    /// Name für das selbstsignierte Zertifikat. Er landet im
+    /// SubjectAlternativeName (`DNS:<cn>`), nicht im Subject-DN — der
+    /// Subject-DN bleibt der rcgen-Default. Client und Agent prüfen den
+    /// Namen gegen die URL, die sie aufbauen: der Wert muss zum Host in
+    /// `--server` passen, sonst schlägt der TLS-Handshake mit
+    /// "certificate not valid for name" fehl.
     #[arg(long, default_value = "kx.local")]
     cn: String,
 }
