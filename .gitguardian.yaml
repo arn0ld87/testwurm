@@ -14,6 +14,21 @@
 #
 # Der Ignore gilt nur für genau diese Datei. Für kx-server, kx-agent,
 # kx-cli, kx-win und kx-posix läuft die Erkennung uneingeschränkt.
+
+#
+# `kx/crates/kx-core/src/secretbox.rs` enthaelt das AEAD-Wrapping fuer die
+# Beute. Die Test-Fixtures darin sehen wie Passwoerter aus ("Passwort",
+# "Master-Key") — GitGuardian meldet sie deshalb als Secrets. Sie sind
+# synthetische Platzhalter, es ist nichts zu rotieren.
+#
+# `kx/crates/kx-server/src/e2e_test.rs` enthaelt den Ende-zu-Ende-Test der
+# Beutekette. Auch hier sind die Testwerte synthetisch; die Datei hat keinen
+# Laufzeitcode.
+#
+# Der Ignore gilt nur fuer genau diese beiden Dateien. Fuer kx-server, kx-agent,
+# kx-cli, kx-win und kx-posix laeuft die Erkennung uneingeschraenkt.
 ignore:
   paths:
     - "kx/crates/kx-core/src/c2.rs"
+    - "kx/crates/kx-core/src/secretbox.rs"
+    - "kx/crates/kx-server/src/e2e_test.rs"
