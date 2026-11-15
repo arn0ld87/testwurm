@@ -101,7 +101,10 @@ pub async fn create_registry_run_key(name: &str, executable: &str) -> Result<(),
 #[cfg(target_os = "windows")]
 pub async fn install_service(invocation: &Invocation, display_name: &str) -> Result<(), WinError> {
     let output = tokio::process::Command::new("sc.exe")
-        .args(kx_core::persist::windows_service_arguments(invocation, display_name))
+        .args(kx_core::persist::windows_service_arguments(
+            invocation,
+            display_name,
+        ))
         .output()
         .await
         .map_err(|e| WinError::Service(e.to_string()))?;
