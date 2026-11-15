@@ -24,8 +24,9 @@ use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
 use db::{Db, HostRow, SecretRow};
 use kx_core::c2::{
-    self, HeartbeatRequest, LoginRequest, RegisterRequest, SecretUpload, PATH_HEARTBEAT,
-    PATH_HOSTS, PATH_LOGIN, PATH_REGISTER, PATH_SECRETS, PATH_TASKS,
+    self, CreateTaskRequest, HeartbeatRequest, LoginRequest, RegisterRequest, SecretUpload,
+    TaskResultRequest, PATH_HEARTBEAT, PATH_HOSTS, PATH_LOGIN, PATH_REGISTER, PATH_SECRETS,
+    PATH_TASKS, PATH_TASKS_CREATE, PATH_TASKS_RESULT, STATUS_PENDING,
 };
 use uuid::Uuid;
 
@@ -35,7 +36,9 @@ const HELP: &str = "POST /api/register   Host registrieren\n\
                     POST /api/secrets     Secret hochladen\n\
                     GET  /api/hosts       Alle Hosts\n\
                     GET  /api/secrets     Alle Secrets\n\
-                    GET  /api/tasks       Alle Tasks";
+                    GET  /api/tasks       Alle Tasks\n\
+                    POST /api/tasks/new   Task anlegen\n\
+                    POST /api/tasks/result  Task-Ergebnis melden";
 
 #[derive(Parser)]
 #[command(name = "kx-server", about = "Kx-C2-Backend")]
@@ -160,6 +163,56 @@ async fn list_secrets(State(st): State<AppState>) -> impl IntoResponse {
     }
 }
 
+/// Legt einen Task für einen Host an und liefert ihn in der Liste.
+///
+/// Vorher war die `tasks`-Tabelle stets leer; der Operator hatte keine
+/// Möglichkeit, einen Auftrag zu setzen.
+async fn create_task(
+    State(st): State<AppState>,
+    Json(req): Json<CreateTaskRequest>,
+) -> impl IntoResponse {
+    if req.host_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "host_id darf nicht leer sein").into_response();
+    }
+    let task = db::TaskRow {
+        id: Uuid::new_v4().to_string(),
+        host_id: req.host_id.clone(),
+        command: req.command.clone(),
+        status: STATUS_PENDING.to_string(),
+        result: String::new(),
+        created_at: kx_core::util::now_rfc3339(),
+    };
+    match st.db.insert_task(&task) {
+        // Der angelegte Task wird zurückgeliefert: der Operator braucht die
+        // ID, um das Ergebnis später zuzuordnen.
+        Ok(_) => (StatusCode::CREATED, Json(c2::Task::from(task))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Nimmt das Ergebnis eines ausgeführten Tasks entgegen.
+///
+/// Der Agent meldet hier Status und Ausgabe des Befehls zurück. Der Operator
+/// liest beides anschließend unter `GET /api/tasks`.
+async fn report_task_result(
+    State(st): State<AppState>,
+    Json(req): Json<TaskResultRequest>,
+) -> impl IntoResponse {
+    if req.task_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "task_id darf nicht leer sein").into_response();
+    }
+    match st
+        .db
+        .update_task_result(&req.task_id, &req.status, &req.result)
+    {
+        Ok(true) => StatusCode::OK.into_response(),
+        // Der Task existiert nicht (mehr). Der Agent darf daran erkennen, dass
+        // seine Meldung ins Leere lief.
+        Ok(false) => (StatusCode::NOT_FOUND, "unbekannter Task").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 /// Liefert alle Tasks als JSON.
 async fn list_tasks(State(st): State<AppState>) -> impl IntoResponse {
     match st.db.list_tasks() {
@@ -249,6 +302,8 @@ async fn main() {
         .route(PATH_HOSTS, get(list_hosts))
         .route(PATH_SECRETS, get(list_secrets))
         .route(PATH_TASKS, get(list_tasks))
+        .route(PATH_TASKS_CREATE, post(create_task))
+        .route(PATH_TASKS_RESULT, post(report_task_result))
         .route_layer(middleware::from_fn(auth::require_auth));
 
     // Der Login-Pfad steht neben dem geschützten API-Router, nicht darin:
@@ -291,6 +346,8 @@ mod tests {
             PATH_SECRETS,
             PATH_HOSTS,
             PATH_TASKS,
+            PATH_TASKS_CREATE,
+            PATH_TASKS_RESULT,
         ] {
             assert!(
                 HELP.contains(path),
@@ -309,7 +366,9 @@ mod tests {
             .route(PATH_SECRETS, post(upload_secret))
             .route(PATH_HOSTS, get(list_hosts))
             .route(PATH_SECRETS, get(list_secrets))
-            .route(PATH_TASKS, get(list_tasks));
+            .route(PATH_TASKS, get(list_tasks))
+            .route(PATH_TASKS_CREATE, post(create_task))
+            .route(PATH_TASKS_RESULT, post(report_task_result));
         // Ohne State lässt sich der Router nicht in einen Request schicken —
         // die Route-Pfade lassen sich aber über die Debug-Ausgabe prüfen.
         let debug = format!("{app:?}");
@@ -319,6 +378,8 @@ mod tests {
             PATH_SECRETS,
             PATH_HOSTS,
             PATH_TASKS,
+            PATH_TASKS_CREATE,
+            PATH_TASKS_RESULT,
         ] {
             assert!(debug.contains(path), "der Router registriert {path} nicht");
         }
@@ -342,6 +403,8 @@ mod tests {
             .route(PATH_HOSTS, get(list_hosts))
             .route(PATH_SECRETS, get(list_secrets))
             .route(PATH_TASKS, get(list_tasks))
+            .route(PATH_TASKS_CREATE, post(create_task))
+            .route(PATH_TASKS_RESULT, post(report_task_result))
             .route_layer(middleware::from_fn(auth::require_auth));
         let app = Router::new()
             .route("/", get(dashboard))
@@ -354,6 +417,8 @@ mod tests {
             PATH_SECRETS,
             PATH_HOSTS,
             PATH_TASKS,
+            PATH_TASKS_CREATE,
+            PATH_TASKS_RESULT,
         ] {
             // Ohne Token.
             let res = app
@@ -484,4 +549,185 @@ mod tests {
     use axum::body::Body;
     use axum::extract::Request;
     use tower::ServiceExt;
+
+    /// Das Anlegen eines Tasks füllt die `tasks`-Tabelle. Vorher war die
+    /// Tabelle stets leer — `GET /api/tasks` lieferte `[]`.
+    #[tokio::test]
+    async fn create_task_fills_the_task_table() {
+        std::env::set_var("KX_SERVER_TOKEN", "test-token");
+        // Eigene DB-Datei pro Lauf: ein fester Name sammelt ueber mehrere
+        // Testlaeufe Zeilen auf und macht die Zaehlung unbrauchbar.
+        let path = std::env::temp_dir().join(format!("kx-tasks-{}.db", uuid::Uuid::new_v4()));
+        let db = Arc::new(Db::open(&path).expect("db"));
+        let state = AppState { db };
+        let api = Router::new()
+            .route(PATH_TASKS, get(list_tasks))
+            .route(PATH_TASKS_CREATE, post(create_task))
+            .route(PATH_TASKS_RESULT, post(report_task_result))
+            .route_layer(middleware::from_fn(auth::require_auth));
+        let app = Router::new().merge(api).with_state(state);
+
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(PATH_TASKS_CREATE)
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"host_id":"10.0.0.5","command":"whoami"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri(PATH_TASKS)
+                    .header("authorization", "Bearer test-token")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024)
+            .await
+            .expect("Task-Liste serialisiert");
+        let body = String::from_utf8(bytes.to_vec()).expect("Task-Liste als UTF-8");
+        assert!(
+            body.contains("whoami"),
+            "der Task fehlt in der Liste: {body}"
+        );
+        assert!(body.contains("pending"), "der Status fehlt: {body}");
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Der vollstaendige Task-Fluss: der Operator legt einen Task an, der
+    /// Agent meldet das Ergebnis zurueck, und der Operator liest es unter
+    /// `GET /api/tasks` wieder aus.
+    ///
+    /// Das ist der Weg, den ISSUE-6 beschreibt — vorher gab es weder einen
+    /// Schreibpfad fuer die Tabelle noch eine Ergebnisrueckmeldung.
+    #[tokio::test]
+    async fn task_result_flows_back_into_the_task_list() {
+        std::env::set_var("KX_SERVER_TOKEN", "test-token");
+        let path = std::env::temp_dir().join(format!("kx-task-flow-{}.db", uuid::Uuid::new_v4()));
+        let db = Arc::new(Db::open(&path).expect("db"));
+        let state = AppState { db };
+        let api = Router::new()
+            .route(PATH_TASKS, get(list_tasks))
+            .route(PATH_TASKS_CREATE, post(create_task))
+            .route(PATH_TASKS_RESULT, post(report_task_result))
+            .route_layer(middleware::from_fn(auth::require_auth));
+        let app = Router::new().merge(api).with_state(state);
+
+        // 1. Der Operator legt den Task an.
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(PATH_TASKS_CREATE)
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"host_id":"10.0.0.5","command":"whoami"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+
+        // 2. Die ID des Tasks steht in der Liste — sie braucht der Agent,
+        //    um sein Ergebnis zuzuordnen.
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(PATH_TASKS)
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024)
+            .await
+            .expect("Task-Liste serialisiert");
+        let body = String::from_utf8(bytes.to_vec()).expect("Task-Liste als UTF-8");
+        let tasks: Vec<kx_core::c2::Task> = serde_json::from_str(&body).expect("Task-Liste lesbar");
+        assert_eq!(tasks.len(), 1, "es sollte genau einen Task geben: {body}");
+        let task_id = tasks[0].id.clone();
+
+        // 3. Der Agent meldet das Ergebnis.
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(PATH_TASKS_RESULT)
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"task_id":"{task_id}","status":"done","result":"root"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // 4. Der Operator liest das Ergebnis wieder aus.
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri(PATH_TASKS)
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024)
+            .await
+            .expect("Task-Liste serialisiert");
+        let body = String::from_utf8(bytes.to_vec()).expect("Task-Liste als UTF-8");
+        let tasks: Vec<kx_core::c2::Task> = serde_json::from_str(&body).expect("Task-Liste lesbar");
+        assert_eq!(tasks[0].status, "done");
+        assert_eq!(tasks[0].result, "root");
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Eine Ergebnisrueckmeldung zu einem unbekannten Task liefert 404 —
+    /// der Agent darf daran erkennen, dass sein Auftrag nicht (mehr) offen ist.
+    #[tokio::test]
+    async fn task_result_for_an_unknown_task_is_404() {
+        std::env::set_var("KX_SERVER_TOKEN", "test-token");
+        let path = std::env::temp_dir().join(format!("kx-task-404-{}.db", uuid::Uuid::new_v4()));
+        let db = Arc::new(Db::open(&path).expect("db"));
+        let state = AppState { db };
+        let api = Router::new()
+            .route(PATH_TASKS_RESULT, post(report_task_result))
+            .route_layer(middleware::from_fn(auth::require_auth));
+        let app = Router::new().merge(api).with_state(state);
+
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(PATH_TASKS_RESULT)
+                    .header("authorization", "Bearer test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"task_id":"gibtsnicht","status":"done","result":"x"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        std::fs::remove_file(&path).ok();
+    }
 }

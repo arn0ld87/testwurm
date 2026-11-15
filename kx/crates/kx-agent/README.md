@@ -31,7 +31,7 @@ keine eigenen Payload-Typen, sondern nimmt `kx_core::c2::RegisterRequest` und
 Rollup aus [`src/`](./src/README.md):
 
 - `pub enum C2Error` mit `Http(String)`, `Tls(String)`, `Json(String)` [src/c2.rs:C2Error].
-- `pub struct C2Client` mit privaten Feldern `agent: ureq::Agent`, `base_url: String`, `token: String`, sowie `pub fn new`, `pub async fn register_host` (POST `/api/register`) und `pub async fn upload_secret` (POST `/api/secrets`) [src/c2.rs:C2Client] [src/c2.rs:C2Client::new] [src/c2.rs:C2Client::register_host] [src/c2.rs:C2Client::upload_secret].
+- `pub struct C2Client` mit privaten Feldern `agent: ureq::Agent`, `base_url: String`, `token: String`, sowie `pub fn new`, `pub async fn register_host` (POST `/api/register`), `pub async fn upload_secret` (POST `/api/secrets`), `pub async fn fetch_tasks` (GET `/api/tasks`) und `pub async fn report_task_result` (POST `/api/tasks/result`) [src/c2.rs:C2Client] [src/c2.rs:C2Client::new] [src/c2.rs:C2Client::register_host] [src/c2.rs:C2Client::upload_secret] [src/c2.rs:C2Client::fetch_tasks] [src/c2.rs:C2Client::report_task_result].
 - `pub struct PropagationResults` mit genau zwei Feldern `new_hosts: Vec<RegisterRequest>` und `new_secrets: Vec<SecretUpload>` und `pub async fn run_propagation(discovered, relay_script, _wmi_script)` [src/propagate.rs:PropagationResults] [src/propagate.rs:run_propagation].
 - CLI-Oberfläche via `clap::Parser`: `--server`, `--token`, `--server-cert`, `--iface`, `--start`, `--end`, `--own-ip`, `--hosts`, `--relay-script`, `--wmi-script` [src/main.rs:Args].
 - Protokolltypen aus `kx_core::c2`: `RegisterRequest` (`host_id`, `ip`, `hostname`, `os`, `status`) und `SecretUpload` (`host_id`, `cred_type`, `username`, `password`, `source`) [../kx-core/src/c2.rs:RegisterRequest] [../kx-core/src/c2.rs:SecretUpload].
@@ -51,7 +51,10 @@ Rollup aus [`src/`](./src/README.md):
 - Der SMB-Relay-Zweig ist toter Code: `if *port == 445` kann nie zutreffen, weil `kx_scanner::COMMON_PORTS` kein 445 enthält [src/propagate.rs:run_propagation] [../kx-scanner/src/tcp_scan.rs:COMMON_PORTS].
 - Der Default-Credential-Zweig kann kein Secret liefern: `kx_exploit::try_default_credentials` gibt stets `Ok(None)` zurück [src/propagate.rs:run_propagation] [../kx-exploit/src/credential_stuff.rs:try_default_credentials].
 - Der Parameter `_wmi_script` wird nicht verwendet; im Crate existiert kein WMI-Ausführungspfad [src/propagate.rs:run_propagation].
-- Das Crate verarbeitet keine Tasks: kein Task-Endpunkt wird abgefragt, obwohl `kx_core::c2` `PATH_TASKS` anbietet [src/main.rs:main].
+- Der Agent verarbeitet Tasks: er holt die offenen Tasks über `GET /api/tasks`, führt
+  diejenigen mit eigener Host-Kennung und Status `pending` aus und meldet Status und
+  Ausgabe über `POST /api/tasks/result` zurück [src/tasks.rs:run_pending_tasks]
+  [src/c2.rs:C2Client::fetch_tasks] [src/c2.rs:C2Client::report_task_result].
 - Die für den ARP-Sweep verwendete MAC-Adresse ist der Platzhalter `[0x00; 6]` [src/main.rs:main].
 - Der systemd-Unit wird unter unix mit allen Pflichtargumenten geschrieben (`--server`, `--token`, `--server-cert`, `--iface`, `--start`, `--end`, `--own-ip`), während `Args` `--server` und `--token` zwingend verlangt [src/main.rs:install_persistence] [../kx-posix/src/persist.rs:systemd_unit_content].
 - Das Token steht nicht im Klartext in der Unit-Datei, sondern in der Environment-Datei `/etc/kx/kx-agent.env` (0600); die Unit referenziert `${KX_C2_TOKEN}` [src/main.rs:install_persistence] [../kx-posix/src/persist.rs:install_systemd_service].
@@ -64,7 +67,11 @@ Rollup aus [`src/`](./src/README.md):
 - ARP-Sweep über `kx_scanner::arp_sweep` und TCP-Connect-Scan über `kx_scanner::scan_tcp` mit `COMMON_PORTS` und 1000 ms Timeout [src/main.rs:main] [src/propagate.rs:run_propagation].
 - Lokale Secret-Extraktion über `kx_win::extract_lsass`, `kx_win::extract_credential_manager`, `kx_posix::extract_shadow_hashes`, `kx_posix::extract_aws_credentials` [src/main.rs:collect_local_secrets].
 - Persistenzinstallation: `kx_win::install_service` + `kx_win::start_service` (Windows) bzw. `kx_posix::install_systemd_service` (unix), Dienstname fest `kx-agent` [src/main.rs:install_persistence].
-- Netzwerk: HTTP-POST an `{base_url}/api/register` und `{base_url}/api/secrets` mit `Authorization: Bearer {token}` [src/c2.rs:C2Client::register_host] [src/c2.rs:C2Client::upload_secret].
+- Netzwerk: HTTP-POST an `{base_url}/api/register`, `{base_url}/api/secrets` und
+  `{base_url}/api/tasks/result`, HTTP-GET an `{base_url}/api/tasks`, jeweils mit
+  `Authorization: Bearer {token}` [src/c2.rs:C2Client::register_host]
+  [src/c2.rs:C2Client::upload_secret] [src/c2.rs:C2Client::fetch_tasks]
+  [src/c2.rs:C2Client::report_task_result].
 - Dateisystem: Lesen des Server-Zertifikats per `std::fs::read`, Auslesen des eigenen Executable-Pfads per `std::env::current_exe()`, Schreiben der Unit-Datei `/etc/systemd/system/kx-agent.service` unter unix [src/c2.rs:C2Client::new] [src/main.rs:install_persistence] [../kx-posix/src/persist.rs:install_systemd_service].
 - Prozessstart: `mimikatz.exe` und `powershell.exe` unter Windows, `systemctl` unter unix, `python3 <relay_script>` im SMB-Relay-Zweig [src/main.rs:collect_local_secrets] [src/main.rs:install_persistence] [src/propagate.rs:run_propagation].
 - Liest unter unix `/etc/shadow` und `$HOME/.aws/credentials` [src/main.rs:collect_local_secrets].

@@ -16,8 +16,8 @@ Die Verifikation erfolgt über `cargo test` aus der Workspace-Wurzel `/Volumes/T
 
 Rollup aus [`src/`](./src/README.md):
 
-- `#[derive(Parser)]` `Cli` mit den Top-Level-Argumenten `--server` (Env `KX_C2_URL`), `--token` (Env `KX_C2_TOKEN`) und `--cert` sowie den Subcommands `hosts`, `secrets` (Flag `--user`), `export` (positionelles `path`, Flag `--format`) und `tasks` [src/main.rs:Cli] [src/main.rs:Command]. Die drei Argumente sind **keine** clap-`global`-Flags (`global = true` fehlt in `src/main.rs:17,20,23`) — sie müssen **vor** dem Subcommand stehen; `kx-cli hosts --server https://x` scheitert mit „unexpected argument '--server' found“.
-- `pub struct Client` mit `pub fn new`, `pub async fn hosts`, `pub async fn secrets`, `pub async fn tasks` sowie `pub fn export` — alle Items sind mangels `lib.rs` crate-intern [src/client.rs:Client] [src/client.rs:export].
+- `#[derive(Parser)]` `Cli` mit den Top-Level-Argumenten `--server` (Env `KX_C2_URL`), `--token` (Env `KX_C2_TOKEN`) und `--cert` sowie den Subcommands `hosts`, `secrets` (Flag `--user`), `export` (positionelles `path`, Flag `--format`), `tasks` und `task-create` (Flags `--host-id` und `--command`) [src/main.rs:Cli] [src/main.rs:Command]. Die drei Argumente sind **keine** clap-`global`-Flags (`global = true` fehlt in `src/main.rs:17,20,23`) — sie müssen **vor** dem Subcommand stehen; `kx-cli hosts --server https://x` scheitert mit „unexpected argument '--server' found“.
+- `pub struct Client` mit `pub fn new`, `pub async fn hosts`, `pub async fn secrets`, `pub async fn tasks`, `pub async fn create_task` sowie `pub fn export` — alle Items sind mangels `lib.rs` crate-intern [src/client.rs:Client] [src/client.rs:export].
 - `pub enum ApiError` mit `Tls(String)`, `Http(String)`, `Json(String)`, `Io(String)` [src/client.rs:ApiError].
 - Datenmodelle `Host`, `ExfiltratedSecret` und `Task` stammen aus `kx_core::c2` [../kx-core/src/c2.rs:Host] [../kx-core/src/c2.rs:ExfiltratedSecret] [../kx-core/src/c2.rs:Task]; ein eigener Typ `Secret` existiert im Crate nicht.
 - Endpunktpfade über die Konstanten `PATH_HOSTS`, `PATH_SECRETS` und `PATH_TASKS` [../kx-core/src/c2.rs:PATH_HOSTS] [../kx-core/src/c2.rs:PATH_SECRETS] [../kx-core/src/c2.rs:PATH_TASKS].
@@ -42,7 +42,9 @@ Rollup aus [`src/`](./src/README.md):
 Rollup aus [`src/`](./src/README.md):
 
 - Dateisystem-Leszugriff: `std::fs::read(cert)` liest die PEM-Datei bei jeder Client-Konstruktion [src/client.rs:Client::new].
-- Netzwerk: HTTP GET auf `/api/hosts`, `/api/secrets` und `/api/tasks` [src/client.rs:Client::hosts] [src/client.rs:Client::secrets] [src/client.rs:Client::tasks].
+- Netzwerk: HTTP GET auf `/api/hosts`, `/api/secrets` und `/api/tasks`, HTTP POST auf
+  `/api/tasks/new` [src/client.rs:Client::hosts] [src/client.rs:Client::secrets]
+  [src/client.rs:Client::tasks] [src/client.rs:Client::create_task].
 - Dateisystem-Schreibzugriff: `std::fs::File::create` legt die Exportdatei an oder überschreibt sie; geschrieben werden die Secrets im Klartext, im JSON-Zweig inklusive `id` und `password` [src/client.rs:export].
 - stdout-Schreibzugriffe pro Host, Secret und Task; `std::process::exit(1)` bei jedem Fehlerpfad [src/main.rs:main].
 - Globaler Zustand: `tracing_subscriber` installiert den prozessweiten Subscriber [src/main.rs:main].

