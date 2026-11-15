@@ -82,7 +82,9 @@ Drei Binaries, klare Rollen:
 **Was kx nicht kann** (Stand heute, Details in [Abschnitt 11](#11--bekannte-einschränkungen))
 
 - Der Task-Kanal führt **beliebige** Shell-Kommandos aus — es gibt keine
-  Whitelist und keine Sandbox, nur eine Zeitgrenze von 300 s je Kommando
+  Whitelist und keine Sandbox, nur eine Zeitgrenze von 300 s je Kommando.
+  Das ist eine **bewusste Entscheidung** ([ADR-0003](./docs/adr/0003-der-task-kanal-fuehrt-beliebige-kommandos-aus.md)):
+  das Bearer-Token ist die Grenze, nicht eine Kommando-Liste.
 
 ---
 
@@ -813,6 +815,10 @@ Ablauf im Detail:
 > Es gibt keine Whitelist und keine Sandbox. Ein Kommando läuft unter einer
 > Zeitgrenze von 300 s — danach bricht der Agent den Task ab und meldet es.
 > Behandle das Token entsprechend und räume die Tasks nach dem Test auf.
+>
+> Die Freiheit ist **beabsichtigt**, keine Lücke: [ADR-0003](./docs/adr/0003-der-task-kanal-fuehrt-beliebige-kommandos-aus.md)
+> hält fest, dass das Bearer-Token die Grenze ist. Soll der Kanal später
+> eingegrenzt werden, ist die Sandbox der Weg — nicht eine Kommando-Liste.
 
 ### 8.2 Logging
 
@@ -903,7 +909,7 @@ Persistenz auf allen Zielsystemen entfernen.
 | Informationsleck | unbekannte Pfade → 404, nicht 401 |
 | XSS | jeder API-Wert wird escaped, bevor er in die Tabelle kommt |
 | Token-Leaks | kein Token im Query-String, kein Token im stderr, Environment-Datei 0600 |
-| **Token = Ausführungsrechte** | Der Task-Kanal führt beliebige Kommandos auf dem Zielsystem aus — das Token ist damit ein Vollzugriff, kein Lesezugriff |
+| **Token = Ausführungsrechte** | Der Task-Kanal führt beliebige Kommandos auf dem Zielsystem aus — das Token ist damit ein Vollzugriff, kein Lesezugriff. Bewusste Entscheidung, siehe [ADR-0003](./docs/adr/0003-der-task-kanal-fuehrt-beliebige-kommandos-aus.md) |
 | Beute im Klartext | Der Agent versiegelt die Beute mit dem Master-Key des Hosts — aber **nur mit `--server-key`**. Ohne den Schlüssel legt der Server die Passwörter im Klartext ab. Export und DB trotzdem verschlüsselt ablegen, danach löschen |
 | Persistenz | nach dem Test auf **allen** Zielsystemen entfernen |
 

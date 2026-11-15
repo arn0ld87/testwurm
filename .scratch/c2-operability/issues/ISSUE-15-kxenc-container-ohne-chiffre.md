@@ -3,6 +3,7 @@ id: ISSUE-15
 title: Das KXENC-Containerformat hat keine Chiffre — Dateiexfiltration ist nicht möglich
 status: open
 priority: medium
+handoff: briefs/ISSUE-15-handoff.md
 category: enhancement
 triage_state: needs-triage
 ---
