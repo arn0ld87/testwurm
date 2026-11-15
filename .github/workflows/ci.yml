@@ -80,6 +80,13 @@ jobs:
         with:
           workspaces: kx
 
+      # `ring` bringt ein build.rs mit, das C übersetzt — dafür braucht es den
+      # mingw-Compiler, auch wenn `cargo check` nicht linkt.
+      - name: mingw-w64 installieren
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mingw-w64
+
       # Der Wurm soll auf Windows laufen. Die Pfade hinter `cfg(windows)` werden
       # auf macOS und Linux nie übersetzt — ein Fehler dort bleibt still, bis
       # jemand das Binary auf Windows baut. `cargo check` genügt: übersetzen

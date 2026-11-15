@@ -108,7 +108,23 @@ obwohl in keinem Manifest ein Feature `syscalls` deklariert ist — dokumentiert
 - **Bewusst kein clippy-Gate** — clippy meldet noch Warnungen; das gehört in einen
   eigenen Arbeitsstrang, nicht in einen funkspezifischen PR.
 
-Ein PR ist erst mergefertig, wenn beide Jobs grün sind.
+Ein PR ist erst mergefertig, wenn alle Jobs grün sind.
+
+## Testskripte
+
+Unter `kx/scripts/` liegen die Werkzeuge, die eine Aussage treffen, statt
+nur zu laufen:
+
+- **`build.sh`** / **`build.ps1`** — der eine Build-Aufruf: baut die drei
+  Release-Binaries und legt sie in `dist/` zusammen. Das Windows-Gegenstück
+  ist dieselbe Form.
+- **`kx-vm-test.sh`** — der Feedback-Loop des Windows-Tests: startet den
+  Agenten in der Windows-VM und prüft, ob er sich beim C2 registriert.
+  Ein Aufruf, ein klares Urteil, kein Tippen.
+- **`kx-vm-control.sh`** — steuert die VM über den QEMU-Monitor (Tastatur,
+  Bildschirmabzüge). Läuft im Container, nicht auf dem Host.
+- **`kx-vm-setup.ps1`** — das Skript, das die VM ausführt: lädt den Agenten,
+  startet ihn und schickt das Log zurück.
 
 ## Architecture
 
@@ -258,8 +274,7 @@ gibt es nicht. Die Secret-Exfiltration läuft über `kx-core/src/secretbox.rs`.
 
 **Dokumentations-Drift:** Der Modul-Doc von `kx-core/src/lib.rs` beschreibt noch
 eine Schichtung `format → crypto → engine → beacon` aus einem Vorgängerprojekt —
-die Crates dieses Workspace heißen anders. Ebenso verweist
-`kx/.cargo/config.toml` auf ein `scripts/build.sh`, das es nicht gibt.
+die Crates dieses Workspace heißen anders.
 
 ## Security Considerations
 
