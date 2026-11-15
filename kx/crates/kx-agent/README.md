@@ -48,7 +48,7 @@ Rollup aus [`src/`](./src/README.md):
 - Jeder Host wird genau einmal pro Propagationslauf registriert; der Push liegt nach der Port-Schleife [src/propagate.rs:run_propagation].
 - Die Base-URL wird über `trim_end_matches('/')` normalisiert, bevor Pfade angehängt werden [src/c2.rs:C2Client::new].
 - Nur HTTP 200 und 201 gelten als Erfolg; jeder andere Status erzeugt `C2Error::Http` mit Response-Body [src/c2.rs:ensure_ok].
-- Der SMB-Relay-Zweig ist toter Code: `if *port == 445` kann nie zutreffen, weil `kx_scanner::COMMON_PORTS` kein 445 enthält [src/propagate.rs:run_propagation] [../kx-scanner/src/tcp_scan.rs:COMMON_PORTS].
+- Der SMB-Relay-Zweig wird erreicht, wenn der Scan Port 445 findet — der Pfad braucht Impacket auf dem Agentenhost [src/propagate.rs:run_propagation] [../kx-scanner/src/tcp_scan.rs:COMMON_PORTS].
 - Der Default-Credential-Zweig kann kein Secret liefern: `kx_exploit::try_default_credentials` gibt stets `Ok(None)` zurück [src/propagate.rs:run_propagation] [../kx-exploit/src/credential_stuff.rs:try_default_credentials].
 - Der Agent verarbeitet Tasks: er holt die offenen Tasks über `GET /api/tasks`, führt
   diejenigen mit eigener Host-Kennung und Status `pending` aus und meldet Status und

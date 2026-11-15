@@ -179,7 +179,7 @@ sequenceDiagram
     A->>Z: ARP-Sweep (Layer 2) oder --hosts-Liste
     A->>Z: TCP-Connect-Scan (12 Ports)
     alt Port 445 offen
-        A->>Z: SMB-Relay → DCSync (python3 smbrelayx.py)
+        A->>Z: SMB-Relay → DCSync (python3 assets/smbrelayx.py)
         Z-->>A: NT-Hashes
     end
     alt Port 22 offen
@@ -242,7 +242,7 @@ Diese Werkzeuge laufen **auf dem Agenten-Host**, nicht auf dem Ziel:
 
 | Werkzeug | Wird gebraucht für | Installation |
 |---|---|---|
-| `python3` + [Impacket](https://github.com/fortra/impacket) (`smbrelayx.py`) | SMB-Relay → DCSync | `pip3 install impacket` |
+| `python3` + [Impacket](https://github.com/fortra/impacket) | SMB-Relay → DCSync — das Skript liegt im Repo unter `kx/assets/` | `pip3 install impacket` |
 | `sshpass` + `ssh` | SSH-Default-Credentials | `apt install sshpass` / `brew install sshpass` |
 
 Ohne `sshpass` liefert der SSH-Zweig kontrolliert
@@ -582,7 +582,7 @@ Prozess im System lesbar, ein Environment-File mit 0600 ist es nicht.
 | `--end` | – | **Pflicht** | End-IP des Scanbereichs |
 | `--own-ip` | – | `192.168.1.100` | eigene IP = Host-Kennung des Agenten |
 | `--hosts` | – | – | kommagetrennte Zielliste, umgeht ARP |
-| `--relay-script` | – | `smbrelayx.py` | Pfad zum Impacket-Skript |
+| `--relay-script` | – | `assets/smbrelayx.py` | Pfad zum Impacket-Skript |
 
 **Ablauf eines Laufs**
 

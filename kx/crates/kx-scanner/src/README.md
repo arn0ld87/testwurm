@@ -38,7 +38,7 @@ Plattformen — **nur** der ARP-Sweep existiert exklusiv unter Linux
 - `pub struct ScanResults { pub open_ports: HashMap<IpAddr, Vec<u16>> }` —
   `#[derive(Debug, Clone)]` [tcp_scan.rs:ScanResults]
 - `impl ScanResults { pub fn new() -> Self }` — erzeugt eine leere Ergebnis-Map [tcp_scan.rs:ScanResults::new]
-- `pub const COMMON_PORTS: &[u16]` — `[22, 80, 135, 443, 1433, 1521, 3306, 5432, 5900, 8080]`
+- `pub const COMMON_PORTS: &[u16]` — `[22, 80, 135, 443, 1433, 1521, 3306, 3389, 445, 5432, 5900, 8080]`
   [tcp_scan.rs:COMMON_PORTS]
 - `pub async fn scan_tcp(hosts: &[IpAddr], ports: &[u16], timeout_ms: u64) -> ScanResults`
   [tcp_scan.rs:scan_tcp]
@@ -130,8 +130,8 @@ Plattformen — **nur** der ARP-Sweep existiert exklusiv unter Linux
   `Windows` (→ `"Windows"`) enthält; sonst bleibt `os == None` [fingerprint.rs:fingerprint]
 - `info.banner` wird vor der Pattern-Auswertung mit dem Rohbanner gefüllt und bleibt unverändert
   [fingerprint.rs:fingerprint]
-- Die Portmenge von `COMMON_PORTS` und die Erkennungstabelle von `identify_service` decken
-  dieselben zehn Ports ab [tcp_scan.rs:COMMON_PORTS]
+- Die Portmenge von `COMMON_PORTS` umfasst zwölf Ports, darunter SMB (445) und RDP (3389) —
+  ohne 445 wäre der SMB-Relay-Zweig des Agenten toter Code [tcp_scan.rs:COMMON_PORTS]
 - `arp.rs` ist Linux-spezifisch (`AF_PACKET`, `std::os::unix::io::RawFd`) und setzt
   `CAP_NET_RAW` bzw. Root-Rechte voraus; das Modul ist vollständig mit
   `#[cfg(target_os = "linux")]` ausgezeichnet, sodass das Crate auf macOS und Windows

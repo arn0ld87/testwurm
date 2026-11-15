@@ -24,7 +24,7 @@ Die Contracts sind inzwischen gegen den aktuellen Code geprüft und korrigiert. 
 | [ISSUE-13](issues/ISSUE-13-dashboard-xss-und-token-im-query-string.md) | Dashboard rendert API-Werte ohne Escaping — gespeichertes XSS; Token im Query-String | high | done |
 | [ISSUE-9](issues/ISSUE-9-post-quantum-verschluesselung-inaktiv.md) | Post-Quantum-Verschlüsselung der Beute ist inaktiv — hostkey-Modul nicht kompiliert | high | open |
 | [ISSUE-10](issues/ISSUE-10-systemd-neustartschleife.md) | systemd-Unit startet das Binary ohne Argumente — Neustart-Schleife bei Restart=always | high | done |
-| [ISSUE-2](issues/ISSUE-2-smb-relay-toter-code.md) | SMB-Relay ist toter Code — Port 445 fehlt in COMMON_PORTS | high | open |
+| [ISSUE-2](issues/ISSUE-2-smb-relay-toter-code.md) | SMB-Relay ist toter Code — Port 445 fehlt in COMMON_PORTS | high | done |
 | [ISSUE-3](issues/ISSUE-3-default-credentials-toter-code.md) | Default-Credential-Angriff ist toter Code — try_default_credentials liefert stets Ok(None) | high | open |
 | [ISSUE-4](issues/ISSUE-4-credential-manager-einzelnes-credential.md) | extract_credential_manager liefert bei genau einem Credential eine leere Liste | medium | open |
 | [ISSUE-6](issues/ISSUE-6-tasks-tabelle-ungenutzt.md) | GET /api/tasks liefert immer [] — Db::insert_task hat keinen Aufrufer | medium | done |
