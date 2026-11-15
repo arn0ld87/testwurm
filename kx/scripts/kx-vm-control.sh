@@ -35,6 +35,21 @@ sendkey() {
     sleep "$PAUSE"
 }
 
+# Mehrere Tasten ueber EINE Verbindung.
+#
+# Der Monitor-Socket nimmt nur eine Verbindung gleichzeitig. Ruft man fuer jede
+# Taste ein eigenes `nc` auf, blockiert das naechste, sobald das vorherige
+# nicht sauber beendet wird — und der Rest der Tasten geht verloren. Deshalb
+# gehen alle Tasten durch eine Verbindung, mit Pause zwischen den Kommandos.
+sendkeys() {
+    {
+        for k in "$@"; do
+            printf 'sendkey %s\n' "$k"
+            sleep "$PAUSE"
+        done
+    } | timeout 120 nc -q 1 -U "$MONITOR" >/dev/null 2>&1
+}
+
 # Alle Zeichen eines Textes in QEMU-Keycodes uebersetzen.
 to_keycodes() {
     local text="$1" i ch out=()
@@ -72,11 +87,11 @@ to_keycodes() {
 case "${1:-}" in
     tippen)
         # Jedes Argument ist eine Taste: "n e t spc u s e"
-        for k in $2; do sendkey "$k"; done
+        sendkeys $2
         ;;
     text)
         mapfile -t codes < <(to_keycodes "$2")
-        for k in "${codes[@]}"; do sendkey "$k"; done
+        sendkeys "${codes[@]}"
         ;;
     enter)
         sendkey ret

