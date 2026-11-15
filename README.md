@@ -252,13 +252,13 @@ Ohne `sshpass` liefert der SSH-Zweig kontrolliert
 `ExploitError::NoResult` — der Agent läuft weiter, sammelt aber keine
 SSH-Credentials. Ohne Impacket fällt der SMB-Zweig mit einer Warnung aus.
 
-> **Achtung `sshpass`:** Der Agent ruft `sshpass -f - ssh …` auf und wartet
-> ohne Gesamt-Timeout auf das Ergebnis. Installierte `sshpass`-Versionen, die
-> `-f -` nicht unterstützen (Homebrew-Build 1.10 auf macOS: `Failed to open
-> password file "-"`), hängen den Agenten **unbegrenzt** auf, sobald ein Ziel
-> Port 22 offen hat — der Lauf meldet dann nie seine Ergebnisse an den C2.
-> Details und Workaround: [ISSUE-14](./.scratch/c2-operability/issues/ISSUE-14-agent-haengt-im-ssh-credential-test.md).
-> Bis zur Behebung jeden Lauf in eine Timeout-Hülle setzen:
+> **Achtung `sshpass`:** Der Agent ruft `sshpass -f - ssh …` auf. Jeder
+> Versuch steht unter einer Zeitgrenze von 10 s, der gesamte Test unter einer
+> von 60 s; ein hängender Prozess wird beendet, der Agent meldet seine
+> Ergebnisse. Installierte `sshpass`-Versionen, die `-f -` nicht unterstützen
+> (Homebrew-Build 1.10 auf macOS: `Failed to open password file "-"`), werden
+> damit nicht mehr zum Hänger — der Versuch endet kontrolliert.
+> Als zusätzliche Hülle für den gesamten Agentenlauf:
 >
 > ```bash
 > timeout 300 ./kx-agent --server … --token … --server-cert …

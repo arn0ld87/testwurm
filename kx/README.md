@@ -117,7 +117,7 @@ Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C
 - **Der Server schreibt keine Zertifikatsdatei.** `generate_server_tls` liefert Zertifikat und Schlüssel im Speicher, die direkt an `RustlsConfig::from_pem` gehen; ein `kx-server.crt`/`kx-server.key` entsteht nicht [`crates/kx-server/src/main.rs`](./crates/kx-server/src/main.rs).
 - Der CLI-Export schreibt Passwörter im Klartext — JSON serialisiert alle Felder, CSV die Spalten `host_id,cred_type,username,password,source,collected_at` ohne `id` [`crates/kx-cli/src/README.md`](./crates/kx-cli/src/README.md).
 - `--wmi-script` wird vom Agent geparst, aber nicht ausgewertet; im Crate existiert kein WMI-Ausführungspfad [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
-- `try_default_credentials` führt keinen echten Authentifizierungsversuch durch und liefert stets `Ok(None)` — die Default-Credential-Liste ist Platzhalter-Logik [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md).
+- `try_default_credentials` führt für den Dienst `ssh` einen echten Authentifizierungsversuch durch (`sshpass`), für andere Dienste nicht; jeder Versuch steht unter einer Zeitgrenze [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md).
 - Die Host-ID des Agenten ist die eigene IP (`own_ip.to_string()`), nicht die Prozess-ID [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
 - `PropagationResults` trägt nur noch `new_hosts` und `new_secrets`; ein `source_host`-Feld existiert nicht mehr [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
 - **Der SMB-Relay-Pfad des Agenten ist toter Code.** `run_propagation` scannt ausschließlich `kx_scanner::COMMON_PORTS`, und diese Liste enthält 445 nicht — der Zweig `if *port == 445` wird nie erreicht [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md), [`crates/kx-scanner/src/README.md`](./crates/kx-scanner/src/README.md).
@@ -268,10 +268,10 @@ Der Agent durchläuft folgende Schritte — die lokale Phase läuft **vor** der 
 3. Den ARP-Sweep auf `eth0` im Bereich `192.168.1.1`–`192.168.1.254` ausführen
 4. Offene Ports scannen
 5. Windows-Systeme per SMB-Relay angreifen (nur Port 445 — **derzeit toter Code**, da `COMMON_PORTS` 445 nicht enthält)
-6. SSH-Systeme mit Default-Credentials testen (**toter Code**, da `try_default_credentials` stets `Ok(None)` liefert)
+6. SSH-Systeme mit Default-Credentials testen (erfordert `sshpass` auf dem Agentenhost)
 7. Alle Ergebnisse an den C2-Server melden
 
-> **Bekannte Funktionsdefekte:** Die Schritte 5 und 6 sind derzeit wirkungslos, und die
+> **Bekannte Funktionsdefekte:** Schritt 5 ist derzeit wirkungslos, und die
 > unter Linux installierte systemd-Unit startet das Binary **ohne Argumente**, obwohl
 > `--server` und `--token` Pflicht sind — mit `Restart=always` entsteht eine
 > Neustart-Schleife. Dreizehn solcher Defekte sind als Issues unter
