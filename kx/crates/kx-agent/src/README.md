@@ -38,8 +38,8 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
   Default `eth0`), `start` (`--start`,
   Pflicht), `end` (`--end`, Pflicht), `own_ip` (`--own-ip`, Default
   `192.168.1.100`), `hosts` (`--hosts`, optional, kommagetrennt),
-  `relay_script` (`--relay-script`, Default `smbrelayx.py`), `wmi_script`
-  (`--wmi-script`, Default `wmiexec.py`), `server_cert` (`--server-cert`,
+  `relay_script` (`--relay-script`, Default `smbrelayx.py`), `server_cert`
+  (`--server-cert`,
   Pflicht). Es existieren **keine** Subcommands.
 - `[main.rs:main]` — `async fn main()` mit `#[tokio::main]`, einziger
   Prozess-Einstiegspunkt.
@@ -86,7 +86,7 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
   genau zwei Feldern: `new_hosts: Vec<RegisterRequest>` und
   `new_secrets: Vec<SecretUpload>`. Ein Feld `source_host` existiert **nicht**;
   der Quellhost steht in jedem Element selbst (`host_id`).
-- `[propagate.rs:run_propagation]` — `pub async fn run_propagation(discovered: &[DiscoveredHost], relay_script: &str, _wmi_script: &str) -> PropagationResults`;
+- `[propagate.rs:run_propagation]` — `pub async fn run_propagation(discovered: &[DiscoveredHost], relay_script: &str) -> PropagationResults`;
   nutzt `kx_scanner::scan_tcp`, `kx_exploit::smb_relay_dcsync`,
   `kx_exploit::try_default_credentials`.
 - `[propagate.rs:service_for_port]` — `fn service_for_port(port: u16) -> &'static str` (privat);
@@ -122,7 +122,6 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 - Jeder Host wird **genau einmal** pro Propagationslauf registriert. Der Push liegt nach der Port-Schleife; vorher wurde er pro offenem Port gepusht, wodurch ein späterer Eintrag mit Status `discovered` den Status `compromised` überschrieb [propagate.rs:run_propagation].
 - Der SMB-Relay-Zweig (Port 445) ist **toter Code**: Die Bedingung `if *port == 445` kann nie zutreffen, weil der Scan mit `kx_scanner::COMMON_PORTS` läuft und diese Liste `[22, 80, 135, 443, 1433, 1521, 3306, 5432, 5900, 8080]` — **ohne 445** — ist [propagate.rs:run_propagation] [kx-scanner/src/tcp_scan.rs:COMMON_PORTS](../../kx-scanner/src/tcp_scan.rs).
 - Der Default-Credential-Zweig (Dienst `ssh`) liefert ein Secret, wenn `kx_exploit::try_default_credentials` eine Kombination bestätigt: die Funktion führt einen echten SSH-Versuch über `sshpass` durch und liefert `Ok(Some(Auth))`; ein Fehler oder eine abgelaufene Zeitgrenze lässt den Zweich leer, der Agent läuft weiter [propagate.rs:run_propagation] [kx-exploit/src/credential_stuff.rs:try_default_credentials](../../kx-exploit/src/credential_stuff.rs).
-- Der Parameter `_wmi_script` wird nicht verwendet; im Crate existiert kein WMI-Ausführungspfad [propagate.rs:run_propagation].
 - Der Host-Status wird nur bei erfolgreichem Exploit von `discovered` auf `compromised` gehoben; der Fehlerpfad des SMB-Relay lässt ihn auf `discovered` [propagate.rs:run_propagation].
 - Der unter unix geschriebene systemd-Unit startet das Binary mit allen
   Pflichtargumenten: `--server`, `--token`, `--server-cert`, `--iface`, `--start`,

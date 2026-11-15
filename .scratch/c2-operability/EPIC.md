@@ -28,7 +28,7 @@ Die Contracts sind inzwischen gegen den aktuellen Code geprüft und korrigiert. 
 | [ISSUE-3](issues/ISSUE-3-default-credentials-toter-code.md) | Default-Credential-Angriff ist toter Code — try_default_credentials liefert stets Ok(None) | high | open |
 | [ISSUE-4](issues/ISSUE-4-credential-manager-einzelnes-credential.md) | extract_credential_manager liefert bei genau einem Credential eine leere Liste | medium | open |
 | [ISSUE-6](issues/ISSUE-6-tasks-tabelle-ungenutzt.md) | GET /api/tasks liefert immer [] — Db::insert_task hat keinen Aufrufer | medium | done |
-| [ISSUE-7](issues/ISSUE-7-wmi-exec-ohne-aufrufer.md) | wmi_exec hat keinen Aufrufer — dokumentierter WMI-Angriffspfad existiert nicht | medium | open |
+| [ISSUE-7](issues/ISSUE-7-wmi-exec-ohne-aufrufer.md) | wmi_exec hat keinen Aufrufer — dokumentierter WMI-Angriffspfad existiert nicht | medium | done |
 | [ISSUE-8](issues/ISSUE-8-ml-kem-pin-umgangen.md) | ml-kem-Pin im Workspace wird von kx-core umgangen — 0.2.3 wird aufgelöst | medium | done |
 | [ISSUE-11](issues/ISSUE-11-token-im-debug-output.md) | Args leitet Debug ab — das C2-Token landet in jeder Debug-Ausgabe | medium | open |
 | [ISSUE-5](issues/ISSUE-5-demo-worm-range-flag.md) | demo_worm.rs Nutzungskommentar nennt nicht existierendes Flag --range | low | open |
@@ -83,12 +83,11 @@ Der Tracker war nicht mit `origin/main` synchron. Verifikation gegen `origin/mai
 - **ISSUE-6 ist erledigt** — PR #8, Commit `209834e`. Der Agent-Brief entfällt.
 - **ISSUE-2 ist nur halb behoben** — Port 445 ist im Code, das referenzierte
   Relay-Skript fehlt im Repository. Scope erweitert.
-- **ISSUE-3, ISSUE-4, ISSUE-5, ISSUE-7, ISSUE-9, ISSUE-11, ISSUE-14** sind
-  `ready-for-agent`. Für die acht offenen Issues liegt je ein Agent-Brief unter
-  [`briefs/`](briefs/), die Entscheidungen vom 2026-11-15 sind in den
-  jeweiligen Triage Notes festgehalten.
+- **ISSUE-3, ISSUE-4, ISSUE-5, ISSUE-11, ISSUE-14** sind erledigt (PR #21 und
+  PR #22), **ISSUE-7** ebenfalls — der WMI-Pfad wurde entfernt statt verdrahtet.
+- **ISSUE-2 und ISSUE-9** sind `ready-for-agent`. Für die zwei verbleibenden
+  Issues liegt je ein Agent-Brief unter [`briefs/`](briefs/), die Entscheidungen
+  vom 2026-11-15 sind in den jeweiligen Triage Notes festgehalten.
 
-Nicht von einem Issue abgedeckt: das WMI-Skript fehlt ebenfalls im Repository
-(Teil von ISSUE-7). Der Credential-Test ignoriert den Dienstparameter
-(Teil von ISSUE-3). Der lokale Branch `fix/welle-1-operability` war gegenüber
-`origin/main` diverged und ist archiviert.
+Nicht von einem Issue abgedeckt: der lokale Branch `fix/welle-1-operability`
+war gegenüber `origin/main` diverged und ist archiviert.

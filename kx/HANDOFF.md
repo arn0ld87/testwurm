@@ -15,7 +15,7 @@ Autonomer, post-quantum-verschlüsselter Netzwerkwurm für autorisierte Penetrat
 |-------|--------|----------|
 | kx-core | ✅ | Kryptografie, KXENC-Format, util (19 Tests) |
 | kx-scanner | ✅ | ARP-Sweep, TCP-Scan, Service-Identifikation (2 Tests) |
-| kx-exploit | ✅ | SMB-Relay, WMI-Exec, Credential-Stuffing |
+| kx-exploit | ✅ | SMB-Relay, Credential-Stuffing |
 | kx-win | ✅ | LSASS/Credential-Manager, Persistence |
 | kx-posix | ✅ | /etc/shadow, SSH-Keys, AWS, systemd/Cron (1 Test) |
 | kx-tls | ✅ | Selbstsignierte Zertifikate, Client-Configs |

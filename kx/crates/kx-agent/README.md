@@ -32,8 +32,8 @@ Rollup aus [`src/`](./src/README.md):
 
 - `pub enum C2Error` mit `Http(String)`, `Tls(String)`, `Json(String)` [src/c2.rs:C2Error].
 - `pub struct C2Client` mit privaten Feldern `agent: ureq::Agent`, `base_url: String`, `token: String`, sowie `pub fn new`, `pub async fn register_host` (POST `/api/register`), `pub async fn upload_secret` (POST `/api/secrets`), `pub async fn fetch_tasks` (GET `/api/tasks`) und `pub async fn report_task_result` (POST `/api/tasks/result`) [src/c2.rs:C2Client] [src/c2.rs:C2Client::new] [src/c2.rs:C2Client::register_host] [src/c2.rs:C2Client::upload_secret] [src/c2.rs:C2Client::fetch_tasks] [src/c2.rs:C2Client::report_task_result].
-- `pub struct PropagationResults` mit genau zwei Feldern `new_hosts: Vec<RegisterRequest>` und `new_secrets: Vec<SecretUpload>` und `pub async fn run_propagation(discovered, relay_script, _wmi_script)` [src/propagate.rs:PropagationResults] [src/propagate.rs:run_propagation].
-- CLI-Oberfläche via `clap::Parser`: `--server`, `--token`, `--server-cert`, `--iface`, `--start`, `--end`, `--own-ip`, `--hosts`, `--relay-script`, `--wmi-script` [src/main.rs:Args].
+- `pub struct PropagationResults` mit genau zwei Feldern `new_hosts: Vec<RegisterRequest>` und `new_secrets: Vec<SecretUpload>` und `pub async fn run_propagation(discovered, relay_script)` [src/propagate.rs:PropagationResults] [src/propagate.rs:run_propagation].
+- CLI-Oberfläche via `clap::Parser`: `--server`, `--token`, `--server-cert`, `--iface`, `--start`, `--end`, `--own-ip`, `--hosts`, `--relay-script` [src/main.rs:Args].
 - Protokolltypen aus `kx_core::c2`: `RegisterRequest` (`host_id`, `ip`, `hostname`, `os`, `status`) und `SecretUpload` (`host_id`, `cred_type`, `username`, `password`, `source`) [../kx-core/src/c2.rs:RegisterRequest] [../kx-core/src/c2.rs:SecretUpload].
 
 ## Invariants
@@ -50,7 +50,6 @@ Rollup aus [`src/`](./src/README.md):
 - Nur HTTP 200 und 201 gelten als Erfolg; jeder andere Status erzeugt `C2Error::Http` mit Response-Body [src/c2.rs:ensure_ok].
 - Der SMB-Relay-Zweig ist toter Code: `if *port == 445` kann nie zutreffen, weil `kx_scanner::COMMON_PORTS` kein 445 enthält [src/propagate.rs:run_propagation] [../kx-scanner/src/tcp_scan.rs:COMMON_PORTS].
 - Der Default-Credential-Zweig kann kein Secret liefern: `kx_exploit::try_default_credentials` gibt stets `Ok(None)` zurück [src/propagate.rs:run_propagation] [../kx-exploit/src/credential_stuff.rs:try_default_credentials].
-- Der Parameter `_wmi_script` wird nicht verwendet; im Crate existiert kein WMI-Ausführungspfad [src/propagate.rs:run_propagation].
 - Der Agent verarbeitet Tasks: er holt die offenen Tasks über `GET /api/tasks`, führt
   diejenigen mit eigener Host-Kennung und Status `pending` aus und meldet Status und
   Ausgabe über `POST /api/tasks/result` zurück [src/tasks.rs:run_pending_tasks]
