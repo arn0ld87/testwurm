@@ -2,6 +2,9 @@
 id: ISSUE-14
 title: Agent hängt im SSH-Default-Credential-Test — sshpass ohne Timeout
 status: open
+category: bug
+triage_state: ready-for-agent
+agent_brief: briefs/ISSUE-14-ssh-credential-test-timeout.md
 priority: high
 ---
 
@@ -81,3 +84,18 @@ Related: ISSUE-3
   sechs unabhängige Hänger
 - Workaround bis zur Behebung: den Agentenlauf in eine `timeout`-Hülle setzen
   (`timeout 300 ./kx-agent …`) oder Ziele ohne offenen Port 22 wählen
+
+## Triage Notes
+
+**Verifiziert am 2026-11-15 gegen `origin/main` (74 Tests grün):**
+
+- Der Befund ist bestätigt: der Subprozess wird ohne Zeitgrenze und ohne
+  Abbruchmechanismus erwartet. Die gesetzte Verbindungs-Zeitgrenze greift nur
+  für den Verbindungsaufbau; ein danach hängender Prozess blockiert den
+  Agentenlauf endlos. Die Kandidaten laufen sequenziell, die Wartezeit summiert
+  sich.
+- Der Doc-Kommentar des Moduls verspricht bereits ein Zeitlimit, das der Code
+  nicht setzt.
+
+**Triage-Entscheidung:** Der Maintainer hat am 2026-11-15 entschieden, `sshpass`
+beizubehalten und die Zeitgrenze obendrauf zu setzen. Agent Brief: [`briefs/ISSUE-14-ssh-credential-test-timeout.md`](briefs/ISSUE-14-ssh-credential-test-timeout.md)

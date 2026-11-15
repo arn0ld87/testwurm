@@ -48,9 +48,9 @@ Die Wellen aus `design_draft.md` sind die verbindliche Reihenfolge.
 
 **Welle 2 — Funktionslücken schließen:**
 
-7. **ISSUE-2 + ISSUE-3** — machen die beiden Exploit-Pfade wieder ausführbar.
+7. **ISSUE-2 + ISSUE-3** — machen die beiden Exploit-Pfade wieder ausführbar. Für ISSUE-2 heißt das mehr als den Port-Fix: das referenzierte Relay-Skript liegt nicht im Repository, der Pfad scheitert also auch mit Port 445 an einer fehlenden Datei.
 8. **ISSUE-4** — Korrektheit der Credential-Extraktion, betrifft ein einzelnes gespeichertes Credential.
-9. **ISSUE-6 + ISSUE-7** — vervollständigen den Task- und den WMI-Pfad.
+9. **ISSUE-7** — der WMI-Pfad wird entfernt statt verdrahtet (Entscheidung vom 2026-11-15). ISSUE-6 ist erledigt (PR #8, Commit `209834e`): Task-Anlage, Agent-Abholung und -Rückmeldung liegen in `origin/main`.
 10. **ISSUE-11** — Token-Härtung, unkritisch aber billig.
 11. **ISSUE-5** — kosmetisch, aber triviales Doc-Fix.
 
@@ -74,3 +74,21 @@ cargo build --release
 ```
 
 Der Start-Smoke-Test ist der eigentliche Abnahmeprüfpunkt: er schlägt heute mit dem CryptoProvider-Panic fehl und muss nach ISSUE-1 mit der API-Übersicht antworten.
+
+## Triage-Stand (2026-11-15)
+
+Der Tracker war nicht mit `origin/main` synchron. Verifikation gegen `origin/main`
+(74 Tests grün) ergab:
+
+- **ISSUE-6 ist erledigt** — PR #8, Commit `209834e`. Der Agent-Brief entfällt.
+- **ISSUE-2 ist nur halb behoben** — Port 445 ist im Code, das referenzierte
+  Relay-Skript fehlt im Repository. Scope erweitert.
+- **ISSUE-3, ISSUE-4, ISSUE-5, ISSUE-7, ISSUE-9, ISSUE-11, ISSUE-14** sind
+  `ready-for-agent`. Für die acht offenen Issues liegt je ein Agent-Brief unter
+  [`briefs/`](briefs/), die Entscheidungen vom 2026-11-15 sind in den
+  jeweiligen Triage Notes festgehalten.
+
+Nicht von einem Issue abgedeckt: das WMI-Skript fehlt ebenfalls im Repository
+(Teil von ISSUE-7). Der Credential-Test ignoriert den Dienstparameter
+(Teil von ISSUE-3). Der lokale Branch `fix/welle-1-operability` war gegenüber
+`origin/main` diverged und ist archiviert.
