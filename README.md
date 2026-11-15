@@ -989,7 +989,7 @@ nicht.
 
 ```bash
 cd kx
-cargo test --workspace                     # 108 Tests, 0 Fehler
+cargo test --workspace                     # 136 Tests, 0 Fehler
 cargo test -p kx-core c2::tests::host_deserializes_from_server_json
 cargo build --release -p kx-server
 ```
@@ -1016,7 +1016,7 @@ ausgeführt — nicht nur beschrieben:
 
 | Prüfung | Ergebnis |
 |---|---|
-| `cargo test --workspace` | **108 Tests grün, 0 Fehler** (Stand 2026-11-15, `main`) |
+| `cargo test --workspace` | **136 Tests grün, 0 Fehler** (Stand 2026-11-15, `main`) |
 | `kx-server` starten | `Kx-Server lauscht auf https://127.0.0.1:84444 (API: …)` |
 | `GET /api/hosts` ohne Token | `401` |
 | `GET /api/hosts` mit falschem Token | `401` |
