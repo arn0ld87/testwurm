@@ -75,7 +75,7 @@ Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C
 ### Binaries
 
 - `kx-server` — C2-Backend. CLI-Flags: `--host` (Default `127.0.0.1`), `--port` (Default `8443`), `--db` (Default `kx.db`), `--token` (Env `KX_SERVER_TOKEN`), `--cn` (Default `kx.local`) [`crates/kx-server/src/README.md`](./crates/kx-server/src/README.md).
-- `kx-agent` — Autonomer Wurm. CLI-Flags: `--server` (Env `KX_C2_URL`), `--token` (Env `KX_C2_TOKEN`), `--server-cert`, `--iface` (Default `eth0`), `--start`, `--end`, `--own-ip` (Default `192.168.1.100`), `--hosts`, `--relay-script` (Default `smbrelayx.py`) [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
+- `kx-agent` — Autonomer Wurm. CLI-Flags: `--server` (Env `KX_C2_URL`), `--token` (Env `KX_C2_TOKEN`), `--server-cert`, `--server-key`, `--iface` (Default `eth0`), `--start`, `--end`, `--own-ip` (Default `192.168.1.100`), `--hosts`, `--relay-script` (Default `smbrelayx.py`) [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
 - `kx-cli` — Operator-CLI. Globale Flags `--server` (Env `KX_C2_URL`), `--token` (Env `KX_C2_TOKEN`), `--cert`; Subcommands `hosts`, `secrets` (mit `--user`), `export` (mit `--format json|csv`), `tasks` [`crates/kx-cli/src/README.md`](./crates/kx-cli/src/README.md).
 
 ### API-Routen des C2-Servers

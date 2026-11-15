@@ -157,6 +157,7 @@ mod tests {
             password: "hash".into(),
             source: Some("smb_relay".into()),
             master_key: None,
+            sealed_password: None,
         };
         let v = ureq::serde_json::to_value(&upload).unwrap();
         assert_eq!(v["host_id"], "192.168.1.5");

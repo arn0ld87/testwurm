@@ -82,7 +82,7 @@ Drei Binaries, klare Rollen:
 **Was kx nicht kann** (Stand heute, Details in [Abschnitt 11](#11--bekannte-einschränkungen))
 
 - Der Task-Kanal führt **beliebige** Shell-Kommandos aus — es gibt keine
-  Whitelist, keine Sandbox und keine Zeitgrenze
+  Whitelist und keine Sandbox, nur eine Zeitgrenze von 300 s je Kommando
 
 ---
 
@@ -780,7 +780,8 @@ Ablauf im Detail:
 > **Achtung:** Der Task-Kanal ist **beliebige Codeausführung** auf dem
 > Zielsystem. Wer das Bearer-Token hat, hat damit Root-äquivalente Rechte auf
 > dem Agenten-Host — das Token ist damit deutlich mehr als ein Lesezugriff.
-> Es gibt keine Whitelist, keine Sandbox und kein Timeout für ein Kommando.
+> Es gibt keine Whitelist und keine Sandbox. Ein Kommando läuft unter einer
+> Zeitgrenze von 300 s — danach bricht der Agent den Task ab und meldet es.
 > Behandle das Token entsprechend und räume die Tasks nach dem Test auf.
 
 ### 8.2 Logging

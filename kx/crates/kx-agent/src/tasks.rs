@@ -8,9 +8,13 @@
 //! Die Befehlsausfuehrung laeuft in diesem Modul bewusst ueber die Shell:
 //! ein Auftrag ist ein Kommandozeilen-Befehl, keine Argvektor-Liste.
 
-use std::process::Command;
+use std::process::Stdio;
+use tokio::process::Command;
+
+use std::time::Duration;
 
 use kx_core::c2::{Task, TaskResultRequest, STATUS_DONE, STATUS_FAILED, STATUS_PENDING};
+use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::c2::C2Client;
@@ -41,7 +45,7 @@ pub async fn run_pending_tasks(
 
     let mut executed = 0usize;
     for task in pending {
-        let output = execute_command(&task.command);
+        let output = execute_command(&task.command).await;
         let status = if output.status == 0 {
             STATUS_DONE
         } else {
@@ -83,11 +87,54 @@ struct CommandOutput {
 ///
 /// Der Exitcode landet in `status`; die Ausgabe in `output`, gekuerzt auf
 /// [`MAX_RESULT_LEN`].
-fn execute_command(command: &str) -> CommandOutput {
-    let result = Command::new(shell())
-        .arg(shell_flag())
-        .arg(command)
-        .output();
+/// Zeitgrenze fuer ein einzelnes Task-Kommando.
+///
+/// Ein Task laeuft auf dem Agentenhost. Ohne Grenze blockiert ein Kommando
+/// wie `sleep 3600` den ganzen Agentenlauf — der Operator bekommt kein
+/// Ergebnis mehr.
+const TASK_TIMEOUT: Duration = Duration::from_secs(300);
+
+async fn execute_command(command: &str) -> CommandOutput {
+    execute_command_with_timeout(command, TASK_TIMEOUT).await
+}
+
+/// Fuehrt ein Task-Kommando unter einer Zeitgrenze aus.
+///
+/// Die Grenze ist ein Parameter, damit der Test einen haengenden Befehl mit
+/// einer kurzen Grenze abbrechen kann.
+async fn execute_command_with_timeout(command: &str, limit: Duration) -> CommandOutput {
+    let mut kind = Command::new(shell());
+    kind.arg(shell_flag()).arg(command);
+    kind.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let kind = match kind.spawn() {
+        Ok(kind) => kind,
+        Err(e) => {
+            warn!("Kommando konnte nicht gestartet werden: {e}");
+            return CommandOutput {
+                status: -1,
+                output: truncate(&format!("Start fehlgeschlagen: {e}"), MAX_RESULT_LEN),
+            };
+        }
+    };
+
+    let result = match timeout(limit, kind.wait_with_output()).await {
+        Ok(Ok(out)) => Ok(out),
+        Ok(Err(e)) => Err(e),
+        Err(_) => {
+            warn!("Task-Kommando nach {limit:?} abgebrochen: {command}");
+            return CommandOutput {
+                status: -1,
+                output: truncate(
+                    &format!("Kommando nach {limit:?} abgebrochen"),
+                    MAX_RESULT_LEN,
+                ),
+            };
+        }
+    };
 
     match result {
         Ok(out) => {
@@ -162,9 +209,9 @@ mod tests {
     /// Der Agent fuehrt wirklich etwas aus — der Pfad ist nicht nur eine
     /// Formalitaet. Ohne diesen Test koennte die Shell-Anbindung stillschweigend
     /// kaputt sein.
-    #[test]
-    fn command_output_carries_the_real_result() {
-        let out = execute_command("echo kx-task-test");
+    #[tokio::test]
+    async fn command_output_carries_the_real_result() {
+        let out = execute_command("echo kx-task-test").await;
         assert_eq!(out.status, 0, "der Befehl sollte erfolgreich sein");
         assert!(
             out.output.contains("kx-task-test"),
@@ -175,9 +222,32 @@ mod tests {
 
     /// Ein fehlschlagender Befehl liefert einen Exitcode ungleich null — der
     /// Agent meldet daraus den Status `failed`.
-    #[test]
-    fn failing_command_reports_a_nonzero_status() {
-        let out = execute_command("exit 3");
+
+    /// Ein haengendes Task-Kommando blockiert den Agentenlauf nicht.
+    ///
+    /// Ohne Zeitgrenze wuerde ein Task wie `sleep 60` den ganzen Lauf an
+    ///halten — der Operator bekommt kein Ergebnis mehr.
+    #[tokio::test]
+    async fn ein_haengendes_task_kommando_wird_abgebrochen() {
+        let start = std::time::Instant::now();
+        let out = execute_command_with_timeout("sleep 30", Duration::from_millis(200)).await;
+
+        assert_eq!(out.status, -1, "der Befehl haette erfolgreich sein muessen");
+        assert!(
+            out.output.contains("abgebrochen"),
+            "die Ausgabe nennt den Abbruch nicht: {}",
+            out.output
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "der Abbruch hat zu lange gedauert: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn failing_command_reports_a_nonzero_status() {
+        let out = execute_command("exit 3").await;
         assert_eq!(out.status, 3);
     }
 

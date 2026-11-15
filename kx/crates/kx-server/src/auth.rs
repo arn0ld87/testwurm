@@ -3,7 +3,7 @@
 //! Einfache Token-Prüfung für Operator- und Agent-Zugriffe. Das Token wird
 //! via Umgebungsvariable KX_SERVER_TOKEN oder als Argument übergeben.
 
-use axum::extract::Request;
+use axum::extract::{Request, State};
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use axum::http::StatusCode;
@@ -37,13 +37,19 @@ pub fn verify(parts: &Parts, expected: &str) -> bool {
 /// Anfrage überhaupt auf eine Route trifft. Sonst würde ein 404 zu einem 401
 /// und damit verraten, ob ein Pfad existiert.
 ///
-/// Der Token wird prozessweit aus `KX_SERVER_TOKEN` gelesen, damit er nicht
-/// durch den State jedes Handlers geschleift werden muss.
-pub async fn require_auth(req: Request, next: Next) -> Response {
-    let expected = std::env::var("KX_SERVER_TOKEN").unwrap_or_default();
+/// Der Token kommt aus dem `AppState` — nicht aus einer Environment-Variable.
+/// Eine Environment-Variable ist prozessweit: jeder Test, der sie setzt,
+/// wirkt auf alle anderen. Im State steht der Token genau dort, wo er
+/// geprueft wird.
+pub async fn require_auth(
+    State(state): State<crate::AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let expected = state.token.as_str();
     let (parts, body) = req.into_parts();
 
-    if verify(&parts, &expected) {
+    if verify(&parts, expected) {
         next.run(Request::from_parts(parts, body)).await
     } else {
         (

