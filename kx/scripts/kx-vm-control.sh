@@ -31,8 +31,23 @@ MONITOR=/run/shm/monitor.sock
 PAUSE=0.3
 
 sendkey() {
-    printf 'sendkey %s\n' "$1" | timeout 5 nc -q 1 -U "$MONITOR" >/dev/null 2>&1
+    # `-q 0`: nc schliesst die Verbindung, sobald die Zeile raus ist. Ohne das
+    # wartet nc noch eine Sekunde — und der Monitor nimmt nur eine Verbindung
+    # gleichzeitig, die naechste Taste ginge dann ins Leere.
+    printf 'sendkey %s\n' "$1" | timeout 5 nc -q 0 -U "$MONITOR" >/dev/null 2>&1
     sleep "$PAUSE"
+}
+
+# Mehrere Tasten, jede ueber eine eigene Verbindung.
+#
+# Der Monitor-Socket nimmt nur eine Verbindung gleichzeitig; deshalb muss jede
+# Verbindung sofort wieder zu. Eine gemeinsame Verbindung waere schneller,
+# aber `nc` puffert die Zeilen und schickt sie erst am Ende — dann laeuft der
+# Gast die Tasten ohne Pause ab und verliert welche.
+sendkeys() {
+    for k in "$@"; do
+        sendkey "$k"
+    done
 }
 
 # Alle Zeichen eines Textes in QEMU-Keycodes uebersetzen.
@@ -62,6 +77,7 @@ to_keycodes() {
             "€") out+=("alt-e") ;;
             [a-z]) out+=("$ch") ;;
             [A-Z]) out+=("shift-${ch,,}") ;;
+            [0-9]) out+=("$ch") ;;
             *) echo "unbekanntes Zeichen: $ch" >&2; return 1 ;;
         esac
     done
@@ -69,14 +85,36 @@ to_keycodes() {
     printf '%s\n' "${out[@]}"
 }
 
+# Selbsttest: prueft, dass die Uebersetzung kein Zeichen verliert.
+#
+# Ein unbekanntes Zeichen hat diese Funktion frueher stillschweigend
+# verschluckt — der Text kam dann unvollstaendig in der VM an.
+selbsttest() {
+    local beispiel='powershell -c "iwr http://192.168.190.87:8090/setup.ps1 -useb | iex"'
+    local codes
+    codes=$(to_keycodes "$beispiel")
+    local anzahl
+    anzahl=$(printf '%s\n' "$codes" | grep -c .)
+    local erwartet
+    erwartet=${#beispiel}
+    if [ "$anzahl" -ne "$erwartet" ]; then
+        echo "FEHLER: $anzahl Keycodes fuer $erwartet Zeichen" >&2
+        return 1
+    fi
+    echo "ok: $anzahl Keycodes fuer $erwartet Zeichen"
+}
+
 case "${1:-}" in
+    selbsttest)
+        selbsttest
+        ;;
     tippen)
         # Jedes Argument ist eine Taste: "n e t spc u s e"
-        for k in $2; do sendkey "$k"; done
+        sendkeys $2
         ;;
     text)
         mapfile -t codes < <(to_keycodes "$2")
-        for k in "${codes[@]}"; do sendkey "$k"; done
+        sendkeys "${codes[@]}"
         ;;
     enter)
         sendkey ret
@@ -85,7 +123,7 @@ case "${1:-}" in
         printf 'screendump %s\n' "$2" | timeout 10 nc -q 1 -U "$MONITOR" >/dev/null 2>&1
         ;;
     *)
-        echo "Aufruf: $0 {tippen <tasten>|text <string>|enter|shot <pfad>}" >&2
+        echo "Aufruf: $0 {selbsttest|tippen <tasten>|text <string>|enter|shot <pfad>}" >&2
         exit 2
         ;;
 esac

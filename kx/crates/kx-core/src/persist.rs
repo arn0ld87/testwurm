@@ -87,17 +87,25 @@ fn quote(arg: &str) -> String {
     }
 }
 
-/// Die Zeile, mit der `sc.exe` den Dienst registriert.
+/// Die Argumente, mit denen `sc.exe` den Dienst registriert.
 ///
-/// Sie steht hier und nicht im Windows-Adapter: die Registrierung ist der
+/// Sie stehen hier und nicht im Windows-Adapter: die Registrierung ist der
 /// einzige Ort, an dem ein Argument verloren gehen kann, und nur hier lässt
 /// sie sich ohne Windows prüfen.
-pub fn windows_service_command(invocation: &Invocation, display_name: &str) -> String {
-    format!(
-        "sc.exe create {service_name} binPath= {command_line} start= auto DisplayName= \"{display_name}\"",
-        service_name = invocation.name,
-        command_line = invocation.command_line(),
-    )
+///
+/// Es sind Argumente und keine Zeile. Eine Zeile braucht eine Shell, und
+/// `cmd.exe /C` liest die Anführungszeichen um den DisplayName als
+/// Argumenttrenner — sc.exe antwortet dann mit seinem Usage-Text statt mit
+/// einem Diensteintrag.
+pub fn windows_service_arguments(invocation: &Invocation, display_name: &str) -> Vec<String> {
+    vec![
+        "create".to_string(),
+        invocation.name.clone(),
+        format!("binPath= {}", invocation.command_line()),
+        "start=".to_string(),
+        "auto".to_string(),
+        format!("DisplayName= {display_name}"),
+    ]
 }
 
 #[cfg(test)]
@@ -192,28 +200,41 @@ mod tests {
     }
 
     #[test]
-    fn die_sc_exe_zeile_traegt_die_vollstaendige_invocation() {
-        let zeile = windows_service_command(&beispiel(), "Kx Agent");
+    fn die_sc_exe_argumente_traegen_die_vollstaendige_invocation() {
+        let args = windows_service_arguments(&beispiel(), "Kx Agent");
+        let zusammen = args.join(" ");
         assert!(
-            zeile.contains("binPath= /usr/local/bin/kx-agent"),
-            "{zeile}"
+            zusammen.contains("binPath= /usr/local/bin/kx-agent"),
+            "{zusammen}"
         );
         assert!(
-            zeile.contains("--server https://c2.test.local:8443"),
-            "{zeile}"
+            zusammen.contains("--server https://c2.test.local:8443"),
+            "{zusammen}"
         );
-        assert!(zeile.contains("--token geheim"), "{zeile}");
-        assert!(zeile.contains("--start 10.0.0.1"), "{zeile}");
-        assert!(zeile.contains("start= auto"), "{zeile}");
+        assert!(zusammen.contains("--token geheim"), "{zusammen}");
+        assert!(zusammen.contains("--start 10.0.0.1"), "{zusammen}");
+        assert!(zusammen.contains("start= auto"), "{zusammen}");
     }
 
     #[test]
-    fn die_sc_exe_zeile_nennt_den_dienstnamen_aus_der_invocation() {
+    fn die_sc_exe_argumente_nennen_den_dienstnamen_aus_der_invocation() {
         let inv = Invocation {
             name: "kx-agent-test".to_string(),
             ..beispiel()
         };
-        let zeile = windows_service_command(&inv, "Kx Agent");
-        assert!(zeile.starts_with("sc.exe create kx-agent-test "), "{zeile}");
+        let args = windows_service_arguments(&inv, "Kx Agent");
+        assert_eq!(args[0], "create");
+        assert_eq!(args[1], "kx-agent-test");
+    }
+
+    #[test]
+    fn der_displayname_bleibt_ein_eigenes_argument() {
+        // Mit Leerzeichen muss er als eigenes Argument uebergeben werden —
+        // eine Zeile wuerde ihn zerlegen.
+        let args = windows_service_arguments(&beispiel(), "Kx Agent");
+        assert!(
+            args.iter().any(|a| a == "DisplayName= Kx Agent"),
+            "{args:?}"
+        );
     }
 }
