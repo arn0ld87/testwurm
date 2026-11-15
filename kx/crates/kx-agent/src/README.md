@@ -34,7 +34,8 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 - `[main.rs:Args]` — crate-private Konfigurationsstruktur via `clap::Parser`,
   `#[command(name = "kx-agent", about = "Kx-autonomer Agent")]`. Argumente:
   `server` (`--server`, env `KX_C2_URL`), `token` (`--token`, env
-  `KX_C2_TOKEN`), `iface` (`--iface`, Default `eth0`), `start` (`--start`,
+  `KX_C2_TOKEN`, Typ `Secret` mit maskierter Debug-Ausgabe), `iface` (`--iface`,
+  Default `eth0`), `start` (`--start`,
   Pflicht), `end` (`--end`, Pflicht), `own_ip` (`--own-ip`, Default
   `192.168.1.100`), `hosts` (`--hosts`, optional, kommagetrennt),
   `relay_script` (`--relay-script`, Default `smbrelayx.py`), `wmi_script`
@@ -149,7 +150,7 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 - Das Server-Zertifikat wird per `std::fs::read(server_cert)` geladen; ein Lesefehler wird zu `C2Error::Tls("Zertifikat nicht lesbar: {e}")`, ein Fehler in `kx_tls::client_config_trusting` zu `C2Error::Tls`. Eine Verifikation gegen den System-Store findet nicht statt, da der Server selbstsignierte Zertifikate verwendet [c2.rs:C2Client::new].
 - Nur Status 200 und 201 gelten als Erfolg; jeder andere Status erzeugt `C2Error::Http(format!("Status {status}: {body}"))` mit Response-Body, Fallback `"<binär>"` bei nicht lesbarem Body [c2.rs:ensure_ok].
 - Der Request trägt immer den Header `Authorization: Bearer {token}`; der Body ist die `serde_json`-Serialisierung des übergebenen `RegisterRequest` bzw. `SecretUpload` [c2.rs:C2Client::register_host] [c2.rs:C2Client::upload_secret].
-- `Args` leitet `Debug` ab und enthält das Token als `String` — der Token ist damit über eine Debug-Ausgabe der Struktur erreichbar [main.rs:Args].
+- `Args` leitet `Debug` ab, das Token-Feld ist aber mit dem eigenen Typ `Secret` gekapselt: dessen `Debug`-Ausgabe maskiert den Wert (`***`), der Klartext ist nur über `Secret::as_str` erreichbar. Eine Debug-Ausgabe der Argumentstruktur enthält das Token damit nicht [main.rs:Secret] [main.rs:Args].
 
 ## Side Effects
 

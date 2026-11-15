@@ -1,9 +1,9 @@
 ---
 id: ISSUE-11
 title: Args leitet Debug ab — das C2-Token landet in jeder Debug-Ausgabe
-status: open
+status: done
 category: bug
-triage_state: ready-for-agent
+triage_state: erledigt
 agent_brief: briefs/ISSUE-11-token-aus-debug-output.md
 priority: medium
 ---
@@ -27,9 +27,9 @@ Related: ISSUE-10
 
 ## Acceptance Criteria
 
-- [ ] `Args` leitet **kein** `Debug` mehr ab, oder das Token-Feld ist mit einem eigenen Typ gekapselt, dessen `Debug` den Wert maskiert (`f.debug_struct("Args").field("token", &"***").finish()`)
-- [ ] Der `Debug`-Derive auf `Args` wird nirgends im Crate genutzt, wo er das Token sichtbar macht
-- [ ] Ein Test prüft, dass eine Debug-Ausgabe der Argumente das Token nicht enthält
+- [x] `Args` leitet **kein** `Debug` mehr ab, oder das Token-Feld ist mit einem eigenen Typ gekapselt, dessen `Debug` den Wert maskiert (`f.debug_struct("Args").field("token", &"***").finish()`)
+- [x] Der `Debug`-Derive auf `Args` wird nirgends im Crate genutzt, wo er das Token sichtbar macht
+- [x] Ein Test prüft, dass eine Debug-Ausgabe der Argumente das Token nicht enthält
 
 ## Technical Notes
 
@@ -50,3 +50,5 @@ Related: ISSUE-10
   Debug-Ableitung — das ist der Zielzustand.
 
 **Triage-Entscheidung:** Agent Brief: [`briefs/ISSUE-11-token-aus-debug-output.md`](briefs/ISSUE-11-token-aus-debug-output.md)
+
+**Erledigt am 2026-11-15:** kx-agent: Token-Feld kapselt den Debug-Output. Alle Akzeptanzkriterien abgehakt.
