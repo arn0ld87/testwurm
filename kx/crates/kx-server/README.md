@@ -35,7 +35,9 @@ Rollup aus [`src/`](./src/README.md):
   `POST PATH_HEARTBEAT` → `heartbeat` [src/main.rs:heartbeat], `POST PATH_SECRETS` →
   `upload_secret` [src/main.rs:upload_secret], `GET PATH_HOSTS` → `list_hosts`
   [src/main.rs:list_hosts], `GET PATH_SECRETS` → `list_secrets`
-  [src/main.rs:list_secrets], `GET PATH_TASKS` → `list_tasks` [src/main.rs:list_tasks].
+  [src/main.rs:list_secrets], `GET PATH_TASKS` → `list_tasks` [src/main.rs:list_tasks],
+  `POST PATH_TASKS_CREATE` → `create_task` [src/main.rs:create_task],
+  `POST PATH_TASKS_RESULT` → `report_task_result` [src/main.rs:report_task_result].
   Die Pfade stammen aus den Konstanten `PATH_REGISTER`, `PATH_HEARTBEAT`, `PATH_SECRETS`,
   `PATH_HOSTS` und `PATH_TASKS` in `kx_core::c2` [src/main.rs:main].
 - CLI-Flags `--host` (Default `127.0.0.1`), `--port` (Default `8443`), `--db` (Default
@@ -46,7 +48,7 @@ Rollup aus [`src/`](./src/README.md):
   [src/main.rs:upload_secret]; Antwort-Typen `c2::Host` [src/main.rs:list_hosts],
   `c2::ExfiltratedSecret` [src/main.rs:list_secrets], `c2::Task` [src/main.rs:list_tasks].
 - `pub struct Db` mit `open`, `upsert_host`, `list_hosts`, `insert_secret`, `list_secrets`,
-  `insert_task`, `list_tasks`; Datenmodelle `HostRow`, `SecretRow`, `TaskRow`
+  `insert_task`, `update_task_result`, `list_tasks`; Datenmodelle `HostRow`, `SecretRow`, `TaskRow`
   [src/db.rs:Db] [src/db.rs:Db::open] [src/db.rs:HostRow] [src/db.rs:SecretRow]
   [src/db.rs:TaskRow].
 - SQL-Tabellen `hosts`, `secrets`, `tasks` — jeweils `id TEXT PRIMARY KEY`
@@ -83,8 +85,9 @@ Rollup aus [`src/`](./src/README.md):
   [src/db.rs:Db].
 - `list_hosts`, `list_secrets` und `list_tasks` verwenden `SELECT` ohne `ORDER BY` — die
   Zeilenreihenfolge ist nicht spezifiziert [src/db.rs:Db::list_hosts].
-- `Db::insert_task` wird von keinem Handler aufgerufen; `GET /api/tasks` liefert deshalb
-  ein leeres Array [src/db.rs:Db::insert_task] [src/main.rs:list_tasks].
+- `Db::insert_task` wird vom Handler `create_task` aufgerufen — die Tabelle `tasks` hat
+  damit einen Schreibpfad; `GET /api/tasks` liefert angelegte Tasks
+  [src/db.rs:Db::insert_task] [src/main.rs:create_task].
 - Der Server bindet nur die erste per `to_socket_addrs()` aufgelöste Adresse
   [src/main.rs:main].
 

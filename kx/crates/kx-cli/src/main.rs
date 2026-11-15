@@ -47,6 +47,15 @@ enum Command {
     },
     /// Alle Tasks auflisten.
     Tasks,
+    /// Einen Task anlegen — der Agent holt ihn ab und führt ihn aus.
+    TaskCreate {
+        /// Kennung des Ziel-Hosts (siehe `kx-cli hosts`).
+        #[arg(long)]
+        host_id: String,
+        /// Der auszuführende Befehl.
+        #[arg(long)]
+        command: String,
+    },
 }
 
 #[tokio::main]
@@ -127,5 +136,18 @@ async fn main() {
                 std::process::exit(1);
             }
         },
+        Command::TaskCreate { host_id, command } => {
+            let req = kx_core::c2::CreateTaskRequest {
+                host_id: host_id.clone(),
+                command: command.clone(),
+            };
+            match c.create_task(&req).await {
+                Ok(id) => info!("Task {id} für {host_id} angelegt: {command}"),
+                Err(e) => {
+                    error!("Task-Anlage fehlgeschlagen: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 }

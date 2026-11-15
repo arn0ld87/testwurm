@@ -40,10 +40,12 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   - `GET PATH_HOSTS` → `list_hosts` [main.rs:list_hosts]
   - `GET PATH_SECRETS` → `list_secrets` [main.rs:list_secrets]
   - `GET PATH_TASKS` → `list_tasks` [main.rs:list_tasks]
+  - `POST PATH_TASKS_CREATE` → `create_task` [main.rs:create_task]
+  - `POST PATH_TASKS_RESULT` → `report_task_result` [main.rs:report_task_result]
   - Die Pfade stammen aus den Konstanten `PATH_REGISTER`, `PATH_HEARTBEAT`,
-    `PATH_SECRETS`, `PATH_HOSTS`, `PATH_TASKS` und `PATH_LOGIN`, die aus
-    `kx_core::c2` importiert werden [main.rs:main]; die wörtlichen Pfade stehen
-    zusätzlich im Hilfetext [main.rs:HELP]
+    `PATH_SECRETS`, `PATH_HOSTS`, `PATH_TASKS`, `PATH_TASKS_CREATE`,
+    `PATH_TASKS_RESULT` und `PATH_LOGIN`, die aus `kx_core::c2` importiert werden
+    [main.rs:main]; die wörtlichen Pfade stehen zusätzlich im Hilfetext [main.rs:HELP]
   - Die fünf Datenpfade hängen an einem eigenen API-Router mit
     `route_layer(require_auth)`; `GET /` und `POST /api/login` stehen daneben
     [main.rs:main]
@@ -56,7 +58,10 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   `status: Option<String>`) [main.rs:register], `HeartbeatRequest`
   (`host_id: String`) [main.rs:heartbeat], `SecretUpload` (`host_id: String`,
   `cred_type: String`, `username: String`, `password: String`,
-  `source: Option<String>`) [main.rs:upload_secret]
+  `source: Option<String>`, `master_key: Option<String>`) [main.rs:upload_secret],
+  `CreateTaskRequest` (`host_id: String`, `command: String`) [main.rs:create_task],
+  `TaskResultRequest` (`task_id: String`, `status: String`, `result: String`)
+  [main.rs:report_task_result]
 - Antwort-Wire-Typen aus `kx_core::c2` [main.rs:list_hosts] [main.rs:list_secrets]
   [main.rs:list_tasks]: `c2::Host`, `c2::ExfiltratedSecret`, `c2::Task`
 - Persistenztypen ohne serde — Zeilen, per Positionsindex gelesen [db.rs:HostRow]
@@ -73,6 +78,8 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   - `Db::insert_secret(&self, s: &SecretRow) -> Result<(), DbError>` [db.rs:Db::insert_secret]
   - `Db::list_secrets(&self) -> Result<Vec<SecretRow>, DbError>` [db.rs:Db::list_secrets]
   - `Db::insert_task(&self, t: &TaskRow) -> Result<(), DbError>` [db.rs:Db::insert_task]
+  - `Db::update_task_result(&self, task_id, status, result) -> Result<bool, DbError>`
+    [db.rs:Db::update_task_result]
   - `Db::list_tasks(&self) -> Result<Vec<TaskRow>, DbError>` [db.rs:Db::list_tasks]
 - Umwandlung Zeile → Wire-Typ [db.rs:From<HostRow> for c2::Host]
   [db.rs:From<SecretRow> for c2::ExfiltratedSecret] [db.rs:From<TaskRow> for c2::Task]
@@ -154,9 +161,15 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   [db.rs:Db::insert_task]
 - `DbError::RowDecode` wird nie konstruiert — der Compiler meldet
   `variant `RowDecode` is never constructed` [db.rs:DbError]
-- `Db::insert_task` wird von keinem Handler aufgerufen und es existiert kein weiterer
-  Schreibpfad für die Tabelle `tasks` innerhalb dieses Crates; `GET /api/tasks` liefert
-  deshalb ein leeres Array [db.rs:Db::insert_task] [main.rs:list_tasks]
+- `create_task` schreibt über `Db::insert_task` in die Tabelle `tasks` — vorher hatte
+  diese Tabelle keinen Schreibpfad, `GET /api/tasks` lieferte deshalb immer `[]`
+  [db.rs:Db::insert_task] [main.rs:create_task]
+- `report_task_result` schreibt Status und Ergebnis über `Db::update_task_result`
+  zurück; ein UPDATE auf die Primärschlüssel-ID ist idempotent — eine wiederholte
+  Meldung überschreibt denselben Wert [db.rs:Db::update_task_result]
+  [main.rs:report_task_result]
+- `update_task_result` liefert `false`, wenn keine Zeile mit dieser ID existierte; der
+  Server antwortet dann mit 404 [db.rs:Db::update_task_result] [main.rs:report_task_result]
 - Die Zeilentypen tragen keine serde-Derives und werden per Positionsindex gelesen
   (`r.get(0)?` … `r.get(6)?`), nicht über Spaltennamen [db.rs:HostRow]
   [db.rs:Db::list_hosts]
@@ -186,9 +199,9 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   `CREATE TABLE IF NOT EXISTS secrets (...)`, `CREATE TABLE IF NOT EXISTS tasks (...)`
   [db.rs:Db::open]
 - SQL-Schreibzugriffe: `INSERT INTO hosts (...) ... ON CONFLICT(id) DO UPDATE SET ...`
-  [db.rs:Db::upsert_host], `INSERT INTO secrets (...)` [db.rs:Db::insert_secret];
-  `INSERT INTO tasks (...)` [db.rs:Db::insert_task] ist definiert, wird aber von keinem
-  Aufrufer ausgelöst und führt zur Laufzeit kein Statement aus
+  [db.rs:Db::upsert_host], `INSERT INTO secrets (...)` [db.rs:Db::insert_secret],
+  `INSERT INTO tasks (...)` [db.rs:Db::insert_task] und `UPDATE tasks SET status, result
+  WHERE id` [db.rs:Db::update_task_result]
 - SQL-Lesezugriffe: `SELECT id, ip, hostname, os, status, first_seen, last_seen FROM hosts`
   [db.rs:Db::list_hosts], `SELECT id, host_id, cred_type, username, password, source,
   collected_at FROM secrets` [db.rs:Db::list_secrets], `SELECT id, host_id, command, status,

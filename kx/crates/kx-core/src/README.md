@@ -41,15 +41,23 @@ Agent und CLI sprechen dieselben Typen und dieselben Endpunktpfade.
 - `pub const PATH_SECRETS: &str = "/api/secrets";` [c2.rs:PATH_SECRETS]
 - `pub const PATH_HOSTS: &str = "/api/hosts";` [c2.rs:PATH_HOSTS]
 - `pub const PATH_TASKS: &str = "/api/tasks";` [c2.rs:PATH_TASKS]
+- `pub const PATH_TASKS_CREATE: &str = "/api/tasks/new";` [c2.rs:PATH_TASKS_CREATE]
+- `pub const PATH_TASKS_RESULT: &str = "/api/tasks/result";` [c2.rs:PATH_TASKS_RESULT]
 - `pub const STATUS_DISCOVERED: &str = "discovered";` [c2.rs:STATUS_DISCOVERED]
 - `pub const STATUS_COMPROMISED: &str = "compromised";` [c2.rs:STATUS_COMPROMISED]
 - `pub const STATUS_AGENT: &str = "agent";` [c2.rs:STATUS_AGENT]
+- `pub const STATUS_PENDING: &str = "pending";` [c2.rs:STATUS_PENDING]
+- `pub const STATUS_RUNNING: &str = "running";` [c2.rs:STATUS_RUNNING]
+- `pub const STATUS_DONE: &str = "done";` [c2.rs:STATUS_DONE]
+- `pub const STATUS_FAILED: &str = "failed";` [c2.rs:STATUS_FAILED]
 - `pub struct Host` (`host_id`, `ip`, `hostname`, `os`, `status`, `first_seen`, `last_seen`; alle `String`), mit `#[serde(deny_unknown_fields)]` [c2.rs:Host]
 - `pub struct ExfiltratedSecret` (`id`, `host_id`, `cred_type`, `username`, `password`, `source`, `collected_at`; alle `String`), mit `#[serde(deny_unknown_fields)]` [c2.rs:ExfiltratedSecret]
 - `pub struct Task` (`id`, `host_id`, `command`, `status`, `result`, `created_at`; alle `String`), mit `#[serde(deny_unknown_fields)]` [c2.rs:Task]
-- `pub struct RegisterRequest` (`host_id`, `ip` als `String`; `hostname`, `os`, `status` als `Option<String>`), ohne `deny_unknown_fields` [c2.rs:RegisterRequest]
+- `pub struct RegisterRequest` (`host_id`, `ip` als `String`; `hostname`, `os`, `status`, `sealed_master`, `master_key` als `Option<String>`), ohne `deny_unknown_fields` [c2.rs:RegisterRequest]
 - `pub struct HeartbeatRequest` (`host_id: String`), ohne `deny_unknown_fields` [c2.rs:HeartbeatRequest]
-- `pub struct SecretUpload` (`host_id`, `cred_type`, `username`, `password` als `String`; `source` als `Option<String>`), ohne `deny_unknown_fields` [c2.rs:SecretUpload]
+- `pub struct SecretUpload` (`host_id`, `cred_type`, `username`, `password` als `String`; `source`, `master_key` als `Option<String>`), ohne `deny_unknown_fields` [c2.rs:SecretUpload]
+- `pub struct CreateTaskRequest` (`host_id`, `command` als `String`), ohne `deny_unknown_fields` [c2.rs:CreateTaskRequest]
+- `pub struct TaskResultRequest` (`task_id`, `status`, `result` als `String`), ohne `deny_unknown_fields` [c2.rs:TaskResultRequest]
 
 ### error.rs — Fehlertaxonomie
 
@@ -195,13 +203,15 @@ ist zusaetzlich unbenutzt.
 ### C2-Protokoll
 
 - Die Strictness des Wire-Vertrags ist asymmetrisch: **Antworttypen** (`Host`, `ExfiltratedSecret`, `Task`) tragen `#[serde(deny_unknown_fields)]` und brechen bei jedem unbekannten Feld — die Schadensrichtung ist Server → Client, dort ging zuvor das Ergebnis eines Tasks verloren [c2.rs:Host] [c2.rs:ExfiltratedSecret] [c2.rs:Task]
-- **Request-Typen** (`RegisterRequest`, `HeartbeatRequest`, `SecretUpload`) sind lenient: kein `deny_unknown_fields`, damit ein neuerer Agent ein zusätzliches Feld schicken kann, ohne einen älteren Server zu brechen [c2.rs:RegisterRequest] [c2.rs:HeartbeatRequest] [c2.rs:SecretUpload]
+- **Request-Typen** (`RegisterRequest`, `HeartbeatRequest`, `SecretUpload`, `CreateTaskRequest`, `TaskResultRequest`) sind lenient: kein `deny_unknown_fields`, damit ein neuerer Agent ein zusätzliches Feld schicken kann, ohne einen älteren Server zu brechen [c2.rs:RegisterRequest] [c2.rs:HeartbeatRequest] [c2.rs:SecretUpload] [c2.rs:CreateTaskRequest] [c2.rs:TaskResultRequest]
 - Die exakte Feldmenge jedes Antworttyps ist Teil des Vertrags; eine Umbenennung oder ein neues Feld bricht den Key-Set-Pinning-Test [c2.rs:tests::response_key_sets_are_pinned]
-- Die Endpunktpfade sind stabile Konstanten `/api/register`, `/api/heartbeat`, `/api/secrets`, `/api/hosts`, `/api/tasks` [c2.rs:PATH_REGISTER] [c2.rs:PATH_HEARTBEAT] [c2.rs:PATH_SECRETS] [c2.rs:PATH_HOSTS] [c2.rs:PATH_TASKS]
+- Die Endpunktpfade sind stabile Konstanten `/api/register`, `/api/heartbeat`, `/api/secrets`, `/api/hosts`, `/api/tasks`, `/api/tasks/new`, `/api/tasks/result` [c2.rs:PATH_REGISTER] [c2.rs:PATH_HEARTBEAT] [c2.rs:PATH_SECRETS] [c2.rs:PATH_HOSTS] [c2.rs:PATH_TASKS] [c2.rs:PATH_TASKS_CREATE] [c2.rs:PATH_TASKS_RESULT]
 - `Host::status` ist dokumentiert als einer von `STATUS_DISCOVERED`, `STATUS_COMPROMISED`, `STATUS_AGENT`; der Typ ist ein reines `String`, die Einhaltung erzwingt dieses Crate nicht [c2.rs:Host] [c2.rs:STATUS_DISCOVERED] [c2.rs:STATUS_COMPROMISED] [c2.rs:STATUS_AGENT]
 - `ExfiltratedSecret::host_id` und `SecretUpload::host_id` duerfen nicht leer sein — eine leere Kennung verweist auf keinen bekannten Host; die Pruefung macht der Server, nicht dieses Crate [c2.rs:ExfiltratedSecret] [c2.rs:SecretUpload]
 - Das Task-Wire-Feld heisst `result`, nicht `output` — `output` war das Feld, das der CLI zuvor erwartete und deshalb nie deserialisierte [c2.rs:Task]
 - `RegisterRequest::host_id` wird vom Client mitgeliefert; der Server leitet die Kennung nicht mehr aus `ip` ab, damit Registrierung und Secret-Upload nicht auseinanderlaufen [c2.rs:RegisterRequest]
+- Die Master-Key-Felder `sealed_master` und `master_key` sind Base64-Strings, keine Binaerwerte: ein JSON-Array aus Zahlen waere unlesbar und unhandlich (Entscheidung D5) [c2.rs:RegisterRequest] [c2.rs:SecretUpload]
+- Ein Task durchlaeuft die Status `pending` → `running` → `done` oder `failed`; das Ergebnis steht im Feld `result` [c2.rs:STATUS_PENDING] [c2.rs:STATUS_RUNNING] [c2.rs:STATUS_DONE] [c2.rs:STATUS_FAILED]
 
 ### Fehlerklassifikation
 

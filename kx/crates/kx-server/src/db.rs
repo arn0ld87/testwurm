@@ -173,6 +173,28 @@ impl Db {
         Ok(())
     }
 
+    /// Schreibt den Status und das Ergebnis eines Tasks zurueck.
+    ///
+    /// Das ist der Schreibpfad des Agenten: er fuehrt den Befehl aus und
+    /// meldet das Ergebnis. Ohne diesen Pfad blieb das Feld `result` leer und
+    /// der Task stuende ewig auf `pending`.
+    ///
+    /// Liefert `true`, wenn ein Task mit dieser ID existierte — der Agent
+    /// kann daran erkennen, ob seine Meldung zu einem noch offenen Task
+    /// gehoerte.
+    pub fn update_task_result(
+        &self,
+        task_id: &str,
+        status: &str,
+        result: &str,
+    ) -> Result<bool, DbError> {
+        let changed = self.conn.lock().unwrap().execute(
+            "UPDATE tasks SET status = ?2, result = ?3 WHERE id = ?1",
+            params![task_id, status, result],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// Liefert alle Tasks.
     pub fn list_tasks(&self) -> Result<Vec<TaskRow>, DbError> {
         let conn = self.conn.lock().unwrap();
@@ -291,6 +313,53 @@ mod tests {
         let json = serde_json::to_value(c2::Task::from(row)).expect("serialisierbar");
         assert_eq!(json["result"], "nt authority\\system");
         assert!(json.get("output").is_none());
+    }
+
+    /// Das Ergebnis eines Tasks landet in der Zeile — und der Status wechselt
+    /// von `pending` auf `done`. Das ist der Weg, den der Agent geht.
+    #[test]
+    fn task_result_is_written_back_to_the_row() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-task-result-{}.db", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+        db.insert_task(&TaskRow {
+            id: "t-1".into(),
+            host_id: "10.0.0.5".into(),
+            command: "whoami".into(),
+            status: c2::STATUS_PENDING.into(),
+            result: String::new(),
+            created_at: "2026-11-15T00:00:00Z".into(),
+        })
+        .expect("task angelegt");
+
+        let updated = db
+            .update_task_result("t-1", c2::STATUS_DONE, "nt authority\\system")
+            .expect("Ergebnis geschrieben");
+        assert!(updated, "der Task wurde nicht gefunden");
+
+        let rows = db.list_tasks().expect("tasks");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, c2::STATUS_DONE);
+        assert_eq!(rows[0].result, "nt authority\\system");
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Eine Meldung zu einem unbekannten Task trifft nichts — der Agent darf
+    /// daran erkennen, dass der Task nicht (mehr) offen ist.
+    #[test]
+    fn task_result_for_an_unknown_task_changes_nothing() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-task-unknown-{}.db", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+        let updated = db
+            .update_task_result("gibtsnicht", c2::STATUS_DONE, "egal")
+            .expect("Ergebnis geschrieben");
+        assert!(
+            !updated,
+            "ein unbekannter Task wurde als aktualisiert gemeldet"
+        );
+        assert!(db.list_tasks().expect("tasks").is_empty());
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

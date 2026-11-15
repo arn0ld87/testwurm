@@ -93,6 +93,7 @@ pub async fn run_propagation(
                                 username: c.username,
                                 password: c.hash,
                                 source: Some("smb_relay".into()),
+                                master_key: None,
                             });
                         }
                         status = c2::STATUS_COMPROMISED.to_string();
@@ -111,6 +112,7 @@ pub async fn run_propagation(
                         username: auth.username,
                         password: auth.password,
                         source: Some("default_creds".into()),
+                        master_key: None,
                     });
                     status = c2::STATUS_COMPROMISED.to_string();
                 }
@@ -126,6 +128,8 @@ pub async fn run_propagation(
             hostname: None,
             os,
             status: Some(status),
+            sealed_master: None,
+            master_key: None,
         });
     }
 
