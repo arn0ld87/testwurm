@@ -233,7 +233,7 @@ Operator entschlüsselt mit `kx-cli secrets --decrypt --server-key <bundle>`.
 
 ## Known Defects / Arbeitsvorrat
 
-Vierzehn Funktionsdefekte sind als Markdown-Issues unter
+Fünfzehn Funktionsdefekte sind als Markdown-Issues unter
 `.scratch/c2-operability/issues/` erfasst; der Ablaufplan mit Abhängigkeiten
 liegt in `EPIC.md`, der Designentwurf (Wellenplan, Entscheidungen D1–D7) in
 `design_draft.md`.
@@ -251,6 +251,10 @@ ISSUE-4 (Credential Manager liefert bei einem Credential eine Liste),
 ISSUE-5 (Doc-Fix `--range`), ISSUE-7 (der WMI-Pfad wurde entfernt statt
 verdrahtet), ISSUE-9 (das Hybrid-KEM ist aktiv, der Master-Key wird je Host
 versiegelt gemeldet), ISSUE-11 (das Token-Feld maskiert den Debug-Output).
+
+**Offen:** ISSUE-15 — das KXENC-Containerformat hat keine Chiffre. `format.rs`
+beschreibt Layout, AAD und Noncen, verschlüsselt aber nichts; Dateiexfiltration
+gibt es nicht. Die Secret-Exfiltration läuft über `kx-core/src/secretbox.rs`.
 
 **Dokumentations-Drift:** Der Modul-Doc von `kx-core/src/lib.rs` beschreibt noch
 eine Schichtung `format → crypto → engine → beacon` aus einem Vorgängerprojekt —

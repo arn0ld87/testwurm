@@ -103,9 +103,7 @@ pub async fn fingerprint(
         if banner.contains("OpenSSH") {
             info.os = Some("Linux/Unix".to_string());
         }
-    } else if banner.contains("Microsoft") {
-        info.os = Some("Windows".to_string());
-    } else if banner.contains("Windows") {
+    } else if banner.contains("Microsoft") || banner.contains("Windows") {
         info.os = Some("Windows".to_string());
     }
 

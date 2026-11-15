@@ -70,7 +70,7 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   `collected_at`), [db.rs:TaskRow] (`id`, `host_id`, `command`, `status`, `result`,
   `created_at`)
 - `DbError` — Fehler-Enum (`#[derive(Debug, thiserror::Error)]`) mit den Varianten
-  `Sqlite(#[from] rusqlite::Error)` und `RowDecode` [db.rs:DbError]
+  `Sqlite(#[from] rusqlite::Error)` [db.rs:DbError]
 - `Db` — thread-sicherer Wrapper um eine rusqlite-Connection [db.rs:Db]
   - `Db::open(path: &Path) -> Result<Self, DbError>` [db.rs:Db::open]
   - `Db::upsert_host(&self, h: &HostRow) -> Result<(), DbError>` [db.rs:Db::upsert_host]
@@ -163,8 +163,6 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
 - `insert_secret` und `insert_task` sind reine `INSERT`s ohne `ON CONFLICT`; eine doppelte
   Primärschlüssel-ID erzeugt `DbError::Sqlite` [db.rs:Db::insert_secret]
   [db.rs:Db::insert_task]
-- `DbError::RowDecode` wird nie konstruiert — der Compiler meldet
-  `variant `RowDecode` is never constructed` [db.rs:DbError]
 - `create_task` schreibt über `Db::insert_task` in die Tabelle `tasks` — vorher hatte
   diese Tabelle keinen Schreibpfad, `GET /api/tasks` lieferte deshalb immer `[]`
   [db.rs:Db::insert_task] [main.rs:create_task]

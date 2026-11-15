@@ -222,6 +222,11 @@ mod tests {
 
     /// Ein fehlschlagender Befehl liefert einen Exitcode ungleich null — der
     /// Agent meldet daraus den Status `failed`.
+    #[tokio::test]
+    async fn ein_fehlgeschlagener_befehl_liefert_nonzero_exitcode() {
+        let out = execute_command("exit 3").await;
+        assert_eq!(out.status, 3, "der Exitcode muss durchgereicht werden");
+    }
 
     /// Ein haengendes Task-Kommando blockiert den Agentenlauf nicht.
     ///

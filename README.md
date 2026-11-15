@@ -966,6 +966,12 @@ Dasselbe gilt für die Beute: sie geht nur dann verschlüsselt über die Leitung
 wenn der Agent mit `--server-key` den öffentlichen Server-Schlüssel bekommt
 (siehe [Schritt 6](#schritt-6--server-schlüssel-erzeugen)).
 
+**Was noch nicht geht: Dateiexfiltration.** Das KXENC-Containerformat in
+`kx/crates/kx-core/src/format.rs` beschreibt Header, Footer, Chunk-Nummerierung,
+AAD und Noncen — aber es verschlüsselt nichts. Der Wurm transportiert Passwörter
+und NT-Hashes, keine Dateien. Erfasst als ISSUE-15 in
+[`.scratch/c2-operability/issues/`](./.scratch/c2-operability/issues/).
+
 Die Felder `sealed_master` und `master_key` gehören zum Wire-Vertrag. Der Agent
 füllt sie, wenn er mit `--server-key` den öffentlichen Server-Schlüssel bekommt.
 Server und Agent behandeln beide Felder tolerant — ein älterer Agent sendet sie
