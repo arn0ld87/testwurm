@@ -118,7 +118,7 @@ Ein PR ist erst mergefertig, wenn beide Jobs grün sind.
 |--------------|------------------------------------------------------|
 | `kx-core`    | KXENC-Dateiformat, Fehlerklassifikation, C2-Protokoll (`c2`), Hilfsfunktionen (`util`); `hostkey` (Hybrid-KEM) ist auskommentiert und wird nicht kompiliert |
 | `kx-scanner` | ARP-Hostentdeckung (`arp_sweep`), TCP-Portscan (`scan_tcp`), `fingerprint` |
-| `kx-exploit` | SMB-Relay (`smb_relay_dcsync`), WMI-Exec, Credential-Stuffing (`try_default_credentials`) via Impacket |
+| `kx-exploit` | SMB-Relay (`smb_relay_dcsync`), Credential-Stuffing (`try_default_credentials`) via Impacket |
 | `kx-win`     | Windows-Secrets (LSASS, Credential Manager, Browser) + Persistenz (Dienst, Run-Key, Scheduled Task) |
 | `kx-posix`   | POSIX-Secrets (`/etc/shadow`, SSH, AWS) + Persistenz (systemd-Unit, Cron) |
 | `kx-tls`     | selbstsignierte Zertifikate (`generate_server_tls`), rustls-Configs (`client_config_trusting`) |
@@ -177,7 +177,7 @@ bis das Material wirklich erzeugt wird.
   Speicher; es wird keine `kx-server.crt`/`.key` geschrieben.
 - `kx-agent`: `--server`/`--token` (Env `KX_C2_URL`/`KX_C2_TOKEN`), `--server-cert`,
   `--iface` (`eth0`), `--start`/`--end` (Pflichtargumente), `--own-ip`, `--hosts`,
-  `--relay-script`, `--wmi-script`.
+  `--relay-script`.
 - `kx-cli`: globale Flags `--server`, `--token`, `--cert`; Subcommands `hosts`,
   `secrets --user`, `export <pfad> --format`, `tasks`, `task-create --host-id --command`.
 - Routen (Bearer-Auth per `route_layer(require_auth)`, constant-time): `POST
@@ -234,7 +234,7 @@ ISSUE-13 (Dashboard-Escaping, Token im Query-String).
 `COMMON_PORTS`), ISSUE-3 (`try_default_credentials` liefert stets `Ok(None)`),
 ISSUE-4 (Credential Manager liefert bei genau einem Credential eine leere Liste),
 ISSUE-5 (Doc-Fix `--range`),
-ISSUE-7 (`wmi_exec` ohne Aufrufer), ISSUE-9 (Post-Quantum-Verschlüsselung inaktiv),
+ISSUE-9 (Post-Quantum-Verschlüsselung inaktiv),
 ISSUE-11 (Token im Debug-Output), ISSUE-14 (Agent hängt im SSH-Default-Credential-Test).
 
 **Anmerkung zum Status:** ISSUE-2 und ISSUE-3 sind im Code bereits behoben
@@ -266,7 +266,7 @@ kx/
 └── crates/
     ├── kx-core/            # c2.rs (Wire-Vertrag), format.rs, error.rs, util.rs, hostkey.rs (inaktiv)
     ├── kx-scanner/         # arp.rs (nur Linux), tcp_scan.rs, fingerprint.rs
-    ├── kx-exploit/         # smb_relay.rs, wmi_exec.rs, credential_stuff.rs, payload.rs, examples/
+    ├── kx-exploit/         # smb_relay.rs, credential_stuff.rs, payload.rs, examples/
     ├── kx-win/             # secrets.rs, persist.rs
     ├── kx-posix/           # secrets.rs, persist.rs
     ├── kx-tls/             # lib.rs (rustls/rcgen)

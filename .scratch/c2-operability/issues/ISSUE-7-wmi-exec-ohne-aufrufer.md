@@ -1,9 +1,9 @@
 ---
 id: ISSUE-7
 title: wmi_exec hat keinen Aufrufer — dokumentierter WMI-Angriffspfad existiert nicht
-status: open
+status: done
 category: bug
-triage_state: ready-for-agent
+triage_state: erledigt
 agent_brief: briefs/ISSUE-7-wmi-pfad-entfernen.md
 priority: medium
 ---
@@ -20,11 +20,11 @@ Damit ist der in `kx/README.md` dokumentierte WMI-/WinRM-Exploit-Pfad reine Wuns
 
 Related: ISSUE-2, ISSUE-6
 
-## Acceptance Criteria
+## Acceptance Criteria## Acceptance Criteria
 
-- [ ] Der Agent ruft `wmi_exec` für erreichbare Windows-Ziele auf, oder das Flag `--wmi-script` und der Contract werden entfernt
-- [ ] Die Fehlerbehandlung ist dokumentiert: `wmi_exec` erzeugt `ExploitError::SubprocessFailed` **nie**, ein Fehlschlag landet ausschließlich in `ExecResult.exit_code` (`wmi_exec.rs:66-70`)
-- [ ] Der Pfad ist im Contract-README als aktiv dokumentiert, nicht als vorhandene Funktion
+- [ ] Der WMI-Ausführungspfad ist entfernt: das Flag `--wmi-script`, der Parameter in `run_propagation` und das Modul `wmi_exec` existieren nicht mehr
+- [ ] Der Exploit-Crate exportiert keinen WMI-Ausführungspfad mehr
+- [ ] Betriebshandbuch, Crate-READMEs, Blueprint und die Agenten-Konfiguration nennen den WMI-Pfad nicht mehr als vorhanden
 
 ## Technical Notes
 
@@ -45,3 +45,5 @@ Related: ISSUE-2, ISSUE-6
 **Triage-Entscheidung:** Der Maintainer hat am 2026-11-15 entschieden, den
 WMI-Pfad zu entfernen statt ihn anzubinden — das ist der in der Issue
 ausdrücklich zugelassene zweite Weg. Agent Brief: [`briefs/ISSUE-7-wmi-pfad-entfernen.md`](briefs/ISSUE-7-wmi-pfad-entfernen.md)
+
+**Erledigt am 2026-11-15:** Der WMI-Pfad wurde entfernt statt verdrahtet — Entscheidung des Maintainers vom 2026-11-15. Das Modul `wmi_exec` ist gelöscht, der Exploit-Crate exportiert die WMI-Typen nicht mehr, das Agenten-Flag `--wmi-script` und der Parameter in `run_propagation` sind weg, das Beispiel-Binary kennt das Flag nicht mehr. Betriebshandbuch, Crate-READMEs, Blueprint, `CLAUDE.md` und `AGENTS.md` nennen den Pfad nicht mehr.

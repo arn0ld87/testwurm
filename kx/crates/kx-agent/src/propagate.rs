@@ -49,7 +49,6 @@ fn service_for_port(port: u16) -> &'static str {
 pub async fn run_propagation(
     discovered: &[DiscoveredHost],
     relay_script: &str,
-    _wmi_script: &str,
 ) -> PropagationResults {
     let mut results = PropagationResults {
         new_hosts: Vec::new(),

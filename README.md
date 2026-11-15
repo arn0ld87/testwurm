@@ -82,8 +82,6 @@ Drei Binaries, klare Rollen:
 **Was kx nicht kann** (Stand heute, Details in [Abschnitt 11](#11--bekannte-einschränkungen))
 
 - Keine Post-Quantum-Verschlüsselung der Beute — das KEM-Modul ist deaktiviert
-- Keine WMI-/WinRM-Ausführung im Regelbetrieb — der Code existiert, hat aber
-  keinen Aufrufer
 - Der Task-Kanal führt **beliebige** Shell-Kommandos aus — es gibt keine
   Whitelist, keine Sandbox und keine Zeitgrenze
 
@@ -103,7 +101,7 @@ graph LR
         TLS["kx-tls<br/>selbstsignierte Zertifikate"]
         WIN["kx-win<br/>Windows-Secrets + Persistenz"]
         POSIX["kx-posix<br/>POSIX-Secrets + Persistenz"]
-        EXPL["kx-exploit<br/>SMB-Relay, WMI, Cred-Stuffing"]
+        EXPL["kx-exploit<br/>SMB-Relay, Cred-Stuffing"]
     end
     subgraph Binaries["Binaries"]
         AGENT["kx-agent<br/>Orchestrator"]
@@ -231,7 +229,7 @@ rustc --version && cargo --version
 | `kx-cli` | ✔ | ✔ | ✔ |
 | `kx-agent` | ✔ (voll) | ✔ ohne ARP-Sweep | ✔ via `x86_64-pc-windows-gnu` |
 | ARP-Sweep (`kx-scanner`) | **nur Linux** (`AF_PACKET`) | – | – |
-| SMB-Relay / WMI | ✔ (mit Impacket) | ✔ | ✔ (mit Impacket) |
+| SMB-Relay | ✔ (mit Impacket) | ✔ | ✔ (mit Impacket) |
 | Windows-Secrets (LSASS, Credential Manager) | Stub | Stub | ✔ |
 
 Der Workspace baut und testet auf **macOS und Linux** — die CI-Matrix erzwingt
@@ -245,7 +243,6 @@ Diese Werkzeuge laufen **auf dem Agenten-Host**, nicht auf dem Ziel:
 | Werkzeug | Wird gebraucht für | Installation |
 |---|---|---|
 | `python3` + [Impacket](https://github.com/fortra/impacket) (`smbrelayx.py`) | SMB-Relay → DCSync | `pip3 install impacket` |
-| `python3` + Impacket (`wmiexec.py`) | WMI-Ausführung (aktuell ohne Aufrufer) | `pip3 install impacket` |
 | `sshpass` + `ssh` | SSH-Default-Credentials | `apt install sshpass` / `brew install sshpass` |
 
 Ohne `sshpass` liefert der SSH-Zweig kontrolliert
@@ -586,7 +583,6 @@ Prozess im System lesbar, ein Environment-File mit 0600 ist es nicht.
 | `--own-ip` | – | `192.168.1.100` | eigene IP = Host-Kennung des Agenten |
 | `--hosts` | – | – | kommagetrennte Zielliste, umgeht ARP |
 | `--relay-script` | – | `smbrelayx.py` | Pfad zum Impacket-Skript |
-| `--wmi-script` | – | `wmiexec.py` | geparst, aber derzeit nicht ausgewertet |
 
 **Ablauf eines Laufs**
 
@@ -939,7 +935,7 @@ ISSUE-13 (Dashboard-Escaping und Token im Query-String).
 | ISSUE-4 | Credential Manager liefert bei *einem* Credential eine leere Liste | offen — betrifft nur Windows |
 | ISSUE-5 | Doc-Fix `--range` im Beispiel-Binary | offen |
 | ISSUE-6 | `tasks`-Tabelle ohne Wirkung | **behoben** — der Agent holt offene Tasks, führt sie aus und meldet das Ergebnis (PR #8) |
-| ISSUE-7 | `wmi_exec` ohne Aufrufer | offen — der Code ist implementiert, wird aber nicht ausgeführt |
+| ISSUE-7 | `wmi_exec` ohne Aufrufer | **behoben** — der WMI-Pfad wurde entfernt statt verdrahtet |
 | ISSUE-9 | Post-Quantum-Verschlüsselung inaktiv | offen — `kx-core/src/hostkey.rs` ist auskommentiert, das Modul wird nicht kompiliert |
 | ISSUE-11 | Token im Debug-Output | in Arbeit |
 | ISSUE-14 | Agent hängt im SSH-Default-Credential-Test (`sshpass` ohne Timeout) | offen — neu am 2026-11-15 reproduziert |
@@ -1022,7 +1018,7 @@ testwurm/
 │   └── crates/
 │       ├── kx-core/           ← C2-Wire-Vertrag, KXENC, util
 │       ├── kx-scanner/        ← ARP-Sweep (Linux), TCP-Scan, Fingerprint
-│       ├── kx-exploit/        ← SMB-Relay, WMI-Exec, Default-Credentials
+│       ├── kx-exploit/        ← SMB-Relay, Default-Credentials
 │       ├── kx-win/            ← Windows-Secrets + Persistenz
 │       ├── kx-posix/          ← POSIX-Secrets + Persistenz
 │       ├── kx-tls/            ← selbstsignierte Zertifikate, rustls-Configs
