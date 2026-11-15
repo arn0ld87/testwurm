@@ -17,7 +17,8 @@ Reporting (C2).
 - **`docs/egm-blueprint.md`** — Repository-Blueprint (Systemgrenzen, Invarianten,
   Side Effects, Verification) — der maschinenlesbare Vertrag.
 - **`docs/agents/`** — Agent-Konventionen (Issue-Tracker, Domain-Doku).
-- **`docs/adr/`** — Architekturentscheidungen (aktuell `0001-c2-antworttypen-strikt-request-typen-lenient.md`).
+- **`docs/adr/`** — Architekturentscheidungen (aktuell `0001-c2-antworttypen-strikt-request-typen-lenient.md`,
+  `0002-c2-transport-im-kern.md`, `0003-der-task-kanal-fuehrt-beliebige-kommandos-aus.md`).
 - **`GLOSSARY.md`** — kanonische Terminologie, für alle Crates verbindlich.
 - **`wissen/`** — Recherche-Wissenssammlung (Markdown, kein Quellcode).
 - **`.scratch/c2-operability/`** — Arbeitsvorrat: `EPIC.md`, `design_draft.md` und 14
@@ -251,7 +252,9 @@ Operator entschlüsselt mit `kx-cli secrets --decrypt --server-key <bundle>`.
   Master-Key gegen den öffentlichen Server-Schlüssel. Der private ML-KEM-Schlüssel
   wird beim Drop genullt (`zeroize`).
 - Der Task-Kanal führt beliebige Shell-Kommandos aus, aber unter einer Zeitgrenze
-  (300 s) — ein hängendes Kommando blockiert den Agentenlauf nicht.
+  (300 s) — ein hängendes Kommando blockiert den Agentenlauf nicht. Das ist eine
+  bewusste Entscheidung ([ADR-0003](./docs/adr/0003-der-task-kanal-fuehrt-beliebige-kommandos-aus.md)):
+  das Bearer-Token ist die Grenze, nicht eine Kommando-Whitelist.
 
 ## Known Defects / Arbeitsvorrat
 
