@@ -116,7 +116,7 @@ Ein PR ist erst mergefertig, wenn beide Jobs grün sind.
 
 | Crate        | Aufgabe                                              |
 |--------------|------------------------------------------------------|
-| `kx-core`    | KXENC-Dateiformat, Fehlerklassifikation, C2-Protokoll (`c2`), Hilfsfunktionen (`util`); `hostkey` (Hybrid-KEM) ist auskommentiert und wird nicht kompiliert |
+| `kx-core`    | KXENC-Dateiformat, Fehlerklassifikation, C2-Protokoll (`c2`), Hilfsfunktionen (`util`), Hybrid-KEM (`hostkey`) |
 | `kx-scanner` | ARP-Hostentdeckung (`arp_sweep`), TCP-Portscan (`scan_tcp`), `fingerprint` |
 | `kx-exploit` | SMB-Relay (`smb_relay_dcsync`), Credential-Stuffing (`try_default_credentials`) via Impacket |
 | `kx-win`     | Windows-Secrets (LSASS, Credential Manager, Browser) + Persistenz (Dienst, Run-Key, Scheduled Task) |
@@ -165,10 +165,10 @@ Vertrag.
 Konsequenz für Änderungen: ein neues Feld in einem **Antworttyp** erfordert Server
 *und* Client gleichzeitig; ein neues Feld in einem **Request-Typ** nur den Client.
 
-Die Felder `sealed_master` und `master_key` sind bereits Teil des Vertrags, werden
-vom Agenten aber als `None` gesendet — das KEM-Modul `kx-core/src/hostkey.rs` ist
-nicht aktiv (ISSUE-9). Server und Agent müssen beide Felder tolerant behandeln,
-bis das Material wirklich erzeugt wird.
+Die Felder `sealed_master` und `master_key` sind Teil des Vertrags. Der Agent
+füllt sie, wenn er mit `--server-key` den öffentlichen Server-Schlüssel
+bekommt; ohne diese Option bleiben sie leer. Server und Agent behandeln
+beide Felder tolerant — ein älterer Agent sendet sie nicht.
 
 ### Binaries und API
 
@@ -216,8 +216,9 @@ bis das Material wirklich erzeugt wird.
   Client lädt keinen System-Trust-Store.
 - Das Dashboard escaped jeden API-Wert; das Token kommt aus dem Login-Formular,
   nicht aus dem Query-String.
-- `kx-core/src/hostkey.rs` ist auskommentiert (`pub mod hostkey;` in `lib.rs` ist
-  deaktiviert) — die Hybrid-KEM-Verschlüsselung der Beute ist damit nicht aktiv.
+- `kx-core/src/hostkey.rs` ist aktiv: der Agent versiegelt je Host einen
+  Master-Key gegen den öffentlichen Server-Schlüssel. Der private ML-KEM-Schlüssel
+  wird beim Drop genullt (`zeroize`).
 
 ## Known Defects / Arbeitsvorrat
 
@@ -262,7 +263,7 @@ kx/
 ├── docs/00-recherche-phase0.md
 ├── HANDOFF.md              # Übergabenotiz zum Arbeitsstand
 └── crates/
-    ├── kx-core/            # c2.rs (Wire-Vertrag), format.rs, error.rs, util.rs, hostkey.rs (inaktiv)
+    ├── kx-core/            # c2.rs (Wire-Vertrag), format.rs, error.rs, util.rs, hostkey.rs
     ├── kx-scanner/         # arp.rs (nur Linux), tcp_scan.rs, fingerprint.rs
     ├── kx-exploit/         # smb_relay.rs, credential_stuff.rs, payload.rs, examples/
     ├── assets/              # smbrelayx.py (Impacket, Apache-Lizenz)

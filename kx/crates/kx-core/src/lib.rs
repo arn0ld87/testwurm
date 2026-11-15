@@ -10,7 +10,7 @@
 pub mod c2;
 pub mod error;
 pub mod format;
-// pub mod hostkey;  // TODO: ml-kem 0.2.1-API-Anpassungen nötig, vorerst deaktiviert
+pub mod hostkey;
 pub mod util;
 
 pub use error::{Error, Result};

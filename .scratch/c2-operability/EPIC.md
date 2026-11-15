@@ -22,7 +22,7 @@ Die Contracts sind inzwischen gegen den aktuellen Code geprüft und korrigiert. 
 | [ISSUE-1](issues/ISSUE-1-server-startet-nicht.md) | kx-server startet nicht — mehrdeutige rustls-CryptoProvider-Auflösung | high | done |
 | [ISSUE-12](issues/ISSUE-12-api-ohne-authentifizierung.md) | C2-API ist nicht authentifiziert — jeder mit Netzzugang liest die Beute | high | done |
 | [ISSUE-13](issues/ISSUE-13-dashboard-xss-und-token-im-query-string.md) | Dashboard rendert API-Werte ohne Escaping — gespeichertes XSS; Token im Query-String | high | done |
-| [ISSUE-9](issues/ISSUE-9-post-quantum-verschluesselung-inaktiv.md) | Post-Quantum-Verschlüsselung der Beute ist inaktiv — hostkey-Modul nicht kompiliert | high | open |
+| [ISSUE-9](issues/ISSUE-9-post-quantum-verschluesselung-inaktiv.md) | Post-Quantum-Verschlüsselung der Beute ist inaktiv — hostkey-Modul nicht kompiliert | high | done |
 | [ISSUE-10](issues/ISSUE-10-systemd-neustartschleife.md) | systemd-Unit startet das Binary ohne Argumente — Neustart-Schleife bei Restart=always | high | done |
 | [ISSUE-2](issues/ISSUE-2-smb-relay-toter-code.md) | SMB-Relay ist toter Code — Port 445 fehlt in COMMON_PORTS | high | done |
 | [ISSUE-3](issues/ISSUE-3-default-credentials-toter-code.md) | Default-Credential-Angriff ist toter Code — try_default_credentials liefert stets Ok(None) | high | open |

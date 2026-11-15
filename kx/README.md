@@ -20,16 +20,12 @@ Das Projekt ist ein Cargo-Workspace mit neun Crates unter [`crates/`](./crates/R
 Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C2-Report;
 `kx-agent` ist der einzige Crate, der alle Fachbereiche zusammenbindet.
 
-> **Abweichung von der ursprünglichen Planung:** Die ursprüngliche Fassung dieses
-> README kündigte post-quantum-sichere Verschlüsselung der Beute an (ML-KEM + Kyber).
-> Der zugehörige Code liegt in `kx-core/src/hostkey.rs` — das Modul ist in
-> `kx-core/src/lib.rs:13` auskommentiert und **wird nicht kompiliert**. Der
-> Hybrid-KEM-Code ist zudem nicht übersetzbar: `derive_master_key` fehlt als
-> Definition, und die `ml-kem`-Imports passen nicht zur aufgelösten Version.
-> (`rand_core` ist eine reguläre Dependency, aber `rand::RngCore` — der Trait,
-> den `hostkey.rs` importiert — ist es nicht.) Zusätzlich liefert
-> `derive_master_key_with_context` laut Code stets 32 Null-Bytes. Die
-> behauptete Ende-zu-Ende-Verschlüsselung der Beute ist **derzeit nicht aktiv**
+> **Die Verschlüsselung der Beute:** Das Modul `kx-core/src/hostkey.rs` ist aktiv
+> und übersetzt den Master-Key je Host gegen den öffentlichen Schlüssel des
+> Operators (X25519, wahlweise hybrid mit ML-KEM-768). Der Agent bekommt den
+> öffentlichen Schlüssel über `--server-key`; ohne diese Option läuft er ohne
+> Schlüsselmaterial. Den geheimen Schlüssel erzeugt der Operator mit
+> `cargo run -p kx-core --example gen_server_key -- hybrid server_key.json server_pub.json`
 > [`crates/kx-core/src/README.md`](./crates/kx-core/src/README.md).
 
 ## Subdirectories & Boundaries
@@ -64,7 +60,7 @@ Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C
 
 | Crate       | Aufgabe                                              |
 |-------------|------------------------------------------------------|
-| `kx-core`   | KXENC-Dateiformat, Fehlerklassifikation, C2-Protokoll, Hilfsfunktionen (Kryptografie im Modul `hostkey` ist nicht kompiliert) |
+| `kx-core`   | KXENC-Dateiformat, Fehlerklassifikation, C2-Protokoll, Hilfsfunktionen, Hybrid-KEM (`hostkey`) |
 | `kx-scanner`| ARP-Hostentdeckung, TCP-Portscan                    |
 | `kx-exploit`| SMB-Relay, Credential-Stuffing                   |
 | `kx-win`    | Windows-Secrets (LSASS, Credential Manager) + Persistenz |

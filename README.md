@@ -81,7 +81,6 @@ Drei Binaries, klare Rollen:
 
 **Was kx nicht kann** (Stand heute, Details in [Abschnitt 11](#11--bekannte-einschränkungen))
 
-- Keine Post-Quantum-Verschlüsselung der Beute — das KEM-Modul ist deaktiviert
 - Der Task-Kanal führt **beliebige** Shell-Kommandos aus — es gibt keine
   Whitelist, keine Sandbox und keine Zeitgrenze
 
@@ -936,13 +935,14 @@ ISSUE-13 (Dashboard-Escaping und Token im Query-String).
 | ISSUE-5 | Doc-Fix `--range` im Beispiel-Binary | offen |
 | ISSUE-6 | `tasks`-Tabelle ohne Wirkung | **behoben** — der Agent holt offene Tasks, führt sie aus und meldet das Ergebnis (PR #8) |
 | ISSUE-7 | `wmi_exec` ohne Aufrufer | **behoben** — der WMI-Pfad wurde entfernt statt verdrahtet |
-| ISSUE-9 | Post-Quantum-Verschlüsselung inaktiv | offen — `kx-core/src/hostkey.rs` ist auskommentiert, das Modul wird nicht kompiliert |
+| ISSUE-9 | Post-Quantum-Verschlüsselung inaktiv | **behoben** — das KEM-Modul ist aktiv, der Agent versiegelt je Host einen Master-Key |
 | ISSUE-11 | Token im Debug-Output | in Arbeit |
 | ISSUE-14 | Agent hängt im SSH-Default-Credential-Test (`sshpass` ohne Timeout) | offen — neu am 2026-11-15 reproduziert |
 
-Die Felder `sealed_master` und `master_key` gehören bereits zum Wire-Vertrag,
-werden vom Agenten aber als `None` gesendet. Server und Agent behandeln beide
-tolerant, bis das Material wirklich erzeugt wird.
+Die Felder `sealed_master` und `master_key` gehören zum Wire-Vertrag. Der Agent
+füllt sie, wenn er mit `--server-key` den öffentlichen Server-Schlüssel bekommt.
+Server und Agent behandeln beide Felder tolerant — ein älterer Agent sendet sie
+nicht.
 
 ---
 
@@ -993,9 +993,8 @@ ausgeführt — nicht nur beschrieben:
 | `kx-agent` im SSH-Zweig | **Hänger reproduziert** → ISSUE-14 |
 
 Nicht geprüft (bleibt offen): Verhalten gegen echte Windows-Ziele, der
-SMB-Relay-DCSync-Pfad mit echtem Impacket, die Post-Quantum-Verschlüsselung
-(ISSUE-9) und der Task-Ausführungskreis (Agent holt Task → führt aus → meldet
-Ergebnis) auf einem echten Zielsystem.
+SMB-Relay-DCSync-Pfad mit echtem Impacket und der Task-Ausführungskreis
+(Agent holt Task → führt aus → meldet Ergebnis) auf einem echten Zielsystem.
 
 ---
 
