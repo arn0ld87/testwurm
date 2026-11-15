@@ -3,11 +3,17 @@
 ## Overview
 
 Quellmodulbaum des Binary-Crates `kx-agent`. `main.rs` ist der einzige
-Entry-Point und erzeugt das Executable `kx-agent`; `c2.rs` und `propagate.rs`
-sind die einzigen Module (`mod c2;`, `mod propagate;` in [main.rs:main]). Beide
-Module sind **private** — `pub`-Symbole in `c2.rs` und `propagate.rs` sind
-deshalb nur crate-intern erreichbar, das Crate stellt keine Bibliotheks-API
-bereit [main.rs:mod c2] [main.rs:mod propagate].
+Entry-Point und erzeugt das Executable `kx-agent`; `c2.rs`, `hostkey.rs`,
+`propagate.rs` und `tasks.rs` sind die Module (`mod c2;`, `mod hostkey;`,
+`mod propagate;`, `mod tasks;` in [main.rs:main]). Alle Module sind **private** —
+`pub`-Symbole darin sind deshalb nur crate-intern erreichbar, das Crate stellt
+keine Bibliotheks-API bereit [main.rs:mod c2] [main.rs:mod hostkey]
+[main.rs:mod propagate] [main.rs:mod tasks].
+
+`hostkey.rs` kapselt die Host-Master-Keys gegen den oeffentlichen
+Server-Schluessel (Option `--server-key`): je Host ein eigener Master-Key, das
+Passwort wird damit verschluesselt und der Klartext verlaesst den Agenten
+nicht mehr [hostkey.rs:KeySealer] [hostkey.rs:versiegel].
 
 `main.rs` orchestriert den Lauf in fester Reihenfolge: C2-Client aufbauen, sich
 selbst registrieren, lokale Secrets extrahieren und hochladen, Persistenz

@@ -124,6 +124,10 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   generierte `Uuid::new_v4()` [main.rs:main]
 - `std::env::set_var("KX_SERVER_TOKEN", &token)` läuft unbedingt, die Umgebungsvariable
   entspricht zur Laufzeit also immer dem effektiven Token [main.rs:main]
+- Die Token-Pruefung liest **nicht** aus der Environment-Variable, sondern aus dem
+  `AppState` (`state.token`). Eine Variable ist prozessweit — jeder Test, der sie
+  setzt, wirkt auf alle anderen; im State steht der Token genau dort, wo er
+  geprueft wird [auth.rs:require_auth] [main.rs:login]
 - Die Hinweiszeile auf stderr erscheint nur, wenn weder CLI-Flag noch Umgebungsvariable
   ein Token lieferten — clap füllt `cli.token` bereits aus `env = "KX_SERVER_TOKEN"`.
   Sie nennt **nicht** den Tokenwert [main.rs:main]
@@ -202,10 +206,14 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   [db.rs:Db::upsert_host], `INSERT INTO secrets (...)` [db.rs:Db::insert_secret],
   `INSERT INTO tasks (...)` [db.rs:Db::insert_task] und `UPDATE tasks SET status, result
   WHERE id` [db.rs:Db::update_task_result]
-- SQL-Lesezugriffe: `SELECT id, ip, hostname, os, status, first_seen, last_seen FROM hosts`
-  [db.rs:Db::list_hosts], `SELECT id, host_id, cred_type, username, password, source,
-  collected_at FROM secrets` [db.rs:Db::list_secrets], `SELECT id, host_id, command, status,
-  result, created_at FROM tasks` [db.rs:Db::list_tasks]
+- SQL-Lesezugriffe: `SELECT id, ip, hostname, os, status, first_seen, last_seen,
+  sealed_master FROM hosts` [db.rs:Db::list_hosts], `SELECT id, host_id, cred_type,
+  username, password, source, collected_at, sealed_password FROM secrets`
+  [db.rs:Db::list_secrets], `SELECT id, host_id, command, status, result, created_at FROM
+  tasks` [db.rs:Db::list_tasks]
+- Schema-Migration: fehlende Spalten (`sealed_master`, `sealed_password`) werden per
+  `ALTER TABLE` nachgezogen — `CREATE TABLE IF NOT EXISTS` fasst eine bestehende
+  Tabelle nicht an [db.rs:Db::ergaenze_spalten]
 - Schreibt die Umgebungsvariable `KX_SERVER_TOKEN` prozessweit [main.rs:main]
 - Initialisiert den globalen tracing-Subscriber; ohne `RUST_LOG` filtert er auf `kx_server=info`
   [main.rs:main]
@@ -216,8 +224,8 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   es wird keine Zertifikatsdatei geschrieben [main.rs:main]
 - Startet einen TLS-Listener (`axum_server::bind_rustls`) auf `host:port` (Default
   `127.0.0.1:8443`) [main.rs:main]
-- Liest die Umgebungsvariable `KX_SERVER_TOKEN` zur Token-Prüfung
-  [auth.rs:require_auth] [main.rs:login]
+- Liest das Bearer-Token aus dem `AppState` zur Token-Prüfung — nicht aus der
+  Environment-Variable [auth.rs:require_auth] [main.rs:login]
 - Das Dashboard liest das Token **nicht** aus dem URL-Query-Parameter, sondern
   aus dem Login-Formular und sendet es als `Authorization: Bearer`-Header an
   `/api/hosts`, `/api/secrets` und `/api/tasks`; die Antworten werden per

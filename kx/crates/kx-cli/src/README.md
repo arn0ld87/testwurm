@@ -17,8 +17,8 @@ Die Datenmodelle stammen aus `kx_core::c2` — derselben Quelle der Wahrheit, di
 - [main.rs:Cli.token] — Top-Level-Argument `--token` mit Env-Fallback `KX_C2_TOKEN`; Pflichtangabe, Doc: „Bearer-Token für den C2-Server“.
 - [main.rs:Cli.cert] — Top-Level-Argument `--cert` ohne Env-Fallback; Pflichtangabe, Doc: „Pfad zum Server-Zertifikat (PEM)“.
 - [main.rs:Command::Hosts] — Subcommand `hosts`, keine Flags.
-- [main.rs:Command::Secrets] — Subcommand `secrets` mit Flag `--user` (`Option<String>`, Doc: „Optionaler Filter nach Benutzername (Teilstring)“).
-- [main.rs:Command::Export] — Subcommand `export` mit positionellem Argument `path: PathBuf` und Flag `--format` (`default_value = "json"`).
+- [main.rs:Command::Secrets] — Subcommand `secrets` mit Flag `--user` (`Option<String>`, Doc: „Optionaler Filter nach Benutzername (Teilstring)“), Flag `--decrypt` (`bool`) und Flag `--server-key` (`Option<PathBuf>`) — `--decrypt` entschluesselt die Secrets mit dem geheimen Server-Schluessel.
+- [main.rs:Command::Export] — Subcommand `export` mit positionellem Argument `path: PathBuf`, Flag `--format` (`default_value = "json"`), Flag `--decrypt` (`bool`) und Flag `--server-key` (`Option<PathBuf>`).
 - [main.rs:Command::Tasks] — Subcommand `tasks`, keine Flags.
 
 ### Client-API (crate-intern)

