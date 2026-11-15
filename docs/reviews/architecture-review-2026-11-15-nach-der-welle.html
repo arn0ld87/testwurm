@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture review — testwurm, after the wave</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+      .card { border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+      .before { background: #fef2f2; border-color: #fecaca; }
+      .after { background: #f0fdf4; border-color: #bbf7d0; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-4">
+        <div class="flex flex-wrap items-baseline justify-between gap-4">
+          <div>
+            <h1 class="font-serif text-4xl tracking-tight">Architecture review — after the wave</h1>
+            <p class="mt-1 text-sm text-slate-500 font-mono">testwurm · kx/ · 2026-11-15 · main @ 56f1036</p>
+          </div>
+          <p class="text-sm text-slate-500 max-w-sm">
+            The six candidates from the first review are implemented. The Windows run
+            found three more defects — and proved the chain.
+          </p>
+        </div>
+
+        <div class="grid sm:grid-cols-4 gap-3">
+          <div class="card p-4"><p class="label text-slate-400">candidates</p><p class="text-3xl font-serif">6 / 6</p><p class="text-xs text-slate-500">implemented</p></div>
+          <div class="card p-4"><p class="label text-slate-400">defects found</p><p class="text-3xl font-serif">3</p><p class="text-xs text-slate-500">only visible on Windows</p></div>
+          <div class="card p-4"><p class="label text-slate-400">tests</p><p class="text-3xl font-serif">136</p><p class="text-xs text-slate-500">green, clippy 0</p></div>
+          <div class="card p-4"><p class="label text-slate-400">ci jobs</p><p class="text-3xl font-serif">4</p><p class="text-xs text-slate-500">incl. windows target</p></div>
+        </div>
+      </header>
+
+      <!-- ============================ THE CHAIN ============================ -->
+      <section class="space-y-4">
+        <h2 class="font-serif text-2xl">The chain stands</h2>
+        <p class="text-sm text-slate-600 max-w-3xl">
+          Run on 2026-11-15: Windows Server 2022 in a KVM container on <code class="font-mono text-xs">rocky</code>,
+          C2 on the same host, agent built for <code class="font-mono text-xs">x86_64-pc-windows-gnu</code>.
+          One command decides it:
+        </p>
+        <div class="card p-4">
+          <pre class="mermaid">
+sequenceDiagram
+  participant W as Windows-VM<br/>172.17.0.2
+  participant C as C2<br/>192.168.190.87:8443
+  W->>C: POST /api/register
+  C-->>W: 201 Created
+  W->>C: POST /api/secrets (kx1: versiegelt)
+  C-->>W: 201 Created
+  W->>W: Run-Key setzen (Persistenz)
+  W->>C: GET /api/tasks
+  Note over W,C: Der C2 speichert nur das Siegel,<br/>das Passwortfeld bleibt leer
+          </pre>
+        </div>
+        <p class="text-sm text-slate-600">
+          What the operator sees on the dashboard — the host from the VM, the
+          credential-manager secrets of that machine, every password field
+          reading <code class="font-mono text-xs">&lt;verschluesselt&gt;</code>:
+        </p>
+        <div class="card overflow-hidden">
+          <img src="dashboard-windows-vm.png" alt="Dashboard des C2 mit den Daten aus der Windows-VM" class="w-full" />
+        </div>
+      </section>
+
+      <!-- ============================ CANDIDATES ============================ -->
+      <section class="space-y-6">
+        <h2 class="font-serif text-2xl">The six candidates</h2>
+
+        <article class="card p-6 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h3 class="font-serif text-xl">1 · The agent invocation exists once</h3>
+            <span class="px-2 py-1 rounded text-xs bg-emerald-100 text-emerald-800">implemented</span>
+          </div>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border p-4 before">
+              <p class="label text-red-700 mb-2">before — the invocation in three spellings</p>
+              <ul class="text-xs font-mono space-y-1 text-slate-700">
+                <li>Args (clap)</li>
+                <li>systemd ExecStart vector</li>
+                <li>sc.exe binPath string</li>
+              </ul>
+              <p class="text-xs text-red-800 mt-3">
+                Two of them were already wrong: the Windows service carried no
+                arguments at all, the Unix unit no <code>--server-key</code>.
+              </p>
+            </div>
+            <div class="rounded-lg border p-4 after">
+              <p class="label text-emerald-700 mb-2">after — one form, two adapters</p>
+              <div class="deep text-white rounded p-3">
+                <p class="label text-slate-300">kx_core::persist::Invocation</p>
+                <p class="text-xs mt-1">name · binary · args · env</p>
+              </div>
+              <p class="text-xs text-emerald-900 mt-3">
+                Unix renders a unit, Windows a run key. A new agent flag reaches
+                both without a second hand-kept list.
+              </p>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">
+            Files: <code class="font-mono">kx-core/src/persist.rs</code>,
+            <code class="font-mono">kx-agent/src/main.rs</code>,
+            <code class="font-mono">kx-win/src/persist.rs</code>,
+            <code class="font-mono">kx-posix/src/persist.rs</code>
+          </p>
+        </article>
+
+        <article class="card p-6 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h3 class="font-serif text-xl">2 · Exfiltration decides for itself</h3>
+            <span class="px-2 py-1 rounded text-xs bg-emerald-100 text-emerald-800">implemented</span>
+          </div>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border p-4 before">
+              <p class="label text-red-700 mb-2">before — assembled by hand, six times</p>
+              <p class="text-xs font-mono text-slate-700">password: String::new()<br/>.mit_versiegeltem_passwort(v)<br/>.mit_passwort(&amp;klartext)</p>
+              <p class="text-xs text-red-800 mt-3">
+                The rule “sealed beats cleartext” lived only in the server, applied
+                silently. Both fields could be filled.
+              </p>
+            </div>
+            <div class="rounded-lg border p-4 after">
+              <p class="label text-emerald-700 mb-2">after — one type decides</p>
+              <div class="deep text-white rounded p-3">
+                <p class="label text-slate-300">kx_core::exfil::ExfiltratedSecret</p>
+                <p class="text-xs mt-1">cannot fill both fields</p>
+              </div>
+              <p class="text-xs text-emerald-900 mt-3">
+                A failed seal is an error, never a fallback to cleartext.
+              </p>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">
+            Files: <code class="font-mono">kx-core/src/exfil.rs</code>,
+            <code class="font-mono">kx-agent/src/main.rs</code>,
+            <code class="font-mono">kx-agent/src/propagate.rs</code>
+          </p>
+        </article>
+
+        <article class="card p-6 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h3 class="font-serif text-xl">3 · The tests use the router the server uses</h3>
+            <span class="px-2 py-1 rounded text-xs bg-emerald-100 text-emerald-800">implemented</span>
+          </div>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border p-4 before">
+              <p class="label text-red-700 mb-2">before — thirteen hand-built routers</p>
+              <p class="text-xs text-slate-700">
+                <code class="font-mono">router_registers_the_contract_paths</code> checked a
+                router the test assembled itself. A route removed from
+                <code class="font-mono">app()</code> left it green while the name
+                promised the opposite.
+              </p>
+            </div>
+            <div class="rounded-lg border p-4 after">
+              <p class="label text-emerald-700 mb-2">after — one wiring</p>
+              <p class="text-xs text-slate-700">
+                Every test calls <code class="font-mono">app(state)</code>. The auth
+                test now covers each route that is added, without a second
+                route table to keep in step.
+              </p>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">
+            Files: <code class="font-mono">kx-server/src/main.rs</code>
+          </p>
+        </article>
+
+        <article class="card p-6 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h3 class="font-serif text-xl">4 · One secret type, one loop</h3>
+            <span class="px-2 py-1 rounded text-xs bg-emerald-100 text-emerald-800">implemented</span>
+          </div>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border p-4 before">
+              <p class="label text-red-700 mb-2">before — the same type twice</p>
+              <p class="text-xs text-slate-700">
+                <code class="font-mono">kx_win::Secret</code> and
+                <code class="font-mono">kx_posix::Secret</code> had identical fields, so the
+                agent could not loop: four thirteen-line copies. Two extractors
+                had no caller at all.
+              </p>
+            </div>
+            <div class="rounded-lg border p-4 after">
+              <p class="label text-emerald-700 mb-2">after — one shape</p>
+              <p class="text-xs text-slate-700">
+                <code class="font-mono">kx_core::secret::Secret</code> carries the source
+                too, so the extractor supplies what only it knows. The agent loops;
+                the two dead extractors are wired.
+              </p>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">
+            Files: <code class="font-mono">kx-core/src/secret.rs</code>,
+            <code class="font-mono">kx-win/src/secrets.rs</code>,
+            <code class="font-mono">kx-posix/src/secrets.rs</code>
+          </p>
+        </article>
+
+        <article class="card p-6 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h3 class="font-serif text-xl">5 · The protocol has its transport</h3>
+            <span class="px-2 py-1 rounded text-xs bg-emerald-100 text-emerald-800">implemented</span>
+          </div>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border p-4 before">
+              <p class="label text-red-700 mb-2">before — written twice, tested never</p>
+              <p class="text-xs font-mono text-slate-700">agent/src/c2.rs<br/>cli/client.rs</p>
+              <p class="text-xs text-red-800 mt-3">
+                TLS setup, bearer header, URL trimming, status→error: two copies,
+                two error enums of the same shape, no test on either. The e2e
+                test built a third.
+              </p>
+            </div>
+            <div class="rounded-lg border p-4 after">
+              <p class="label text-emerald-700 mb-2">after — one transport, two adapters</p>
+              <div class="deep text-white rounded p-3">
+                <p class="label text-slate-300">kx_core::c2::transport</p>
+                <p class="text-xs mt-1">ADR-0002</p>
+              </div>
+              <p class="text-xs text-emerald-900 mt-3">
+                The e2e test now speaks the same transport as the agent.
+              </p>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">
+            Files: <code class="font-mono">kx-core/src/c2/transport.rs</code>,
+            <code class="font-mono">docs/adr/0002-c2-transport-im-kern.md</code>
+          </p>
+        </article>
+
+        <article class="card p-6 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h3 class="font-serif text-xl">6 · The database speaks the protocol</h3>
+            <span class="px-2 py-1 rounded text-xs bg-emerald-100 text-emerald-800">implemented</span>
+          </div>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border p-4 before">
+              <p class="label text-red-700 mb-2">before — translation in two modules</p>
+              <p class="text-xs text-slate-700">
+                Requests became rows in the handlers, rows became protocol types
+                in <code class="font-mono">db.rs</code>. A new protocol field meant
+                two places.
+              </p>
+            </div>
+            <div class="rounded-lg border p-4 after">
+              <p class="label text-emerald-700 mb-2">after — one module, both directions</p>
+              <p class="text-xs text-slate-700">
+                <code class="font-mono">Db</code> takes and returns protocol types;
+                the rows stay private. The rule “sealed beats cleartext” now sits
+                beside the row it governs, not in the handler.
+              </p>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500">
+            Files: <code class="font-mono">kx-server/src/db.rs</code>,
+            <code class="font-mono">kx-server/src/main.rs</code>
+          </p>
+        </article>
+      </section>
+
+      <!-- ====================== THE WINDOWS RUN ====================== -->
+      <section class="space-y-5">
+        <h2 class="font-serif text-2xl">What the Windows run found</h2>
+        <p class="text-sm text-slate-600 max-w-3xl">
+          Three defects that no amount of reading would have found. They live behind
+          <code class="font-mono text-xs">cfg(target_os = "windows")</code>, and the CI
+          built only macOS and Linux — so the Windows binary did not compile, and
+          nobody had noticed.
+        </p>
+
+        <div class="card p-5 space-y-3 border-l-4 border-l-red-600">
+          <p class="label text-red-700">defect 1 · the service never started</p>
+          <p class="text-sm text-slate-700">
+            <code class="font-mono text-xs">sc.exe create</code> registered the
+            agent — with no arguments at all. Even fixed, it could not work: the
+            agent never reports to the Service Control Manager, so the start
+            times out with <em>FAILED 1053</em>. The registry entry existed and
+            did nothing.
+          </p>
+          <p class="text-sm text-slate-700">
+            The way that starts is the run key: it is executed at every sign-in.
+            <code class="font-mono text-xs">install_run_key</code> sets it, and
+            the agent calls that instead of the service.
+          </p>
+        </div>
+
+        <div class="card p-5 space-y-3 border-l-4 border-l-amber-500">
+          <p class="label text-amber-700">defect 2 · the error message was empty</p>
+          <p class="text-sm text-slate-700">
+            <code class="font-mono text-xs">sc.exe</code> and
+            <code class="font-mono text-xs">schtasks</code> write their failures to
+            <em>stdout</em>. The module read only stderr and reported
+            “Dienst-Fehler: ” — a failure with no text in it, which hides the
+            cause without hiding the failure.
+          </p>
+          <p class="text-sm text-slate-700">
+            The message now reads both streams, and the call goes to
+            <code class="font-mono text-xs">sc.exe</code> without a shell in
+            between — <code class="font-mono text-xs">cmd.exe /C</code> split the
+            line at the quotes around the display name.
+          </p>
+        </div>
+
+        <div class="card p-5 space-y-3 border-l-4 border-l-amber-500">
+          <p class="label text-amber-700">defect 3 · the agent gave up on Windows</p>
+          <p class="text-sm text-slate-700">
+            Discovery was the ARP sweep alone. It needs AF_PACKET raw sockets and
+            exists only under Linux — so on Windows the agent logged the failure
+            and exited with code 1. Without ARP there was no run at all.
+          </p>
+          <p class="text-sm text-slate-700">
+            The range is now knocked on instead: every address in
+            <code class="font-mono text-xs">--start … --end</code> is a candidate,
+            and the TCP scan in the propagation decides who answers.
+            <code class="font-mono text-xs">kx_scanner::ip_range</code> supplies them,
+            capped at 4096 addresses.
+          </p>
+        </div>
+
+        <div class="card p-5 space-y-3 border-l-4 border-l-emerald-600">
+          <p class="label text-emerald-700">the guard that keeps it that way</p>
+          <p class="text-sm text-slate-700">
+            A fourth CI job: <code class="font-mono text-xs">cargo check --target
+            x86_64-pc-windows-gnu</code>. The Windows path is checked on every
+            push now. The job needs mingw-w64 — <code class="font-mono text-xs">ring</code>
+            ships a build script that compiles C even when nothing links.
+          </p>
+        </div>
+      </section>
+
+      <!-- ====================== THE LOOP ====================== -->
+      <section class="space-y-4">
+        <h2 class="font-serif text-2xl">The loop, not the session</h2>
+        <p class="text-sm text-slate-600 max-w-3xl">
+          The Windows test is a script now, not a sequence of keystrokes:
+          <code class="font-mono text-xs">kx/scripts/kx-vm-test.sh</code> starts the
+          agent in the VM and answers with one verdict. It is agent-runnable and
+          deterministic — one command, one judgement.
+        </p>
+        <div class="card p-4">
+          <pre class="mermaid">
+flowchart LR
+  S["kx-vm-test.sh"] --> A["C2 mit passendem TLS-Namen"]
+  A --> Z["Zertifikat holen"]
+  Z --> T["Befehl in die VM tippen"]
+  T --> W["45 s warten"]
+  W --> Q{"GET /api/hosts<br/>enthaelt 172.17.0.2?"}
+  Q -->|ja| P["PASS"]
+  Q -->|nein| F["FAIL + Log aus der VM"]
+  F --> S
+          </pre>
+        </div>
+        <p class="text-xs text-slate-500">
+          Files: <code class="font-mono">kx/scripts/kx-vm-test.sh</code>,
+          <code class="font-mono">kx/scripts/kx-vm-control.sh</code>,
+          <code class="font-mono">kx/scripts/kx-vm-setup.ps1</code>
+        </p>
+      </section>
+
+      <!-- ====================== WHAT IS LEFT ====================== -->
+      <section class="space-y-4">
+        <h2 class="font-serif text-2xl">What is still open</h2>
+        <div class="card divide-y divide-slate-100">
+          <div class="p-5">
+            <p class="label text-slate-400">ISSUE-15 · the KXENC container has no cipher</p>
+            <p class="text-sm text-slate-700 mt-1">
+              The format describes header, footer, chunk numbering, AAD and nonces
+              — and encrypts nothing. The worm transports passwords and NT hashes,
+              not files. One correction to the first review: the module is not
+              entirely dead. <code class="font-mono text-xs">KexId</code> is
+              load-bearing in the live crypto path, so it has to be lifted out
+              before the container part can go.
+            </p>
+          </div>
+          <div class="p-5">
+            <p class="label text-slate-400">the task channel runs any command</p>
+            <p class="text-sm text-slate-700 mt-1">
+              It is bounded by a timeout now, but there is no whitelist: the token
+              is full execution on the target. That is a policy decision, not a
+              defect, and it is deliberately not taken here.
+            </p>
+          </div>
+          <div class="p-5">
+            <p class="label text-slate-400">never run against a real domain</p>
+            <p class="text-sm text-slate-700 mt-1">
+              The SMB relay to DCSync was exercised only as a command line. No
+              Windows domain controller, no real NT hashes, no relay attempt.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <footer class="pt-8 border-t border-slate-200 text-xs text-slate-400">
+        First review: <code class="font-mono">architecture-review-2026-11-15.html</code> ·
+        findings from the code-review-graph index ·
+        the Windows run on 2026-11-15 against Windows Server 2022 Evaluation.
+      </footer>
+
+    </main>
+  </body>
+</html>
