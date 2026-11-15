@@ -72,6 +72,45 @@ sequenceDiagram
         </div>
       </section>
 
+      <!-- ====================== THE RUN IN PICTURES ====================== -->
+      <section class="space-y-4">
+        <h2 class="font-serif text-2xl">The run in pictures</h2>
+        <p class="text-sm text-slate-600 max-w-3xl">
+          The screenshots live in the repository, not in a chat window — the test
+          is repeatable, and the pictures are part of it.
+        </p>
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div class="card overflow-hidden">
+            <img src="windows-vm/01-desktop.png" alt="Windows Server 2022 in der VM" class="w-full" />
+            <p class="p-3 text-xs text-slate-500">
+              The machine under test: Windows Server 2022 Evaluation, signed in
+              automatically, the shared folder on the desktop.
+            </p>
+          </div>
+          <div class="card overflow-hidden">
+            <img src="windows-vm/03-agent-log.png" alt="Startmeldung des Agenten in der VM" class="w-full" />
+            <p class="p-3 text-xs text-slate-500">
+              The agent's own report of its start: the server key loaded, the
+              secrets extracted and uploaded.
+            </p>
+          </div>
+          <div class="card overflow-hidden">
+            <img src="windows-vm/04-sc-exe-test.png" alt="sc.exe-Aufrufe in der VM" class="w-full" />
+            <p class="p-3 text-xs text-slate-500">
+              The minimisation that found the defect: three <code class="font-mono">sc.exe</code>
+              variants, all of them <em>CreateService SUCCESS</em> — so the error
+              was never sc.exe, it was the shell in front of it.
+            </p>
+          </div>
+          <div class="card overflow-hidden">
+            <img src="windows-vm/05-dashboard-final.png" alt="Dashboard nach dem finalen Lauf" class="w-full" />
+            <p class="p-3 text-xs text-slate-500">
+              The final run, one host and two secrets, both sealed.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <!-- ============================ CANDIDATES ============================ -->
       <section class="space-y-6">
         <h2 class="font-serif text-2xl">The six candidates</h2>
