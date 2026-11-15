@@ -162,6 +162,7 @@ mod tests {
             password: "secret".into(),
             source: "test".into(),
             collected_at: "2025-11-07T00:00:00Z".into(),
+            sealed_password: String::new(),
         }];
         let dir = std::env::temp_dir();
         let path = dir.join("kx-cli-test.csv");

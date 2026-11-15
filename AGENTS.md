@@ -170,10 +170,18 @@ füllt sie, wenn er mit `--server-key` den öffentlichen Server-Schlüssel
 bekommt; ohne diese Option bleiben sie leer. Server und Agent behandeln
 beide Felder tolerant — ein älterer Agent sendet sie nicht.
 
+Die **Beute selbst** geht verschlüsselt über die Leitung: der Agent
+verschlüsselt das Passwort mit dem Master-Key des Hosts (`kx_core::secretbox`),
+und der C2-Server verwirft den Klartext, wenn das versiegelte Feld ankommt. Der
+Operator entschlüsselt mit `kx-cli secrets --decrypt --server-key <bundle>`.
+
 ### Binaries und API
 
 - `kx-server`: `--host` (`127.0.0.1`), `--port` (`8443`), `--db` (`kx.db`), `--token`
-  (Env `KX_SERVER_TOKEN`), `--cn` (`kx.local`). Zertifikat und Schlüssel bleiben im
+  (Env `KX_SERVER_TOKEN`), `--cn` (`kx.local`). Das Token steht im `AppState`, nicht in einer Environment-Variable —
+  eine Variable ist prozessweit und wirkt auf alle Tests.Das Token steht im `AppState`, nicht
+  in einer Environment-Variable — eine Variable ist prozessweit und wirkt auf
+  alle Tests. Zertifikat und Schlüssel bleiben im
   Speicher; es wird keine `kx-server.crt`/`.key` geschrieben.
 - `kx-agent`: `--server`/`--token` (Env `KX_C2_URL`/`KX_C2_TOKEN`), `--server-cert`,
   `--iface` (`eth0`), `--start`/`--end` (Pflichtargumente), `--own-ip`, `--hosts`,

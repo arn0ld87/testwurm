@@ -27,3 +27,7 @@ subtle = { workspace = true }
 # ServiceExt::oneshot — damit lassen sich Requests ohne echten TCP-Server
 # direkt gegen den Router schicken (Auth-Tests).
 tower = { workspace = true, features = ["util"] }
+
+[dev-dependencies]
+# OsRng fuer den Ende-zu-Ende-Test der Beutekette.
+rand_core.workspace = true
