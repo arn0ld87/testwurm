@@ -14,9 +14,12 @@ wird vom Wurm [kx-agent/src/c2.rs:47](../kx-agent/src/c2.rs) und von der
 Operator-CLI [kx-cli/src/client.rs:43](../kx-cli/src/client.rs) verwendet, um
 ausschließlich dem Server-Zertifikat zu vertrauen.
 
-Abhängigkeiten laut [Cargo.toml](./Cargo.toml): `kx-core`, `rustls`, `rustls-pemfile`,
-`rustls-pki-types`, `rcgen`, `thiserror`, `time`. `kx-core` ist im Manifest
-deklariert, wird im Quellcode des Crates aber nirgends referenziert.
+Abhängigkeiten laut [Cargo.toml](./Cargo.toml): `rustls`, `rustls-pemfile`,
+`rustls-pki-types`, `rcgen`, `thiserror`, `time`. `kx-core` stand früher im
+Manifest, wurde im Quellcode des Crates aber nirgends referenziert; die Kante
+ist entfernt, damit `kx-core` den C2-Transport aufnehmen kann — der braucht
+das TLS-Vertrauen aus diesem Crate, und eine Kante in beide Richtungen wäre
+ein Zyklus.
 
 ## Subdirectories & Boundaries
 

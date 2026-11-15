@@ -93,6 +93,11 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   [auth.rs:require_auth]
 - Dashboard: `DASHBOARD_HTML` — statische HTML-Seite mit den Tabellen `#hosts`, `#secrets`
   und `#tasks` sowie dem Login-Formular `#login` [dashboard.rs:DASHBOARD_HTML]
+- Ende-zu-Ende-Test der Beutekette [e2e_test.rs:die_beutekette_laueft_vom_agent_bis_zum_operator] —
+  baut seine Requests mit dem C2-Transport aus `kx_core::c2::transport`
+  (`post_json_request`, `get_request`) und ruft den Router direkt auf;
+  `in_den_router` wandelt den C2-Request in einen Axum-Request
+  [e2e_test.rs:in_den_router]
 
 ## Invariants
 
@@ -233,12 +238,17 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
 ## Verification
 
 - Run: `cargo test` (ausgeführt in der Workspace-Wurzel `/Volumes/T7/Projekte/testwurm/kx`)
-- Stand: `cargo test --workspace` läuft grün — 59 Tests, 0 Fehler. Davon entfallen 13 auf
-  dieses Crate: 3 in [db.rs:tests] (`host_row_maps_to_wire_host`,
-  `task_row_maps_result_field`, `secret_row_maps_to_wire_secret`), 4 in [main.rs:tests]
+- Stand: `cargo test --workspace` läuft grün — 130 Tests, 0 Fehler. Davon entfallen 19 auf
+  dieses Crate: 5 in [db.rs:tests] (`host_row_maps_to_wire_host`,
+  `task_row_maps_result_field`, `secret_row_maps_to_wire_secret`,
+  `task_result_is_written_back_to_the_row`,
+  `task_result_for_an_unknown_task_changes_nothing`), 9 in [main.rs:tests]
   (`help_text_lists_every_contract_path`, `router_registers_the_contract_paths`,
   `api_paths_require_a_valid_bearer_token`, `unknown_path_is_404_not_401`,
-  `login_path_checks_the_token_it_receives`) und 6 in
+  `login_path_checks_the_token_it_receives`, `create_task_fills_the_task_table`,
+  `task_result_flows_back_into_the_task_list`,
+  `task_result_for_an_unknown_task_is_404`), 1 in [e2e_test.rs]
+  (`die_beutekette_laueft_vom_agent_bis_zum_operator`) und 5 in
   [dashboard.rs:tests] (`dashboard_endpoints_are_the_contract_paths`,
   `dashboard_reads_only_fields_the_contract_defines`,
   `dashboard_reads_the_task_result_field`,

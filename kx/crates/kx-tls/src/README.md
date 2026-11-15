@@ -15,8 +15,9 @@ Dateipfade-Lesart ist durch die Signaturen der öffentlichen API widerlegt
 
 Die Implementierung stützt sich vollständig auf die Drittanbieter-Crates `rcgen`
 (Zertifikatserzeugung), `rustls` (Konfiguration), `rustls-pemfile` (PEM-Parsing),
-`rustls-pki-types` (DER-Typen) und `time` (Gültigkeitsdatum); `kx-core` ist im
-Manifest deklariert, wird aber nicht importiert.
+`rustls-pki-types` (DER-Typen) und `time` (Gültigkeitsdatum); `kx-core` stand
+früher im Manifest, wird aber nicht importiert — die Kante ist entfernt, damit
+`kx-core` den C2-Transport aufnehmen kann, ohne einen Zyklus zu erzeugen.
 
 ## Interface
 - `pub enum TlsError` — `#[derive(Debug, Error)]` (thiserror), drei Tuple-Varianten mit

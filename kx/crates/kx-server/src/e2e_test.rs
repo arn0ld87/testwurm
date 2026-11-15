@@ -7,7 +7,21 @@
 use super::*;
 use axum::body::Body;
 use axum::extract::Request;
+use kx_core::c2::transport::{get_request, parse_json, post_json_request};
+use kx_core::c2::{
+    ExfiltratedSecret, Host, RegisterRequest, SecretUpload, PATH_HOSTS, PATH_REGISTER, PATH_SECRETS,
+};
 use tower::ServiceExt;
+
+/// Wandelt einen C2-Request in einen Axum-Request.
+///
+/// Der Request kommt aus `kx_core::c2::transport` — derselbe, den der Agent
+/// schickt. Nur die Ausführung unterscheidet sich: statt einer TCP-Verbindung
+/// ruft der Test den Router direkt auf.
+fn in_den_router(request: axum::http::Request<Vec<u8>>) -> Request {
+    let (teile, body) = request.into_parts();
+    Request::from_parts(teile, Body::from(body))
+}
 
 /// Der Ende-zu-Ende-Test der Beutekette.
 ///
@@ -22,7 +36,6 @@ use tower::ServiceExt;
 /// nicht ihr Zusammenspiel.
 #[tokio::test]
 async fn die_beutekette_laueft_vom_agent_bis_zum_operator() {
-    use kx_core::c2::ExfiltratedSecret;
     use kx_core::hostkey::{encapsulate_host_master_key_os, ServerKeyBundle, ServerKeyPair};
     use kx_core::secretbox;
 
@@ -54,26 +67,15 @@ async fn die_beutekette_laueft_vom_agent_bis_zum_operator() {
         ip: "10.0.0.5".into(),
         hostname: Some("ziel".into()),
         os: Some("Linux".into()),
-        status: Some(c2::STATUS_COMPROMISED.into()),
+        status: Some(kx_core::c2::STATUS_COMPROMISED.into()),
         sealed_master: Some(sealed_master.clone()),
         master_key: None,
     };
     let antwort = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(PATH_REGISTER)
-                .header(
-                    axum::http::header::AUTHORIZATION,
-                    authorization(TEST_ZUGANG),
-                )
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::to_vec(&registrierung).expect("serialisierbar"),
-                ))
-                .unwrap(),
-        )
+        .oneshot(in_den_router(
+            post_json_request(PATH_REGISTER, TEST_ZUGANG, &registrierung).expect("Request"),
+        ))
         .await
         .unwrap();
     assert_eq!(antwort.status(), StatusCode::CREATED);
@@ -90,20 +92,9 @@ async fn die_beutekette_laueft_vom_agent_bis_zum_operator() {
     };
     let antwort = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(PATH_SECRETS)
-                .header(
-                    axum::http::header::AUTHORIZATION,
-                    authorization(TEST_ZUGANG),
-                )
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::to_vec(&upload).expect("serialisierbar"),
-                ))
-                .unwrap(),
-        )
+        .oneshot(in_den_router(
+            post_json_request(PATH_SECRETS, TEST_ZUGANG, &upload).expect("Request"),
+        ))
         .await
         .unwrap();
     assert_eq!(antwort.status(), StatusCode::CREATED);
@@ -111,23 +102,14 @@ async fn die_beutekette_laueft_vom_agent_bis_zum_operator() {
     // 3. Der Server liefert das Secret — verschluesselt, ohne Klartext.
     let antwort = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .uri(PATH_SECRETS)
-                .header(
-                    axum::http::header::AUTHORIZATION,
-                    authorization(TEST_ZUGANG),
-                )
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(in_den_router(get_request(PATH_SECRETS, TEST_ZUGANG)))
         .await
         .unwrap();
     assert_eq!(antwort.status(), StatusCode::OK);
     let body = axum::body::to_bytes(antwort.into_body(), 64 * 1024)
         .await
         .expect("Body");
-    let secrets: Vec<ExfiltratedSecret> = serde_json::from_slice(&body).expect("JSON");
+    let secrets: Vec<ExfiltratedSecret> = parse_json(&body).expect("JSON");
     assert_eq!(secrets.len(), 1);
     assert!(
         secrets[0].password.is_empty(),
@@ -140,22 +122,13 @@ async fn die_beutekette_laueft_vom_agent_bis_zum_operator() {
     //    den Master-Key gewinnt.
     let antwort = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .uri(PATH_HOSTS)
-                .header(
-                    axum::http::header::AUTHORIZATION,
-                    authorization(TEST_ZUGANG),
-                )
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(in_den_router(get_request(PATH_HOSTS, TEST_ZUGANG)))
         .await
         .unwrap();
     let body = axum::body::to_bytes(antwort.into_body(), 64 * 1024)
         .await
         .expect("Body");
-    let hosts: Vec<c2::Host> = serde_json::from_slice(&body).expect("JSON");
+    let hosts: Vec<Host> = parse_json(&body).expect("JSON");
     assert_eq!(hosts.len(), 1);
     assert_eq!(hosts[0].sealed_master, sealed_master);
 

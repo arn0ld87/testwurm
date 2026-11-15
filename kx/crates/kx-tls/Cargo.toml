@@ -8,7 +8,11 @@ authors.workspace = true
 description = "TLS-Infrastruktur für Kx (rustls-basiert)"
 
 [dependencies]
-kx-core = { workspace = true }
+# kx-core stand hier als Abhaengigkeit im Manifest, wurde aber nie benutzt —
+# kein `kx_core`-Bezug im ganzen Crate. Die Kante ist entfernt, damit
+# kx-core den C2-Transport aufnehmen kann: der Transport braucht das
+# TLS-Vertrauen aus diesem Crate, und eine Kante in beide Richtungen waere
+# ein Zyklus.
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 rustls-pki-types = { workspace = true }

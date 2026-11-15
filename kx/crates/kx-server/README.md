@@ -116,5 +116,5 @@ Rollup aus [`src/`](./src/README.md):
 ## Verification
 
 - Run: `cargo test` (ausgeführt in `/Volumes/T7/Projekte/testwurm/kx`)
-- Stand: `cargo test --workspace` läuft grün — 59 Tests, 0 Fehler, davon 13 aus diesem
-  Crate (`db.rs`, `main.rs`, `dashboard.rs`).
+- Stand: `cargo test --workspace` läuft grün — 130 Tests, 0 Fehler, davon 19 aus diesem
+  Crate (`db.rs`, `main.rs`, `dashboard.rs`, `e2e_test.rs`).

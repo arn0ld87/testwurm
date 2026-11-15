@@ -9,8 +9,11 @@
 
 pub mod c2;
 pub mod error;
+pub mod exfil;
 pub mod format;
 pub mod hostkey;
+pub mod persist;
+pub mod secret;
 pub mod secretbox;
 pub mod util;
 

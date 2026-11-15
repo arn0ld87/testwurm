@@ -2,12 +2,15 @@ name: CI
 
 # Gate für den Rust-Workspace unter kx/.
 #
-# Zwei Jobs:
-#   build  — baut und testet auf macOS und Linux (die Projektregel: der
-#            Workspace muss auf beiden Plattformen bauen)
-#   smoke  — startet den C2-Server und prüft die Authentifizierung am laufenden
-#            System. Dieser Job fängt genau die Defekte, die ein reiner
-#            Testlauf nicht sieht: ISSUE-1 (Start panic) und ISSUE-12 (offene API).
+# Drei Jobs:
+#   build    — baut und testet auf macOS und Linux (die Projektregel: der
+#              Workspace muss auf beiden Plattformen bauen)
+#   windows  — übersetzt den Windows-Pfad. Die Zweige hinter `cfg(windows)`
+#              werden auf macOS und Linux nie übersetzt; ein Fehler dort
+#              bleibt still, bis jemand das Binary auf Windows baut.
+#   smoke    — startet den C2-Server und prüft die Authentifizierung am laufenden
+#              System. Dieser Job fängt genau die Defekte, die ein reiner
+#              Testlauf nicht sieht: ISSUE-1 (Start panic) und ISSUE-12 (offene API).
 #
 # fmt-Gate: der Workspace ist seit Commit 825511b formatiert, `cargo fmt --check`
 # ist grün und wird hier erzwungen.
@@ -57,6 +60,39 @@ jobs:
 
       - name: Testen
         run: cargo test --workspace
+
+  windows:
+    name: build-windows-target
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kx
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust installieren
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Abhängigkeiten cachen
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kx
+
+      # `ring` bringt ein build.rs mit, das C übersetzt — dafür braucht es den
+      # mingw-Compiler, auch wenn `cargo check` nicht linkt.
+      - name: mingw-w64 installieren
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mingw-w64
+
+      # Der Wurm soll auf Windows laufen. Die Pfade hinter `cfg(windows)` werden
+      # auf macOS und Linux nie übersetzt — ein Fehler dort bleibt still, bis
+      # jemand das Binary auf Windows baut. `cargo check` genügt: übersetzen
+      # muss der Code, linken muss er nur auf einer Windows-Maschine.
+      - name: Der Windows-Pfad muss übersetzen
+        run: cargo check --workspace --all-targets --target x86_64-pc-windows-gnu
 
   smoke:
     name: server-smoke-test

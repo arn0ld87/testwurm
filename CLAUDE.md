@@ -108,7 +108,23 @@ obwohl in keinem Manifest ein Feature `syscalls` deklariert ist — dokumentiert
 - **Bewusst kein clippy-Gate** — clippy meldet noch Warnungen; das gehört in einen
   eigenen Arbeitsstrang, nicht in einen funkspezifischen PR.
 
-Ein PR ist erst mergefertig, wenn beide Jobs grün sind.
+Ein PR ist erst mergefertig, wenn alle Jobs grün sind.
+
+## Testskripte
+
+Unter `kx/scripts/` liegen die Werkzeuge, die eine Aussage treffen, statt
+nur zu laufen:
+
+- **`build.sh`** / **`build.ps1`** — der eine Build-Aufruf: baut die drei
+  Release-Binaries und legt sie in `dist/` zusammen. Das Windows-Gegenstück
+  ist dieselbe Form.
+- **`kx-vm-test.sh`** — der Feedback-Loop des Windows-Tests: startet den
+  Agenten in der Windows-VM und prüft, ob er sich beim C2 registriert.
+  Ein Aufruf, ein klares Urteil, kein Tippen.
+- **`kx-vm-control.sh`** — steuert die VM über den QEMU-Monitor (Tastatur,
+  Bildschirmabzüge). Läuft im Container, nicht auf dem Host.
+- **`kx-vm-setup.ps1`** — das Skript, das die VM ausführt: lädt den Agenten,
+  startet ihn und schickt das Log zurück.
 
 ## Architecture
 
@@ -116,20 +132,20 @@ Ein PR ist erst mergefertig, wenn beide Jobs grün sind.
 
 | Crate        | Aufgabe                                              |
 |--------------|------------------------------------------------------|
-| `kx-core`    | KXENC-Dateiformat, Fehlerklassifikation, C2-Protokoll (`c2`), Hilfsfunktionen (`util`), Hybrid-KEM (`hostkey`) |
+| `kx-core`    | C2-Protokoll (`c2`) samt Transport, Kryptografie (`hostkey`, `secretbox`), die Formen der Beute (`secret`, `exfil`), die Persistenz-Invocation (`persist`), KXENC-Dateiformat, Hilfsfunktionen (`util`) |
 | `kx-scanner` | ARP-Hostentdeckung (`arp_sweep`), TCP-Portscan (`scan_tcp`), `fingerprint` |
 | `kx-exploit` | SMB-Relay (`smb_relay_dcsync`), Credential-Stuffing (`try_default_credentials`) via Impacket |
 | `kx-win`     | Windows-Secrets (LSASS, Credential Manager, Browser) + Persistenz (Dienst, Run-Key, Scheduled Task) |
 | `kx-posix`   | POSIX-Secrets (`/etc/shadow`, SSH, AWS) + Persistenz (systemd-Unit, Cron) |
-| `kx-tls`     | selbstsignierte Zertifikate (`generate_server_tls`), rustls-Configs (`client_config_trusting`) |
+| `kx-tls`     | selbstsignierte Zertifikate (`generate_server_tls`), rustls-Configs (`client_config_trusting`) — die Client-Konfiguration nutzt der Transport in `kx-core` |
 | `kx-server`  | C2-Backend: axum-API, SQLite (`hosts`, `secrets`, `tasks`), HTML-Dashboard |
 | `kx-agent`   | der autonome Wurm: orchestriert Scanner → Exploit → Secrets → Persistenz → C2-Report |
 | `kx-cli`     | Operator-CLI (`hosts`, `secrets`, `export --format json|csv`, `tasks`) |
 
-Schichtung: `kx-core` und `kx-scanner` sind Basislagen ohne interne
-Crate-Abhängigkeit; `kx-agent` ist der einzige Crate, der sechs interne Crates
-einbindet. Interne Abhängigkeiten sind ausschließlich `path`-Dependencies über
-`workspace = true`.
+Schichtung: `kx-core` und `kx-scanner` sind Basislagen; `kx-core` bindet seit
+dem Transport in den Kern (ADR-0002) `kx-tls` ein. `kx-agent` ist der einzige
+Crate, der fünf interne Crates einbindet. Interne Abhängigkeiten sind
+ausschließlich `path`-Dependencies über `workspace = true`.
 
 Datenfluss: `kx-agent` scannt und exfiltriert, meldet per `POST /api/register`
 und `POST /api/secrets` an den `kx-server`; der Server schreibt in SQLite
@@ -258,8 +274,7 @@ gibt es nicht. Die Secret-Exfiltration läuft über `kx-core/src/secretbox.rs`.
 
 **Dokumentations-Drift:** Der Modul-Doc von `kx-core/src/lib.rs` beschreibt noch
 eine Schichtung `format → crypto → engine → beacon` aus einem Vorgängerprojekt —
-die Crates dieses Workspace heißen anders. Ebenso verweist
-`kx/.cargo/config.toml` auf ein `scripts/build.sh`, das es nicht gibt.
+die Crates dieses Workspace heißen anders.
 
 ## Security Considerations
 
@@ -280,7 +295,7 @@ kx/
 ├── assets/              # smbrelayx.py (Impacket, Apache-Lizenz)
 ├── HANDOFF.md              # Übergabenotiz zum Arbeitsstand
 └── crates/
-    ├── kx-core/            # c2.rs (Wire-Vertrag), format.rs, error.rs, util.rs, hostkey.rs
+    ├── kx-core/            # c2.rs (C2 Protocol), transport.rs, secret.rs, exfil.rs, persist.rs, hostkey.rs, secretbox.rs, format.rs, error.rs, util.rs
     ├── kx-scanner/         # arp.rs (nur Linux), tcp_scan.rs, fingerprint.rs
     ├── kx-exploit/         # smb_relay.rs, credential_stuff.rs, payload.rs, examples/
     ├── kx-win/             # secrets.rs, persist.rs

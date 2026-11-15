@@ -8,29 +8,35 @@ Workspace-Definition in [`../Cargo.toml`](../Cargo.toml) bindet sie über
 eigenes `Cargo.toml` und erbt Version, Edition, MSRV, Lizenz und Autoren per
 `*.workspace = true` aus dem Workspace-Manifest.
 
-Die Crates bilden eine strenge Schichtung: `kx-core` und `kx-scanner` sind
-Basislagen ohne interne Crate-Abhängigkeit, darüber liegen TLS- und
-Post-Exploitation-Schicht, darüber die drei Binaries. `kx-agent` ist der
-einzige Crate, der alle Fachbereiche zusammenbindet.
+Die Crates bilden eine strenge Schichtung: `kx-scanner` ist die einzige
+Basislage ohne interne Crate-Abhängigkeit; darüber liegt `kx-tls` (TLS-Infrastruktur)
+und darüber `kx-core` mit dem C2-Protokoll und seinem Transport, darüber die
+Post-Exploitation-Schicht und die drei Binaries. `kx-agent` ist der einzige
+Crate, der alle Fachbereiche zusammenbindet.
+
+Ein Pfeil zeigt auf die Abhängigkeit: `A --> B` heisst „A hängt ab von B“.
 
 ```
-kx-core ──┬──> kx-tls ──┬──> kx-server
-          │              └──> kx-cli
-          ├──> kx-win
-          ├──> kx-posix
-          └──> kx-agent <── kx-exploit <── kx-scanner
-                │  └────────────┴── kx-win, kx-posix, kx-scanner, kx-tls
+kx-tls ──> kx-core ──┬──> kx-win
+                     ├──> kx-posix
+                     ├──> kx-agent <── kx-exploit <── kx-scanner
+                     ├──> kx-server
+                     └──> kx-cli
 ```
 
-`kx-agent` ist der einzige Crate, der **sechs** interne Crates einbindet
-(`kx-core`, `kx-scanner`, `kx-exploit`, `kx-win`, `kx-posix`, `kx-tls`) — er
-bindet damit alle Fachbereiche zusammen.
+`kx-server` und `kx-cli` hängen zusätzlich direkt von `kx-tls` ab: der Server
+erzeugt sein Zertifikat damit, die CLI las es früher selbst. Der C2-Transport
+in `kx-core` ersetzt diesen zweiten Zugriff — die CLI braucht `kx-tls` nicht mehr.
+
+`kx-agent` ist der einzige Crate, der **fünf** interne Crates einbindet
+(`kx-core`, `kx-scanner`, `kx-exploit`, `kx-win`, `kx-posix`) — er bindet damit
+alle Fachbereiche zusammen.
 
 ## Subdirectories & Boundaries
 
-- [kx-agent](./kx-agent/README.md) — Autonomer Kx-Agent: Ausbreitung, C2-Kommunikation, Task-Verarbeitung. Bindet Scanner, Exploit-, Win- und POSIX-Persistenz sowie TLS aneinander; einziges Crate mit sechs internen Abhängigkeiten.
-- [kx-cli](./kx-cli/README.md) — Kx-CLI: Operator-Interface für C2-Steuerung. `clap`-basierte Binär-Crate für Host-, Secret- und Task-Abfragen sowie den Export; nutzt `kx-tls` für den TLS-Trust und `kx_core::c2` für die Nachrichtentypen und Pfadkonstanten.
-- [kx-core](./kx-core/README.md) — Encoder-Kern: KXENC-Dateiformat, Fehlerklassifikation, plattformneutrale Hilfsfunktionen und das C2-Protokollmodul `c2`. Das Manifest beschreibt zusätzlich „Hybrid-KEM, AEAD-Chunks, Scan-Policy, Journal, Engine" — Scan-Policy, Journal und Engine existieren im Code **nicht**, und der Hybrid-KEM-Teil (`hostkey`) ist auskommentiert und wird nicht kompiliert. Plattformneutral und ohne interne Crate-Abhängigkeit; Basis aller anderen Crates.
+- [kx-agent](./kx-agent/README.md) — Autonomer Kx-Agent: Ausbreitung, C2-Kommunikation, Task-Verarbeitung. Bindet Scanner, Exploit-, Win- und POSIX-Persistenz aneinander; einziges Crate mit fünf internen Abhängigkeiten.
+- [kx-cli](./kx-cli/README.md) — Kx-CLI: Operator-Interface für C2-Steuerung. `clap`-basierte Binär-Crate für Host-, Secret- und Task-Abfragen sowie den Export; nutzt `kx_core::c2` für die Nachrichtentypen, die Pfadkonstanten und den Transport.
+- [kx-core](./kx-core/README.md) — Encoder-Kern: KXENC-Dateiformat, Fehlerklassifikation, plattformneutrale Hilfsfunktionen, das C2-Protokollmodul `c2` und dessen Transport (`c2/transport.rs`). Das Manifest beschreibt zusätzlich „Hybrid-KEM, AEAD-Chunks, Scan-Policy, Journal, Engine" — Scan-Policy, Journal und Engine existieren im Code **nicht**, und der Hybrid-KEM-Teil (`hostkey`) ist auskommentiert und wird nicht kompiliert. Plattformneutral; einzige interne Abhängigkeit ist `kx-tls` (das TLS-Vertrauen des C2-Transports).
 - [kx-exploit](./kx-exploit/README.md) — Exploit-Module: SMB-Relay, Credential-Stuffing via Impacket. Einzige Crate mit eigenem Unterverzeichnis [`examples/`](./kx-exploit/examples/README.md); stützt sich auf `kx-scanner`.
 - [kx-posix](./kx-posix/README.md) — POSIX-Post-Exploitation: Secrets-Extraktion (Shadow, SSH, AWS) und Persistence (systemd, Cron). Jede öffentliche Funktion existiert doppelt als `#[cfg(unix)]`-Variante und Nicht-Unix-Stub.
 - [kx-scanner](./kx-scanner/README.md) — Netzwerkerkennung und Service-Fingerprinting für den Kx-Netzwerkwurm. Basislage ohne interne Crate-Abhängigkeit; liefert die Scan-Ergebnisse an `kx-exploit` und `kx-agent`.

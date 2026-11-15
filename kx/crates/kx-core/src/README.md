@@ -5,7 +5,9 @@
 Quellmodulbaum des Crates `kx-core`. `lib.rs` ist die Crate-Wurzel und deklariert
 die Module sowie die Formatkonstanten. `error.rs` enthaelt die Fehlertaxonomie,
 `format.rs` das Dateiformat `KXENC` v1, `util.rs` die plattformneutralen
-Hilfsfunktionen, `c2.rs` das C2-Protokoll (Endpunktpfade, Host-Status, Wire-Typen).
+Hilfsfunktionen, `c2.rs` das C2-Protokoll (Endpunktpfade, Host-Status, Wire-Typen)
+und `c2/transport.rs` die Ausuebung des Protokolls (TLS-Aufbau, Bearer-Header,
+URL-Bildung, Status→Fehler).
 `hostkey.rs` (per-Host-Schluessel und Hybrid-KEM) und `secretbox.rs` (das
 AEAD-Wrapping der Beute) sind aktiv und ueber
 `pub mod hostkey;` erreichbar [lib.rs:hostkey]. Die Symbole aus `hostkey.rs`
@@ -24,6 +26,7 @@ angehaengt [format.rs:FOOTER_LEN] [format.rs:TAG_LEN].
 - `pub mod error;` [lib.rs:error]
 - `pub mod format;` [lib.rs:format]
 - `pub mod util;` [lib.rs:util]
+- `pub mod c2::transport;` [c2.rs:transport]
 - `pub use error::{Error, Result};` [lib.rs:Error] [lib.rs:Result]
 - `pub const FORMAT_VERSION: u8 = 1;` [lib.rs:FORMAT_VERSION]
 - `pub const READABLE_FORMAT_VERSIONS: [u8; 1] = [1];` [lib.rs:READABLE_FORMAT_VERSIONS]
@@ -59,6 +62,27 @@ Agent und CLI sprechen dieselben Typen und dieselben Endpunktpfade.
 - `impl ExfiltratedSecret` mit `mit_passwort(wert: &str)` und `mit_versiegeltem_passwort(wert: String)` [c2.rs:ExfiltratedSecret]
 - `pub struct CreateTaskRequest` (`host_id`, `command` als `String`), ohne `deny_unknown_fields` [c2.rs:CreateTaskRequest]
 - `pub struct TaskResultRequest` (`task_id`, `status`, `result` als `String`), ohne `deny_unknown_fields` [c2.rs:TaskResultRequest]
+
+### c2/transport.rs — der Transport des C2-Protokolls
+
+Die Ausuebung des Protokolls: TLS-Aufbau, Bearer-Header, URL-Bildung und die
+Abbildung eines HTTP-Status auf einen Fehler. Agent (`kx-agent/src/c2.rs`) und
+CLI (`kx-cli/src/client.rs`) sind dünne Adapter darueber; vor dem Umzug stand
+diese Ausuebung zweimal im Baum, mit je einem eigenen Fehler-Enum.
+
+- `pub enum TransportError` (`thiserror::Error`) mit den Varianten `Tls(String)`, `Http(String)`, `Json(String)` [c2/transport.rs:TransportError]
+- `pub fn build_request(method: Method, path: &str, token: &str, body: Option<Vec<u8>>) -> Request<Vec<u8>>` — baut Methode, Pfad, `Authorization: Bearer {token}` und Body; ein Body setzt `content-type: application/json` [c2/transport.rs:build_request]
+- `pub fn get_request(path: &str, token: &str) -> Request<Vec<u8>>` [c2/transport.rs:get_request]
+- `pub fn post_json_request<T: Serialize>(path: &str, token: &str, body: &T) -> Result<Request<Vec<u8>>, TransportError>` [c2/transport.rs:post_json_request]
+- `pub fn parse_json<T: DeserializeOwned>(body: &[u8]) -> Result<T, TransportError>` [c2/transport.rs:parse_json]
+- `pub struct Transport` mit privaten Feldern `agent: ureq::Agent`, `base_url: String`, `token: String` [c2/transport.rs:Transport]
+- `pub fn Transport::new(server: &str, token: &str, cert_pem: &[u8]) -> Result<Self, TransportError>` — TLS-Vertrauen aus `kx_tls::client_config_trusting` [c2/transport.rs:Transport::new]
+- `pub fn Transport::from_cert_file(server: &str, token: &str, cert_path: &str) -> Result<Self, TransportError>` [c2/transport.rs:Transport::from_cert_file]
+- `pub fn Transport::base_url(&self) -> &str` [c2/transport.rs:Transport::base_url]
+- `pub fn Transport::send(&self, request: &Request<Vec<u8>>) -> Result<ureq::Response, TransportError>` [c2/transport.rs:Transport::send]
+- `pub fn Transport::post_json<T: Serialize>(&self, path: &str, body: &T) -> Result<(), TransportError>` [c2/transport.rs:Transport::post_json]
+- `pub fn Transport::post_json_response<B: Serialize, T: DeserializeOwned>(&self, path: &str, body: &B) -> Result<T, TransportError>` [c2/transport.rs:Transport::post_json_response]
+- `pub fn Transport::get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, TransportError>` [c2/transport.rs:Transport::get_json]
 
 ### error.rs — Fehlertaxonomie
 
@@ -234,6 +258,18 @@ sind Teil des Formats.
 - Die Master-Key-Felder `sealed_master` und `master_key` sind Base64-Strings, keine Binaerwerte: ein JSON-Array aus Zahlen waere unlesbar und unhandlich (Entscheidung D5) [c2.rs:RegisterRequest] [c2.rs:SecretUpload]
 - Ein Task durchlaeuft die Status `pending` → `running` → `done` oder `failed`; das Ergebnis steht im Feld `result` [c2.rs:STATUS_PENDING] [c2.rs:STATUS_RUNNING] [c2.rs:STATUS_DONE] [c2.rs:STATUS_FAILED]
 
+### C2-Transport
+
+- Der Transport liegt genau einmal, in `kx_core::c2::transport`; `kx-agent` und `kx-cli` enthalten nur noch Adapter [c2/transport.rs:Transport]
+- Der Authorization-Header ist exakt `Authorization: Bearer {token}` — mit einem Leerzeichen, ohne weiteren Praefix [c2/transport.rs:build_request]
+- Die Basis-URL wird ueber `server.trim_end_matches('/')` normalisiert; alle abschliessenden `/` werden entfernt, bevor der Pfad angehaengt wird [c2/transport.rs:Transport::new]
+- Der TLS-Trust ist auf exakt die im PEM enthaltenen Zertifikate gepinnt; der Root-Store startet leer, es wird kein Client-Zertifikat praesentiert [c2/transport.rs:Transport::new]
+- Nur Status 200 und 201 gelten als Erfolg; jeder andere 2xx-Status erzeugt `TransportError::Http("Status {status}: {body}")` [c2/transport.rs:ensure_ok]
+- Ein Status ab 400 ist bereits ein Fehler des HTTP-Clients: er nennt URL und Status, nicht den Body [c2/transport.rs:Transport::send]
+- Die Bytes des JSON-Bodys bleiben dieselben wie vor dem Umzug des Transports: die Serialisierung laeuft ueber `serde_json::Value`, dessen Felder eine `BTreeMap` sind und damit sortiert stehen. Ein direktes `to_vec` ueber den Typ wuerde die Felder in Deklarationsreihenfolge schreiben [c2/transport.rs:post_json_request]
+- Ein GET traegt weder Body noch Content-Type; ein POST mit Body traegt `content-type: application/json` [c2/transport.rs:get_request] [c2/transport.rs:build_request]
+- Der Transport ist blockierend — `ureq` ist es auch; der Agent ruft ihn synchron innerhalb seiner `async fn` auf [c2/transport.rs:Transport::send]
+
 ### Fehlerklassifikation
 
 - Die `ErrorClass`-Strings sind absichtlich stabil, weil Konsolen-Fehlerliste und Journal danach gefiltert und gezaehlt werden [error.rs:ErrorClass]
@@ -310,9 +346,12 @@ sind Teil des Formats.
 - `util::Sha256Stream::update` mutiert den ueber `&mut self` fortgeschriebenen Hashzustand [util.rs:update]
 - `format::FooterFlags::insert` und `format::FooterFlags::remove` mutieren den Flag-Wert des Aufrufers in place [format.rs:FooterFlags::insert] [format.rs:FooterFlags::remove]
 - `format::aad_for` leert den uebergebenen `&mut Vec<u8>` und befuellt ihn mit den AAD-Bytes [format.rs:aad_for]
-- Im kompilierten Crate gibt es keinen Dateisystem-, Netzwerk- oder Prozesszugriff: kein Aufruf von `std::fs`, `std::net` oder `std::process` [lib.rs:error] [lib.rs:format] [lib.rs:util]
+- Im kompilierten Crate gibt es keinen Prozesszugriff: kein Aufruf von `std::process`. Dateisystem- und Netzwerkzugriff gibt es seit dem Transport — siehe unten [lib.rs:error] [lib.rs:format] [lib.rs:util]
 - `c2.rs` ist reines Datenmodell: der Import von `serde::{Deserialize, Serialize}` erzeugt Serialize/Deserialize-Ableitungen auf allen sechs Wire-Typen; die (De-)Serialisierung allokiert je Feld einen `String` [c2.rs:Host] [c2.rs:RegisterRequest]
-- `c2.rs` fuehrt selbst keine HTTP-Anfrage aus — die Pfadkonstanten sind nur Daten; der Transport liegt in `kx-agent` und `kx-server` [c2.rs:PATH_REGISTER] [c2.rs:PATH_HEARTBEAT]
+- `c2.rs` fuehrt selbst keine HTTP-Anfrage aus — die Pfadkonstanten sind nur Daten; der Transport liegt in `c2/transport.rs` [c2.rs:PATH_REGISTER] [c2.rs:PATH_HEARTBEAT]
+- `c2/transport.rs:Transport::from_cert_file` liest das Server-Zertifikat per `std::fs::read` von der Platte [c2/transport.rs:Transport::from_cert_file]
+- `c2/transport.rs:Transport::new` erzeugt einen `ureq::Agent`, der ausschliesslich dem uebergebenen Zertifikat vertraut [c2/transport.rs:Transport::new]
+- `c2/transport.rs:Transport::send` oeffnet eine TCP-Verbindung zum C2-Server und schickt den Request [c2/transport.rs:Transport::send]
 - Ausschliesslich in `hostkey.rs` und damit derzeit ohne Wirkung: `ServerKeyBundle::generate` erzeugt das X25519-Secret und im Hybrid-Modus ein ML-KEM-768-Schluesselpaar [hostkey.rs:ServerKeyBundle::generate]
 - Ausschliesslich in `hostkey.rs` und damit derzeit ohne Wirkung: `encapsulate_host_master_key` erzeugt das ephemere X25519-Secret und im Hybrid-Modus das ML-KEM-Chiffretext [hostkey.rs:encapsulate_host_master_key]
 - Ausschliesslich in `hostkey.rs` und damit derzeit ohne Wirkung: `MlKemSecret::drop` ueberschreibt die ML-KEM-Secretbytes mit Nullen [hostkey.rs:Drop for MlKemSecret]
@@ -322,6 +361,7 @@ sind Teil des Formats.
 ## Verification
 
 - Run: `cargo test` (ausgefuehrt in `/Volumes/T7/Projekte/testwurm/kx`)
-- Stand: `cargo test --workspace` ist gruen — **59 Tests, 0 Fehler**; davon `cargo test -p kx-core`: **31 Tests, 0 Fehler** (11 in `c2.rs`, 10 in `format.rs`, 7 in `util.rs`, 2 in `error.rs`, 1 in `lib.rs`)
-- Die Testmodule liegen in `c2.rs` [c2.rs:tests], `error.rs` [error.rs:tests], `util.rs` [util.rs:tests] und `format.rs` [format.rs:tests]; `hostkey.rs` fuehrt mangels Kompilierung keine Tests aus
+- Stand: `cargo test --workspace` ist gruen — **130 Tests, 0 Fehler**; davon `cargo test -p kx-core`: **66 Tests, 0 Fehler** (4 in `c2/transport.rs`, 62 in `c2.rs`, `format.rs`, `util.rs`, `error.rs` und `lib.rs`)
+- Die Testmodule liegen in `c2.rs` [c2.rs:tests], `c2/transport.rs` [c2/transport.rs:tests], `error.rs` [error.rs:tests], `util.rs` [util.rs:tests] und `format.rs` [format.rs:tests]; `hostkey.rs` fuehrt mangels Kompilierung keine Tests aus
+- `c2/transport.rs` traegt 4 Vertragstests: der Bearer-Header, der Body eines GET (leer, ohne Content-Type), der JSON-Body eines POST (mit Content-Type) und die getrimmte Basis-URL [c2/transport.rs:tests::der_request_traegt_den_bearer_header] [c2/transport.rs:tests::ein_get_trägt_keinen_body] [c2/transport.rs:tests::ein_post_trägt_den_json_body] [c2/transport.rs:tests::die_basis_url_wird_getrimmt]
 - `c2.rs` traegt 10 Vertragstests: Key-Set-Pinning, Strictness-Nachweis (Antworttypen lehnen unbekannte Felder ab, Request-Typen tolerieren sie), Roundtrips ueber Golden-JSON und die Stabilitaet der Endpunktpfade [c2.rs:tests::response_key_sets_are_pinned] [c2.rs:tests::response_types_reject_unknown_fields] [c2.rs:tests::request_types_tolerate_unknown_fields] [c2.rs:tests::endpoint_paths_are_stable]

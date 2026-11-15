@@ -11,6 +11,9 @@ This glossary defines the canonical terminology used throughout this security to
 **C2 Protocol**: The fixed message structure exchanged between the worm's agent and the operator's C2 — host registrations, heartbeats, secret uploads, and the host, secret and task records the operator reads back. Every participant in the exchange speaks the same structure, so a field that exists on one side exists on all of them.
 _Avoid_: C2 API, REST contract, wire format
 
+**C2 Transport**: The single implementation that carries the C2 Protocol over the wire — TLS setup, the bearer header, URL construction, and the mapping of an HTTP status onto an error. It exists once, next to the protocol it carries, so that the agent, the operator CLI, and the server's own test all speak through the same code.
+_Avoid_: C2 client (the client is an adapter over the transport), HTTP layer
+
 **Exfiltration**: The process of extracting sensitive data (credentials, keys, configurations) from compromised systems and transmitting it to an external location.
 
 **Exfiltrated Secret**: A credential that has been extracted from a compromised host and transferred to the operator. It carries the identity of the host it was taken from, so that every exfiltrated secret points back to a known host.
