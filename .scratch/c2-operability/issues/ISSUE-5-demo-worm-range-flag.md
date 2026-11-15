@@ -1,9 +1,9 @@
 ---
 id: ISSUE-5
 title: demo_worm.rs Nutzungskommentar nennt nicht existierendes Flag --range
-status: open
+status: done
 category: bug
-triage_state: ready-for-agent
+triage_state: erledigt
 agent_brief: briefs/ISSUE-5-demo-worm-aufruf.md
 priority: low
 ---
@@ -24,8 +24,8 @@ Verifiziert am 2026-11-11 per Quellcode-Prüfung.
 
 ## Acceptance Criteria
 
-- [ ] Der Nutzungskommentar nennt einen Aufruf, der mit dem Parser übereinstimmt
-- [ ] Der Kommentar enthält ein vollständiges, kopierbares Beispiel mit `--iface`, `--start` und `--end`
+- [x] Der Nutzungskommentar nennt einen Aufruf, der mit dem Parser übereinstimmt
+- [x] Der Kommentar enthält ein vollständiges, kopierbares Beispiel mit `--iface`, `--start` und `--end`
 
 ## Technical Notes
 
@@ -42,3 +42,5 @@ Verifiziert am 2026-11-11 per Quellcode-Prüfung.
   Der kopierte Aufruf bricht mit einem Parser-Fehler ab.
 
 **Triage-Entscheidung:** Agent Brief: [`briefs/ISSUE-5-demo-worm-aufruf.md`](briefs/ISSUE-5-demo-worm-aufruf.md)
+
+**Erledigt am 2026-11-15:** kx-exploit: Nutzungskommentar nennt einen gültigen Aufruf. Alle Akzeptanzkriterien abgehakt.

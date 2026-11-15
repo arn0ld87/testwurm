@@ -26,8 +26,10 @@ externe Wirkung ist plattformabhängig.
   `Registry(String)`, `ScheduledTask(String)`, `Service(String)`; `thiserror::Error` [error.rs:WinError]
 - Module `error`, `persist`, `secrets` — in `lib.rs` als `pub mod` deklariert und per `pub use`
   re-exportiert (`WinError`, `Secret`, `extract_*`, `create_*`, `install_service`, `start_service`) [lib.rs:pub mod error]
-- Private Helfer, nicht am Crate-Root exportiert und nur unter `cfg(target_os = "windows")`
-  kompiliert: `run_powershell`, `run_mimikatz`, `parse_lsass_output`, `parse_secrets_from_json` [secrets.rs:run_powershell]
+- Private Helfer, nicht am Crate-Root exportiert: `run_powershell`, `run_mimikatz` und
+  `parse_lsass_output` sind nur unter `cfg(target_os = "windows")` kompiliert,
+  `parse_secrets_from_json` zusätzlich unter `cfg(test)` — der JSON-Parser wird
+  ohne Windows-Zielsystem getestet [secrets.rs:run_powershell]
 
 ## Invariants
 
@@ -37,16 +39,20 @@ externe Wirkung ist plattformabhängig.
   [persist.rs:create_scheduled_task]
 - Die Parameter der Nicht-Windows-Stubs werden nicht ausgewertet (Unterstriche-Präfix), Aufruferwerte
   haben dort also keine Wirkung [persist.rs:install_service]
-- `parse_secrets_from_json` kann kein `Err` liefern: `serde_json::from_str(...).unwrap_or_default()`
-  fängt jeden Parse-Fehler ab und liefert einen leeren `Vec` [secrets.rs:parse_secrets_from_json]
+- `parse_secrets_from_json` kann kein `Err` liefern: eine leere Ausgabe ergibt einen leeren `Vec`,
+  ein einzelnes JSON-Objekt wird zu einer Liste mit einem Eintrag, und jeder andere unlesbare
+  Inhalt erzeugt eine `warn!`-Meldung und einen leeren `Vec` [secrets.rs:parse_secrets_from_json]
 - `extract_browser_credentials` liefert deshalb auch unter Windows immer eine leere Liste: das
-  PowerShell-Skript ist ein Platzhalter (`@() | ConvertTo-Json`) [secrets.rs:extract_browser_credentials]
+  PowerShell-Skript ist ein Platzhalter (`ConvertTo-Json -InputObject @()`) [secrets.rs:extract_browser_credentials]
 - `parse_lsass_output` erzeugt nur dann ein `Secret`, wenn die Zeile das exakte Trennmuster `": "`
   enthält und beide Teile nicht leer sind; `secret_type` ist dabei fest auf `"lsass"` gesetzt,
   `target` ist der Text davor, `value` der Text danach [secrets.rs:parse_lsass_output]
 - `extract_credential_manager` setzt `secret_type` fest auf `"credential_manager"`, `target` stammt
   aus der cmdkey-`Target:`-Capture-Gruppe, `value` aus der `User:`-Capture-Gruppe [secrets.rs:extract_credential_manager]
-- **Code-Bug:** `extract_credential_manager` liefert unter Windows bei **genau einem** gespeicherten Credential eine leere Liste, weil `$results | ConvertTo-Json` bei einem einzelnen Element ein JSON-Objekt statt eines Arrays erzeugt und `serde_json::from_str::<Vec<Secret>>(…).unwrap_or_default()` daran scheitert — in diesem Fall greifen die Capture-Gruppen nicht [secrets.rs:extract_credential_manager]
+- `extract_credential_manager` liefert unter Windows auch bei **genau einem** gespeicherten
+  Credential eine Liste mit einem Eintrag: das PowerShell-Skript serialisiert mit
+  `ConvertTo-Json -InputObject @($results)` immer ein Array, und der Parser akzeptiert
+  zusätzlich ein einzelnes JSON-Objekt [secrets.rs:extract_credential_manager]
 - `secret_type` nimmt im Code nur die Literale `"credential_manager"` und `"lsass"` an; die
   Doc-Kommentare nennen zusätzlich `"browser"` und `"ssh_key"`, die kein Codepfad erzeugt [secrets.rs:secret_type]
 - `run_powershell` startet `powershell.exe` immer mit den festen Flags `-NoProfile`,

