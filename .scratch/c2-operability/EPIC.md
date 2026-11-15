@@ -53,6 +53,11 @@ Die Wellen aus `design_draft.md` sind die verbindliche Reihenfolge.
 9. **ISSUE-7** — der WMI-Pfad wird entfernt statt verdrahtet (Entscheidung vom 2026-11-15). ISSUE-6 ist erledigt (PR #8, Commit `209834e`): Task-Anlage, Agent-Abholung und -Rückmeldung liegen in `origin/main`.
 10. **ISSUE-11** — Token-Härtung, unkritisch aber billig.
 11. **ISSUE-5** — kosmetisch, aber triviales Doc-Fix.
+**Welle 3 — Umfangserweiterung (offen, kein Notfall):**
+12. **ISSUE-15** — das KXENC-Containerformat hat keine Chiffre. Der Wurm
+    transportiert Passwörter und NT-Hashes verschlüsselt über `secretbox.rs`,
+    aber Dateien lassen sich nicht exfiltrieren. Die Lücke stand in keinem der 14
+    Issues und wurde beim Aufräumen gefunden (Clippy-Strang, 2026-11-15).
 
 ## Abhängigkeiten
 
@@ -68,7 +73,7 @@ Die Wellen aus `design_draft.md` sind die verbindliche Reihenfolge.
 
 ```bash
 cd /Volumes/T7/Projekte/testwurm/kx
-cargo test --workspace          # aktuell 47 Tests grün, 0 Fehler
+cargo test --workspace          # aktuell 109 Tests grün, 0 Fehler
 cargo build --release
 ./target/release/kx-server --host 127.0.0.1 --port 8443 --db /tmp/kx.db --token test
 ```
