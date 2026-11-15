@@ -93,7 +93,7 @@ pub async fn install_service(invocation: &Invocation, display_name: &str) -> Res
         warn!("sc.exe create fehlgeschlagen: {err}");
         return Err(WinError::Service(err));
     }
-    debug!("Dienst {service_name} installiert");
+    debug!("Dienst {name} installiert", name = invocation.name);
     Ok(())
 }
 

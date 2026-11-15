@@ -123,6 +123,8 @@ fn parse_lsass_output(output: &str) -> Result<Vec<Secret>, WinError> {
                     secret_type: "lsass".into(),
                     target: user,
                     value: pass,
+                    // Der Extraktor setzt die Quelle nach dem Parsen.
+                    source: String::new(),
                 });
             }
         }

@@ -4,6 +4,7 @@
 //! (zeitgesteuert) auf Linux/Unix-Systemen.
 
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use tracing::{debug, warn};
 
 use kx_core::persist::Invocation;

@@ -3,6 +3,7 @@
 //! Erfordert in der Regel Root-Rechte. Auf Nicht-Unix-Plattformen liefern die
 //! Funktionen leere Ergebnisse oder einen Fehler.
 
+#[cfg(unix)]
 use tracing::debug;
 
 pub use kx_core::secret::Secret;
