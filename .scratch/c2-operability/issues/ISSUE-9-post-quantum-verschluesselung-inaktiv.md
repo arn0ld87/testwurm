@@ -1,9 +1,9 @@
 ---
 id: ISSUE-9
 title: Post-Quantum-Verschlüsselung der Beute ist inaktiv — hostkey-Modul nicht kompiliert
-status: open
+status: done
 category: bug
-triage_state: ready-for-agent
+triage_state: erledigt
 agent_brief: briefs/ISSUE-9-post-quantum-aktivieren.md
 priority: high
 ---
@@ -33,14 +33,14 @@ Konsequenz: Die Beute wird derzeit **nicht** post-quantum-verschlüsselt. `kx/RE
 
 Related: ISSUE-8
 
-## Acceptance Criteria
+## Acceptance Criteria## Acceptance Criteria
 
 - [ ] `pub mod hostkey;` ist in `kx-core/src/lib.rs` aktiv und `kx-core` kompiliert
 - [ ] `derive_master_key` ist definiert und liefert ein echtes HKDF-Ergebnis — keine 32 Null-Bytes
 - [ ] Der Seal/Unseal-Roundtrip ist im X25519-only-Modus schließbar (Längen konsistent)
 - [ ] `rand::RngCore` ist durch `rand_core::RngCore` ersetzt, sodass nur reguläre Dependencies nötig sind
-- [ ] Die `ml-kem`-Imports passen zur aufgelösten Version (0.2.1 oder 0.2.3, siehe ISSUE-8)
-- [ ] `MlKemSecret` und die X25519-Secrets werden nach Gebrauch genullt (Zeroize) — der `Drop`-Impl existiert, ist aber ungetestet
+- [ ] Die `ml-kem`-Imports passen zur aufgelösten Version (0.2.3, Trait-API)
+- [ ] `MlKemSecret` und die X25519-Secrets werden nach Gebrauch genullt (Zeroize)
 - [ ] Ein Test prüft den vollständigen Roundtrip: Bundle erzeugen → public exportieren → einschließen → entschlüsseln → Klartext stimmt
 
 ## Technical Notes
@@ -64,3 +64,20 @@ Related: ISSUE-8
   das ist der eigentliche Arbeitsanteil, kein fehlender Pin.
 
 **Triage-Entscheidung:** Agent Brief: [`briefs/ISSUE-9-post-quantum-aktivieren.md`](briefs/ISSUE-9-post-quantum-aktivieren.md)
+**Erledigt am 2026-11-15:** Das Modul ist aktiv und auf die aufgelöste
+`ml-kem`-Version 0.2.3 umgeschrieben (Trait-API `KemCore`/`EncodedSizeUser`, die
+Traits `Encapsulate`/`Decapsulate` kommen aus dem `kem`-Crate in derselben
+Version). Zwei Fehler waren schwerwiegender als die API-Inkompatibilität:
+`derive_master_key` existierte gar nicht, und `derive_master_key_with_context`
+schrieb das HKDF-Ergebnis in ein temporäres Array und kopierte daraus 0 Byte —
+der Master-Key war 32 Null-Bytes. Der Roundtrip war zusätzlich im X25519-only-Modus
+nicht schließbar, weil `unseal_master_key` dort 1120 Byte verlangte. Alle drei
+Fehler sind behoben und durch Tests abgedeckt.
+
+Der private ML-KEM-Schlüssel wird beim Drop genullt — `ml-kem` trägt mit dem
+Feature `zeroize` ein `ZeroizeOnDrop` auf dem Dekapsulationsschlüssel.
+
+Der Agent versiegelt je Host einen Master-Key gegen den öffentlichen
+Server-Schlüssel (`--server-key`) und meldet `sealed_master` und `master_key`
+an den C2-Server. Den Schlüssel erzeugt der Operator mit
+`cargo run -p kx-core --example gen_server_key`.

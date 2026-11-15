@@ -6,11 +6,9 @@ Quellmodulbaum des Crates `kx-core`. `lib.rs` ist die Crate-Wurzel und deklarier
 die Module sowie die Formatkonstanten. `error.rs` enthaelt die Fehlertaxonomie,
 `format.rs` das Dateiformat `KXENC` v1, `util.rs` die plattformneutralen
 Hilfsfunktionen, `c2.rs` das C2-Protokoll (Endpunktpfade, Host-Status, Wire-Typen).
-`hostkey.rs` (per-Host-Schluessel und Hybrid-KEM) liegt im Quellbaum, ist aber
-**nicht kompiliert**: die Modul-Deklaration in `lib.rs` ist in Zeile 13
-auskommentiert (`// pub mod hostkey;  // TODO: ml-kem 0.2.1-API-Anpassungen noetig,
-vorerst deaktiviert`) [lib.rs:hostkey]. Die Symbole aus `hostkey.rs` sind daher
-nicht Teil der oeffentlichen API; sie werden unten getrennt ausgewiesen.
+`hostkey.rs` (per-Host-Schluessel und Hybrid-KEM) ist aktiv und ueber
+`pub mod hostkey;` erreichbar [lib.rs:hostkey]. Die Symbole aus `hostkey.rs`
+sind Teil der oeffentlichen API; sie werden unten getrennt ausgewiesen.
 
 Layout nach dem Verschluesseln, alle Zahlen im Footer little-endian: Kopf- und
 Fussbereich werden in place verschluesselt, das Mittelfeld bleibt unberuehrt,
@@ -145,36 +143,34 @@ Agent und CLI sprechen dieselben Typen und dieselben Endpunktpfade.
 - `pub fn clamp(v: u64, lo: u64, hi: u64) -> u64` [util.rs:clamp]
 - `pub fn jitter(base_ms: u64, spread: f64, seed: &mut u64) -> u64` [util.rs:jitter]
 
-### hostkey.rs — nicht kompiliert, nicht Teil der oeffentlichen API
+### hostkey.rs — per-Host-Schluessel und Hybrid-KEM
 
-Wegen der auskommentierten Modul-Deklaration in `lib.rs` [lib.rs:hostkey] ist
-nichts von diesem Modul erreichbar. Die Datei ist zudem nicht uebersetzbar:
-`derive_master_key` wird viermal aufgerufen, ist aber nirgends definiert
-[hostkey.rs:derive_master_key]; `use rand::RngCore;` [hostkey.rs:rand::RngCore]
-loest sich nicht auf, weil `rand` nur Dev-Dependency ist, waehrend `rand_core`
-als normale Abhaengigkeit deklariert ist [../Cargo.toml:rand].
+Das Modul ist aktiv und Teil der oeffentlichen API. Es kapselt je Host einen
+Master-Key gegen den oeffentlichen Schluessel des Operators: der Agent sendet
+das versiegelte Material an den C2-Server, der Operator entschluesselt es mit
+dem geheimen Schluesselpaar.
 
-Der Import `use ml_kem::{bihash::Sha3_256, Array as MlArray, EncodedKey as MlEncodedKey, MlKem768, MlKem768Derive};`
-[hostkey.rs:ml_kem] loest sich gegen die tatsaechlich aufgeloeste Version **0.2.3**
-nicht auf: `bihash`, `EncodedKey`, `MlKem768Derive`, `SecretKey`,
-`generate_keypair` und `decapsulated_key_from_encoded` existieren in 0.2.3 nicht.
-Das deckt sich mit dem TODO in `lib.rs` ("ml-kem 0.2.1-API-Anpassungen noetig")
-[lib.rs:hostkey] — der Caret-Pin `^0.2.1` laesst aber 0.2.3 zu, und 0.2.3 ist
-die Version, die der Build aufloest. Der Import
-`use chacha20poly1305::aead::{Aead, KeyInit, Payload};` [hostkey.rs:chacha20poly1305]
-ist zusaetzlich unbenutzt.
+Die Implementierung nutzt die aufgeloeste `ml-kem`-Version 0.2.3 mit der
+Trait-API (`KemCore`, `EncodedSizeUser`). Die Traits `Encapsulate` und
+`Decapsulate` kommen aus dem `kem`-Crate in exakt der Version, die `ml-kem`
+aufloest — dadurch gibt es nur ein `kem` im Lockfile.
 
 - `pub const X25519_PUB_LEN: usize = 32;` [hostkey.rs:X25519_PUB_LEN]
 - `pub const MLKEM_PUB_LEN: usize = 1184;` [hostkey.rs:MLKEM_PUB_LEN]
+- `pub const MLKEM_SECRET_LEN: usize = 2400;` [hostkey.rs:MLKEM_SECRET_LEN]
 - `pub const MLKEM_CT_LEN: usize = 1088;` [hostkey.rs:MLKEM_CT_LEN]
 - `pub const MLKEM_SHARED_LEN: usize = 32;` [hostkey.rs:MLKEM_SHARED_LEN]
 - `pub const X25519_SHARED_LEN: usize = 32;` [hostkey.rs:X25519_SHARED_LEN]
-- `pub const SEALED_MASTER_LEN: usize = X25519_PUB_LEN + MLKEM_CT_LEN;` [hostkey.rs:SEALED_MASTER_LEN]
+- `pub const SEALED_MASTER_LEN: usize = X25519_PUB_LEN + MLKEM_CT_LEN;` — hybrids Modus [hostkey.rs:SEALED_MASTER_LEN]
+- `pub const SEALED_MASTER_X25519_LEN: usize = X25519_PUB_LEN;` — X25519-only-Modus [hostkey.rs:SEALED_MASTER_X25519_LEN]
 - `pub const MASTER_KEY_LEN: usize = 32;` [hostkey.rs:MASTER_KEY_LEN]
 - `pub const KEM_SHARED_MAX: usize = X25519_SHARED_LEN + MLKEM_SHARED_LEN;` [hostkey.rs:KEM_SHARED_MAX]
 - `pub const ARGON2_M_KIB: u32 = 65_536;` `pub const ARGON2_T: u32 = 3;`
   `pub const ARGON2_P: u32 = 4;` `pub const ARGON2_OUT_LEN: usize = 32;`
   `pub const ARGON2_SALT_LEN: usize = 16;` [hostkey.rs:ARGON2_M_KIB] [hostkey.rs:ARGON2_T] [hostkey.rs:ARGON2_P] [hostkey.rs:ARGON2_OUT_LEN] [hostkey.rs:ARGON2_SALT_LEN]
+- `pub type MlKemDecapsulationKey`, `pub type MlKemEncapsulationKey`,
+  `pub type MlKemPublicKeyBytes`, `pub type MlKemSecretKeyBytes`,
+  `pub type MlKemCiphertextBytes` — die Kodierungen des ML-KEM-768 [hostkey.rs:MlKemDecapsulationKey]
 - `pub struct ServerPublicKey { pub kex, pub x25519, pub mlkem, pub fingerprint }`
   mit `pub fn decode(&self) -> Result<DecodedServerKey>` [hostkey.rs:ServerPublicKey] [hostkey.rs:ServerPublicKey::decode]
 - `pub struct DecodedServerKey { pub kex, pub x25519, pub mlkem }` [hostkey.rs:DecodedServerKey]
@@ -184,19 +180,23 @@ ist zusaetzlich unbenutzt.
   `pub fn from_bundle(bundle: &ServerKeyBundle) -> Result<Self>`,
   `pub fn public(&self) -> &ServerPublicKey` und
   `pub fn unseal_master_key(&self, sealed: &[u8]) -> Result<[u8; MASTER_KEY_LEN]>` [hostkey.rs:ServerKeyPair] [hostkey.rs:ServerKeyPair::from_bundle] [hostkey.rs:ServerKeyPair::public] [hostkey.rs:ServerKeyPair::unseal_master_key]
-- `pub struct MlKemSecret(ml_kem::SecretKey<MlKem768Derive, Sha3_256>)` mit `impl Drop` [hostkey.rs:MlKemSecret] [hostkey.rs:Drop for MlKemSecret]
+- `pub struct MlKemSecret(MlKemDecapsulationKey)` — das Nullen beim Drop uebernimmt
+  `ml-kem` selbst (`ZeroizeOnDrop`, Feature `zeroize`) [hostkey.rs:MlKemSecret]
 - `pub struct ServerKeyBundle { pub kex, pub x25519_secret, pub mlkem_secret }` mit
-  `pub fn generate(kex: crate::format::KexId, rng: &mut impl RngCore) -> Self`,
+  `pub fn generate(kex: crate::format::KexId, rng: &mut (impl RngCore + CryptoRng)) -> Self`,
   `pub fn public(&self) -> Result<ServerPublicKey>`,
   `pub fn to_json_pretty(&self) -> Result<String>` und
   `pub fn from_json(text: &str) -> Result<Self>` [hostkey.rs:ServerKeyBundle] [hostkey.rs:ServerKeyBundle::generate] [hostkey.rs:ServerKeyBundle::public] [hostkey.rs:ServerKeyBundle::to_json_pretty] [hostkey.rs:ServerKeyBundle::from_json]
-- `pub fn encapsulate_host_master_key(server: &DecodedServerKey, rng: &mut impl RngCore) -> Result<HostKeyEncapsulation>` [hostkey.rs:encapsulate_host_master_key]
+- `pub fn encapsulate_host_master_key(server: &DecodedServerKey, rng: &mut (impl RngCore + CryptoRng)) -> Result<HostKeyEncapsulation>` [hostkey.rs:encapsulate_host_master_key]
+- `pub fn encapsulate_host_master_key_os(server: &DecodedServerKey) -> Result<HostKeyEncapsulation>` — mit dem System-RNG [hostkey.rs:encapsulate_host_master_key_os]
 - `pub struct DerivedMaster { pub master_key, pub info }` [hostkey.rs:DerivedMaster]
+- `pub fn derive_master_key(x_shared: &[u8], ml_shared: Option<&[u8]>) -> Result<DerivedMaster>` — die Ableitung, die Agent und Server beide benutzen [hostkey.rs:derive_master_key]
 - `pub fn derive_master_key_with_context(x_shared: &[u8], ml_shared: Option<&[u8]>, host_id: &[u8; 16], build_id: &[u8; 16]) -> Result<DerivedMaster>` [hostkey.rs:derive_master_key_with_context]
 - `pub fn hkdf_into(ikm: &[u8], salt: &[u8], info: &[u8], out: &mut [u8]) -> Result<()>` [hostkey.rs:hkdf_into]
 - `pub fn hkdf_bytes(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Result<Vec<u8>>` [hostkey.rs:hkdf_bytes]
 - `pub fn argon2id(pass: &[u8], salt: &[u8], out_len: usize) -> Result<Vec<u8>>` [hostkey.rs:argon2id]
-- `pub struct MlRng<'a>(pub &'a mut dyn RngCore)` mit `impl rand_core::RngCore for MlRng<'_>` [hostkey.rs:MlRng]
+- `pub struct MlRng<'a>(pub &'a mut dyn RngCore)` mit `impl RngCore` und `impl CryptoRng` [hostkey.rs:MlRng]
+
 
 ## Invariants
 
@@ -268,17 +268,17 @@ ist zusaetzlich unbenutzt.
 - `jitter` ist deterministisch und nutzt kein `rand` im Beacon-Pfad, damit der Jitter reproduzierbar protokolliert werden kann [util.rs:jitter]
 - `path_key` kleinschreibt nur bei `case_insensitive == true`; der Aufrufer uebergibt bereits normalisierte Pfade [util.rs:path_key]
 
-### hostkey.rs (nicht kompiliert — nicht durchgesetzt)
+### hostkey.rs
 
-- Die Validierungen in diesem Modul werden zur Laufzeit nicht erzwungen, weil das Modul nicht Teil des Builds ist [lib.rs:hostkey]
+- Die Validierungen in diesem Modul werden zur Laufzeit erzwungen [lib.rs:hostkey]
 - `ServerPublicKey::decode` verlangt einen X25519-Serverkey mit genau 32 Byte; im Hybrid-Modus muss `mlkem` vorhanden sein und genau `MLKEM_PUB_LEN` (1184) Byte lang sein [hostkey.rs:ServerPublicKey::decode]
 - `ServerKeyBundle::public` verlangt ein X25519-Secret mit genau 32 Byte und im Hybrid-Modus ein vorhandenes, gueltiges FIPS-203-kodiertes ML-KEM-Secret [hostkey.rs:ServerKeyBundle::public] [hostkey.rs:mlkem_secret_from_bytes]
-- `ServerKeyPair::unseal_master_key` verlangt `sealed.len() == SEALED_MASTER_LEN` (1120 = `X25519_PUB_LEN` 32 + `MLKEM_CT_LEN` 1088) [hostkey.rs:ServerKeyPair::unseal_master_key]
+- `ServerKeyPair::unseal_master_key` verlangt im hybriden Modus `sealed.len() == SEALED_MASTER_LEN` (1120 = `X25519_PUB_LEN` 32 + `MLKEM_CT_LEN` 1088), im X25519-only-Modus `SEALED_MASTER_X25519_LEN` (32) [hostkey.rs:ServerKeyPair::unseal_master_key]
 - Die Ableitungsreihenfolge in `unseal_master_key` ist X25519, dann ML-KEM, dann HKDF; eine vertauschte Reihenfolge ergaebe einen anderen, scheinbar gueltigen Master Key, weshalb der Kontextstring Teil des Formats ist [hostkey.rs:ServerKeyPair::unseal_master_key]
-- `derive_master_key_with_context` liefert aktuell immer 32 Null-Bytes: das `copy_nonoverlapping` verwendet Laenge `0`, das HKDF-Ergebnis in `&mut [0u8; MASTER_KEY_LEN]` wird verworfen [hostkey.rs:derive_master_key_with_context]
-- Im X25519-only-Modus erzeugt `encapsulate_host_master_key` ein 32 Byte langes `sealed_master`, waehrend `unseal_master_key` exakt 1120 Byte verlangt — der Seal/Unseal-Roundtrip ist in diesem Modus so nicht schliessbar [hostkey.rs:encapsulate_host_master_key] [hostkey.rs:ServerKeyPair::unseal_master_key]
-- `MlKemSecret::drop` nullt die ML-KEM-Keybytes byteweise ueber `write_volatile` [hostkey.rs:Drop for MlKemSecret]
-- `HostKeyEncapsulation.ephemeral_x25519_secret` enthaelt laut Feld-Dokumentation das ephemere X25519-Secret, wird aber mit dem DH-Shared-Secret (`*x_shared.as_bytes()`) gefuellt; kein `Drop`/`zeroize` existiert fuer dieses Feld [hostkey.rs:HostKeyEncapsulation]
+- `derive_master_key` und `derive_master_key_with_context` liefern echtes HKDF-Material; das Ergebnis wird direkt in den Master-Key geschrieben [hostkey.rs:derive_master_key] [hostkey.rs:derive_master_key_with_context]
+- Der Seal/Unseal-Roundtrip ist in beiden Modi schliessbar: X25519-only ueber 32 Byte, hybrid ueber 1120 Byte `sealed_master` [hostkey.rs:encapsulate_host_master_key] [hostkey.rs:ServerKeyPair::unseal_master_key]
+- Das private ML-KEM-Material wird beim Drop genullt: `ml-kem` traegt mit dem Feature `zeroize` ein `ZeroizeOnDrop` auf dem Dekapsulationsschluessel [hostkey.rs:MlKemSecret]
+- **Bekannter Makel:** `HostKeyEncapsulation.ephemeral_x25519_secret` enthaelt laut Feld-Dokumentation das ephemere X25519-Secret, wird aber mit dem DH-Shared-Secret (`*x_shared.as_bytes()`) gefuellt; kein `Drop`/`zeroize` existiert fuer dieses Feld [hostkey.rs:HostKeyEncapsulation]
 - `MlRng::try_fill_bytes` liefert immer `Ok(())` und ruft `fill_bytes` auf dem inneren RNG auf, ein Fehler des gewrappten RNG wird also verschluckt [hostkey.rs:MlRng]
 - `ARGON2_SALT_LEN` (16) wird nirgends geprueft — `argon2id` validiert die Salt-Laenge nicht [hostkey.rs:ARGON2_SALT_LEN] [hostkey.rs:argon2id]
 

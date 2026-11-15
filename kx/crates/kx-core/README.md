@@ -35,8 +35,8 @@ mitzubringen — ein Fehler dort waere ein totaler Schluesselverlust. `ml-kem` 0
 waere moeglich, hebt aber `rand_core` auf 0.10, bricht `x25519-dalek` 2 und `rand` 0.8
 und setzt die MSRV auf 1.87.
 
-Das Modul `hostkey` (per-Host-Schluessel, Hybrid-KEM) liegt im Quellbaum, ist aber
-nicht Teil des Builds — siehe [src/README.md](./src/README.md).
+Das Modul `hostkey` (per-Host-Schluessel, Hybrid-KEM) ist Teil des Builds und
+damit Teil der oeffentlichen API — siehe [src/README.md](./src/README.md).
 
 ## Subdirectories & Boundaries
 
@@ -63,7 +63,7 @@ nicht Teil des Builds — siehe [src/README.md](./src/README.md).
 - Die Abhaengigkeitsrichtung ist fest: `format` → `crypto` → `engine` → `beacon`; das Beacon kennt den Encoder, der Encoder kennt kein Beacon `[src/lib.rs:beacon]`
 - `MAX_RANGES` ist konstant, damit das Format keine variable Laenge im Footer traegt `[src/lib.rs:MAX_RANGES]`
 - `FORMAT_VERSION` ist die Version, die dieser Build lesen und schreiben kann; `READABLE_FORMAT_VERSIONS` listet die aelteren, weiterhin lesbaren Versionen `[src/lib.rs:FORMAT_VERSION]` `[src/lib.rs:READABLE_FORMAT_VERSIONS]`
-- `pub mod hostkey;` ist in `lib.rs` in Zeile 13 auskommentiert (`// pub mod hostkey;  // TODO: ml-kem 0.2.1-API-Anpassungen noetig, vorerst deaktiviert`); das Modul ist damit nicht Teil der oeffentlichen API und wird nicht kompiliert `[src/lib.rs:hostkey]`
+- `pub mod hostkey;` ist in `lib.rs` aktiv; das Modul wird kompiliert und ist Teil der oeffentlichen API `[src/lib.rs:hostkey]`
 - Die `ml-kem`-Version steht an genau **einer** Stelle: dem Workspace-Pin `=0.2.3` in `kx/Cargo.toml`. `kx-core` bezieht die Dependency ueber `.workspace = true` und kann sie dadurch nicht mehr umgehen `[src/lib.rs:mlkem_api_used_by_hostkey_is_available]`
 - Der Pin steht auf 0.2.3 und nicht auf 0.2.1, weil 0.2.1 `kem` mit einem Caret-Bereich deklariert: es wird `kem` 0.3.0 aufgeloest, das zieht `rand_core` 0.10.1 neben die 0.6.4 des Workspaces, und die Trait-Definitionen sind inkompatibel — der Build bricht. 0.2.3 haelt genau eine `rand_core`-Version im Lockfile `[src/lib.rs:mlkem_api_used_by_hostkey_is_available]`
 - Das C2-Protokoll ist asymmetrisch strikt: die Antworttypen `Host`, `ExfiltratedSecret` und `Task` tragen `#[serde(deny_unknown_fields)]`, die Request-Typen `RegisterRequest`, `HeartbeatRequest`, `SecretUpload`, `CreateTaskRequest` und `TaskResultRequest` sind lenient — additive Erweiterung eines Agenten bricht einen älteren Server nicht `[src/c2.rs:Host]` `[src/c2.rs:Task]` `[src/c2.rs:RegisterRequest]`
@@ -77,7 +77,7 @@ nicht Teil des Builds — siehe [src/README.md](./src/README.md).
 - `format::FooterFlags::insert` und `format::FooterFlags::remove` mutieren den Flag-Wert des Aufrufers in place `[src/format.rs:FooterFlags::insert]` `[src/format.rs:FooterFlags::remove]`
 - `format::aad_for` leert den uebergebenen `&mut Vec<u8>` und befuellt ihn mit den AAD-Bytes `[src/format.rs:aad_for]`
 - `c2.rs` ist reines Datenmodell ohne Datei-, Netzwerk- oder Prozesszugriff; die (De-)Serialisierung allokiert je Wire-Feld einen `String` `[src/c2.rs:Host]` `[src/c2.rs:SecretUpload]`
-- Zufallsverbrauch, Stack-Nullung von Secrets und der Argon2id-Speicherbedarf existieren nur im nicht kompilierten Modul `hostkey` und haben derzeit keine Wirkung `[src/hostkey.rs:ServerKeyBundle::generate]` `[src/hostkey.rs:Drop for MlKemSecret]` `[src/hostkey.rs:argon2id]`
+- Zufallsverbrauch, Stack-Nullung von Secrets und der Argon2id-Speicherbedarf liegen im Modul `hostkey` und wirken dort `[src/hostkey.rs:ServerKeyBundle::generate]` `[src/hostkey.rs:MlKemSecret]` `[src/hostkey.rs:argon2id]`
 
 ## Verification
 

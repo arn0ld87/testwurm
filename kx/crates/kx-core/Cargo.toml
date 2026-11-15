@@ -24,6 +24,9 @@ x25519-dalek.workspace = true
 # ist ein totaler Schluesselverlust. `zeroize` an, damit der DecapsulationKey
 # beim Drop genullt wird (ZeroizeOnDrop nur mit Feature).
 ml-kem.workspace = true
+# Fuer die Traits `Encapsulate`/`Decapsulate` — ml-kem 0.2.3 re-exportiert sie
+# nicht. Gleiche Version, die ml-kem aufloest.
+kem.workspace = true
 rand_core.workspace = true
 zeroize.workspace = true
 thiserror.workspace = true

