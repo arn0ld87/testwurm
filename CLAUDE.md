@@ -116,20 +116,20 @@ Ein PR ist erst mergefertig, wenn beide Jobs grün sind.
 
 | Crate        | Aufgabe                                              |
 |--------------|------------------------------------------------------|
-| `kx-core`    | KXENC-Dateiformat, Fehlerklassifikation, C2-Protokoll (`c2`), Hilfsfunktionen (`util`), Hybrid-KEM (`hostkey`) |
+| `kx-core`    | C2-Protokoll (`c2`) samt Transport, Kryptografie (`hostkey`, `secretbox`), die Formen der Beute (`secret`, `exfil`), die Persistenz-Invocation (`persist`), KXENC-Dateiformat, Hilfsfunktionen (`util`) |
 | `kx-scanner` | ARP-Hostentdeckung (`arp_sweep`), TCP-Portscan (`scan_tcp`), `fingerprint` |
 | `kx-exploit` | SMB-Relay (`smb_relay_dcsync`), Credential-Stuffing (`try_default_credentials`) via Impacket |
 | `kx-win`     | Windows-Secrets (LSASS, Credential Manager, Browser) + Persistenz (Dienst, Run-Key, Scheduled Task) |
 | `kx-posix`   | POSIX-Secrets (`/etc/shadow`, SSH, AWS) + Persistenz (systemd-Unit, Cron) |
-| `kx-tls`     | selbstsignierte Zertifikate (`generate_server_tls`), rustls-Configs (`client_config_trusting`) |
+| `kx-tls`     | selbstsignierte Zertifikate (`generate_server_tls`), rustls-Configs (`client_config_trusting`) — die Client-Konfiguration nutzt der Transport in `kx-core` |
 | `kx-server`  | C2-Backend: axum-API, SQLite (`hosts`, `secrets`, `tasks`), HTML-Dashboard |
 | `kx-agent`   | der autonome Wurm: orchestriert Scanner → Exploit → Secrets → Persistenz → C2-Report |
 | `kx-cli`     | Operator-CLI (`hosts`, `secrets`, `export --format json|csv`, `tasks`) |
 
-Schichtung: `kx-core` und `kx-scanner` sind Basislagen ohne interne
-Crate-Abhängigkeit; `kx-agent` ist der einzige Crate, der sechs interne Crates
-einbindet. Interne Abhängigkeiten sind ausschließlich `path`-Dependencies über
-`workspace = true`.
+Schichtung: `kx-core` und `kx-scanner` sind Basislagen; `kx-core` bindet seit
+dem Transport in den Kern (ADR-0002) `kx-tls` ein. `kx-agent` ist der einzige
+Crate, der fünf interne Crates einbindet. Interne Abhängigkeiten sind
+ausschließlich `path`-Dependencies über `workspace = true`.
 
 Datenfluss: `kx-agent` scannt und exfiltriert, meldet per `POST /api/register`
 und `POST /api/secrets` an den `kx-server`; der Server schreibt in SQLite
@@ -280,7 +280,7 @@ kx/
 ├── assets/              # smbrelayx.py (Impacket, Apache-Lizenz)
 ├── HANDOFF.md              # Übergabenotiz zum Arbeitsstand
 └── crates/
-    ├── kx-core/            # c2.rs (Wire-Vertrag), format.rs, error.rs, util.rs, hostkey.rs
+    ├── kx-core/            # c2.rs (C2 Protocol), transport.rs, secret.rs, exfil.rs, persist.rs, hostkey.rs, secretbox.rs, format.rs, error.rs, util.rs
     ├── kx-scanner/         # arp.rs (nur Linux), tcp_scan.rs, fingerprint.rs
     ├── kx-exploit/         # smb_relay.rs, credential_stuff.rs, payload.rs, examples/
     ├── kx-win/             # secrets.rs, persist.rs
