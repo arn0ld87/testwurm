@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
+use kx_core::persist::Invocation;
+
 use crate::error::PosixError;
 
 /// Verzeichnis, in dem die Environment-Dateien der Dienste liegen.
@@ -13,25 +15,6 @@ use crate::error::PosixError;
 /// Bewusst nicht in `/etc/systemd/system/`: dort liest systemd jede Datei mit
 /// `.service`-Endung als Unit, und das Verzeichnis ist für andere lesbar.
 pub const ENV_DIR: &str = "/etc/kx";
-
-/// Ein systemd-Dienst, der installiert werden soll.
-#[derive(Debug, Clone)]
-pub struct SystemdService {
-    /// Name des Dienstes (z.B. "kx-agent"). Bestimmt Dateinamen und
-    /// systemctl-Namen.
-    pub name: String,
-    /// Pfad zur ausführbaren Datei.
-    pub binary_path: PathBuf,
-    /// Argumente für `ExecStart`, ohne das Binary selbst.
-    ///
-    /// Ein `${NAME}`-Platzhalter wird von systemd aus der Environment-Datei
-    /// aufgelöst. Damit steht kein Geheimnis im Klartext in der Unit-Datei,
-    /// die für jeden lesbar ist, der die Datei lesen darf.
-    pub args: Vec<String>,
-    /// Umgebungsvariablen für die Environment-Datei (KEY=VALUE). Sie landen in
-    /// einer Datei mit restriktiven Rechten, nicht in der Unit-Datei.
-    pub env: Vec<(String, String)>,
-}
 
 /// Pfad der Environment-Datei eines Dienstes.
 pub fn systemd_env_file_path(service_name: &str) -> PathBuf {
@@ -42,9 +25,9 @@ pub fn systemd_env_file_path(service_name: &str) -> PathBuf {
 ///
 /// Der Inhalt ist `KEY=VALUE` pro Zeile — das Format, das systemd für
 /// `EnvironmentFile=` erwartet.
-pub fn systemd_env_content(svc: &SystemdService) -> String {
+pub fn systemd_env_content(inv: &Invocation) -> String {
     let mut out = String::new();
-    for (key, value) in &svc.env {
+    for (key, value) in &inv.env {
         out.push_str(key);
         out.push('=');
         out.push_str(value);
@@ -62,11 +45,11 @@ pub fn systemd_env_content(svc: &SystemdService) -> String {
 /// `Restart=always` zusammen mit fehlenden Pflichtargumenten erzeugt eine
 /// Neustart-Schleife — deshalb enthält der `ExecStart` alle Argumente, die der
 /// Agent braucht.
-pub fn systemd_unit_content(svc: &SystemdService) -> String {
-    let path = svc.binary_path.to_string_lossy();
-    let env_path = systemd_env_file_path(&svc.name);
+pub fn systemd_unit_content(inv: &Invocation) -> String {
+    let path = inv.binary_path.to_string_lossy();
+    let env_path = systemd_env_file_path(&inv.name);
     let env_path = env_path.to_string_lossy();
-    let args = svc.args.join(" ");
+    let args = inv.args.join(" ");
     format!(
         r#"[Unit]
 Description=Kx persistent agent ({name})
@@ -82,20 +65,20 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 "#,
-        name = svc.name,
+        name = inv.name,
     )
 }
 
 /// Installiert einen systemd-Systemdienst.
 ///
 /// # Argumente
-/// * `svc` — Dienst mit Binary-Pfad, Argumenten und Umgebungsvariablen.
+/// * `inv` — Dienst mit Binary-Pfad, Argumenten und Umgebungsvariablen.
 ///
 /// Schreibt zwei Dateien: die Unit-Datei (die Werte des Tokens stehen *nicht*
 /// darin) und die Environment-Datei mit restriktiven Rechten (0600 in einem
 /// Verzeichnis mit 0700).
 #[cfg(unix)]
-pub async fn install_systemd_service(svc: &SystemdService) -> Result<(), PosixError> {
+pub async fn install_systemd_service(inv: &Invocation) -> Result<(), PosixError> {
     let unit_dir = Path::new("/etc/systemd/system");
     let env_dir = Path::new(ENV_DIR);
 
@@ -106,13 +89,13 @@ pub async fn install_systemd_service(svc: &SystemdService) -> Result<(), PosixEr
     // Environment-Datei ZUERST schreiben: existiert sie beim Start des
     // Dienstes nicht, schlägt systemd mit einem klaren Fehler fehl, statt
     // den Agenten mit leerem Token zu starten.
-    let env_path = systemd_env_file_path(&svc.name);
-    std::fs::write(&env_path, systemd_env_content(svc))
+    let env_path = systemd_env_file_path(&inv.name);
+    std::fs::write(&env_path, systemd_env_content(inv))
         .map_err(|e| PosixError::Systemd(e.to_string()))?;
     set_mode(&env_path, 0o600)?;
 
-    let unit_path = unit_dir.join(format!("{}.service", svc.name));
-    std::fs::write(&unit_path, systemd_unit_content(svc))
+    let unit_path = unit_dir.join(format!("{}.service", inv.name));
+    std::fs::write(&unit_path, systemd_unit_content(inv))
         .map_err(|e| PosixError::Systemd(e.to_string()))?;
 
     // systemctl daemon-reload && systemctl enable
@@ -127,7 +110,7 @@ pub async fn install_systemd_service(svc: &SystemdService) -> Result<(), PosixEr
         return Err(PosixError::Systemd(err));
     }
     let out = tokio::process::Command::new("systemctl")
-        .args(["enable", &svc.name])
+        .args(["enable", &inv.name])
         .output()
         .await
         .map_err(|e| PosixError::Systemd(e.to_string()))?;
@@ -137,7 +120,7 @@ pub async fn install_systemd_service(svc: &SystemdService) -> Result<(), PosixEr
     }
     debug!(
         "systemd-Dienst {name} installiert und aktiviert",
-        name = svc.name
+        name = inv.name
     );
     Ok(())
 }
@@ -204,7 +187,7 @@ pub async fn write_cron_persistence(minute: i32, command: &str) -> Result<(), Po
 
 // Nicht-Unix-Plattformen: Fehler-Implementierungen.
 #[cfg(not(unix))]
-pub async fn install_systemd_service(_svc: &SystemdService) -> Result<(), PosixError> {
+pub async fn install_systemd_service(_inv: &Invocation) -> Result<(), PosixError> {
     Err(PosixError::Systemd(
         "nicht auf dieser Plattform verfügbar".into(),
     ))
@@ -221,8 +204,8 @@ pub async fn write_cron_persistence(_minute: i32, _command: &str) -> Result<(), 
 mod tests {
     use super::*;
 
-    fn sample_service() -> SystemdService {
-        SystemdService {
+    fn sample_invocation() -> Invocation {
+        Invocation {
             name: "kx-agent".to_string(),
             binary_path: PathBuf::from("/usr/local/bin/kx-agent"),
             args: vec![
@@ -251,7 +234,7 @@ mod tests {
     /// Neustart-Schleife.
     #[test]
     fn unit_exec_start_carries_every_required_argument() {
-        let unit = systemd_unit_content(&sample_service());
+        let unit = systemd_unit_content(&sample_invocation());
         let exec = unit
             .lines()
             .find(|l| l.starts_with("ExecStart="))
@@ -272,7 +255,7 @@ mod tests {
     /// die Datei lesen darf.
     #[test]
     fn unit_does_not_contain_the_token_in_plaintext() {
-        let unit = systemd_unit_content(&sample_service());
+        let unit = systemd_unit_content(&sample_invocation());
         assert!(
             !unit.contains("geheim-token"),
             "das Token steht im Klartext in der Unit-Datei"
@@ -284,14 +267,14 @@ mod tests {
     /// Die Unit referenziert die Environment-Datei.
     #[test]
     fn unit_references_the_environment_file() {
-        let unit = systemd_unit_content(&sample_service());
+        let unit = systemd_unit_content(&sample_invocation());
         assert!(unit.contains("EnvironmentFile=/etc/kx/kx-agent.env"));
     }
 
     /// Der Token steht in der Environment-Datei, im Format das systemd erwartet.
     #[test]
     fn env_file_carries_the_token() {
-        let env = systemd_env_content(&sample_service());
+        let env = systemd_env_content(&sample_invocation());
         assert!(env.contains("KX_C2_TOKEN=geheim-token\n"));
         assert!(env.contains("KX_C2_URL=https://c2.local:8443\n"));
         // KEY=VALUE pro Zeile, nichts anderes.

@@ -11,6 +11,7 @@ pub mod c2;
 pub mod error;
 pub mod format;
 pub mod hostkey;
+pub mod persist;
 pub mod secretbox;
 pub mod util;
 

