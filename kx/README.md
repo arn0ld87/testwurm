@@ -306,8 +306,12 @@ Von einem Operator-Rechner aus:
 
 ### Schritt 4: Dashboard im Browser
 
-Öffne im Browser: `https://<server-ip>:8443/?token=mein_geheimes_token`
-Das Dashboard zeigt Hosts, Secrets und Tasks live an.
+Öffne im Browser: `https://<server-ip>:8443/`
+
+Das Dashboard fragt das Token über ein Login-Formular entgegen (`POST
+/api/login`) — es steht **nicht** im Query-String und landet damit weder in
+der Browser-Historie noch in den Server-Logs (ISSUE-13). Nach der Anmeldung
+zeigt es Hosts, Secrets und Tasks live an.
 
 ## Konfigurationsreferenz
 

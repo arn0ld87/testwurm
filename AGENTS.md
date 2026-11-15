@@ -12,11 +12,15 @@ Reporting (C2).
 
 - **`kx/`** — Rust-Workspace (`Cargo.toml`, `crates/`, `docs/00-recherche-phase0.md`,
   `HANDOFF.md`, Build-Artefakte in `kx/target/`).
+- **`README.md`** — Betriebshandbuch für Menschen: Installation, Einsatz, Steuerung,
+  API-Referenz, Troubleshooting, Sicherheits-Härtung.
+- **`docs/egm-blueprint.md`** — Repository-Blueprint (Systemgrenzen, Invarianten,
+  Side Effects, Verification) — der maschinenlesbare Vertrag.
 - **`docs/agents/`** — Agent-Konventionen (Issue-Tracker, Domain-Doku).
 - **`docs/adr/`** — Architekturentscheidungen (aktuell `0001-c2-antworttypen-strikt-request-typen-lenient.md`).
 - **`GLOSSARY.md`** — kanonische Terminologie, für alle Crates verbindlich.
 - **`wissen/`** — Recherche-Wissenssammlung (Markdown, kein Quellcode).
-- **`.scratch/c2-operability/`** — Arbeitsvorrat: `EPIC.md`, `design_draft.md` und 13
+- **`.scratch/c2-operability/`** — Arbeitsvorrat: `EPIC.md`, `design_draft.md` und 14
   erfasste Funktionsdefekte unter `issues/`.
 - **`2026-11-11_DRIFT_REPORT.md`** — Drift Report aus dem EGM-Review: 14 Code-Befunde,
   die in die 13 Issues eingeflossen sind. Historische Quelle, nicht gepflegt.
@@ -217,7 +221,7 @@ bis das Material wirklich erzeugt wird.
 
 ## Known Defects / Arbeitsvorrat
 
-Dreizehn Funktionsdefekte sind als Markdown-Issues unter
+Vierzehn Funktionsdefekte sind als Markdown-Issues unter
 `.scratch/c2-operability/issues/` erfasst; der Ablaufplan mit Abhängigkeiten
 liegt in `EPIC.md`, der Designentwurf (Wellenplan, Entscheidungen D1–D7) in
 `design_draft.md`.
@@ -231,7 +235,11 @@ ISSUE-13 (Dashboard-Escaping, Token im Query-String).
 ISSUE-4 (Credential Manager liefert bei genau einem Credential eine leere Liste),
 ISSUE-5 (Doc-Fix `--range`),
 ISSUE-7 (`wmi_exec` ohne Aufrufer), ISSUE-9 (Post-Quantum-Verschlüsselung inaktiv),
-ISSUE-11 (Token im Debug-Output).
+ISSUE-11 (Token im Debug-Output), ISSUE-14 (Agent hängt im SSH-Default-Credential-Test).
+
+**Anmerkung zum Status:** ISSUE-2 und ISSUE-3 sind im Code bereits behoben
+(Commit `4b6e179`: Port 445/3389 in `COMMON_PORTS`, `sshpass`-basierter
+Credential-Test). Die Issue-Dateien sind dazu noch nicht nachgezogen.
 
 **Dokumentations-Drift:** Der Modul-Doc von `kx-core/src/lib.rs` beschreibt noch
 eine Schichtung `format → crypto → engine → beacon` aus einem Vorgängerprojekt —
