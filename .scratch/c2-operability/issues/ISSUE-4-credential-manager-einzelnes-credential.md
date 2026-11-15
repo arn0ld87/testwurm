@@ -1,9 +1,9 @@
 ---
 id: ISSUE-4
 title: extract_credential_manager liefert bei genau einem Credential eine leere Liste
-status: open
+status: done
 category: bug
-triage_state: ready-for-agent
+triage_state: erledigt
 agent_brief: briefs/ISSUE-4-credential-manager-einzelfall.md
 priority: medium
 ---
@@ -24,9 +24,9 @@ Related: ISSUE-3
 
 ## Acceptance Criteria
 
-- [ ] `extract_credential_manager` liefert bei genau einem gespeicherten Credential eine Liste mit einem Eintrag
-- [ ] Der Fehlerfall bleibt nachvollziehbar: ein JSON-Parse-Fehler führt zu einem `warn!`-Log statt zu einem stillen `Ok(vec![])`
-- [ ] Ein Test deckt den Ein-Fall und den Mehr-Fall ab (PowerShell-Ausgabe als String-Fixture, kein Windows-Zielsystem nötig)
+- [x] `extract_credential_manager` liefert bei genau einem gespeicherten Credential eine Liste mit einem Eintrag
+- [x] Der Fehlerfall bleibt nachvollziehbar: ein JSON-Parse-Fehler führt zu einem `warn!`-Log statt zu einem stillen `Ok(vec![])`
+- [x] Ein Test deckt den Ein-Fall und den Mehr-Fall ab (PowerShell-Ausgabe als String-Fixture, kein Windows-Zielsystem nötig)
 
 ## Technical Notes
 
@@ -47,3 +47,5 @@ Related: ISSUE-3
   einer Log-Warnung.
 
 **Triage-Entscheidung:** Agent Brief: [`briefs/ISSUE-4-credential-manager-einzelfall.md`](briefs/ISSUE-4-credential-manager-einzelfall.md)
+
+**Erledigt am 2026-11-15:** kx-win: Credential-Manager liefert bei einem Credential eine Liste. Alle Akzeptanzkriterien abgehakt.
