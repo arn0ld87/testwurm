@@ -35,7 +35,7 @@ Verifiziert am 2026-11-11 per Quellcode-Prüfung.
 
 ## Triage Notes
 
-**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+**Verifiziert am 2026-11-15 gegen `origin/main` (74 Tests grün):**
 
 - Der Nutzungskommentar des Beispiels nennt weiterhin ein Bereichs-Flag, das der
   Argument-Parser nicht kennt — er akzeptiert getrennte Start- und End-Angaben.

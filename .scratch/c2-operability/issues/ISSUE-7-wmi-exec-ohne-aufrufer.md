@@ -35,7 +35,7 @@ Related: ISSUE-2, ISSUE-6
 
 ## Triage Notes
 
-**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+**Verifiziert am 2026-11-15 gegen `origin/main` (74 Tests grün):**
 
 - Der Befund ist bestätigt: der WMI-Ausführungspfad des Exploit-Crates hat keinen
   Aufrufer, das Agenten-Flag wird geparst, aber nie ausgewertet, und die

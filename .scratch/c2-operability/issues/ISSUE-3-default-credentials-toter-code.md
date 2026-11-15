@@ -36,7 +36,7 @@ Related: ISSUE-2, ISSUE-4
 
 ## Triage Notes
 
-**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+**Verifiziert am 2026-11-15 gegen `origin/main` (74 Tests grün):**
 
 - Der tote Code ist beseitigt: es existiert ein echter Authentifizierungsversuch,
   der bei Erfolg einen Treffer liefert und bei Misserfolg kontrolliert `None`.

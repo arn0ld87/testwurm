@@ -40,7 +40,7 @@ Related: ISSUE-10
 
 ## Triage Notes
 
-**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+**Verifiziert am 2026-11-15 gegen `origin/main` (74 Tests grün):**
 
 - Der Befund ist bestätigt: Die Argumentstruktur des Agenten leitet Debug ab und
   trägt das Token als String in einem Feld. Eine Debug-Ausgabe gibt den

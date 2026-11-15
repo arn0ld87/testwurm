@@ -87,7 +87,7 @@ Related: ISSUE-3
 
 ## Triage Notes
 
-**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+**Verifiziert am 2026-11-15 gegen `origin/main` (74 Tests grün):**
 
 - Der Befund ist bestätigt: der Subprozess wird ohne Zeitgrenze und ohne
   Abbruchmechanismus erwartet. Die gesetzte Verbindungs-Zeitgrenze greift nur

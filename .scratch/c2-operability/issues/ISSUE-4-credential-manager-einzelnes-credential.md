@@ -37,7 +37,7 @@ Related: ISSUE-3
 
 ## Triage Notes
 
-**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+**Verifiziert am 2026-11-15 gegen `origin/main` (74 Tests grün):**
 
 - Der Fehler ist bestätigt: Die PowerShell-Sammlung wird serialisiert, ohne den
   Ergebniscontainer in einen Array-Zwang zu wrappen. Bei genau einem Element

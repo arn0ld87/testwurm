@@ -54,7 +54,7 @@ Related: ISSUE-8
 
 ## Triage Notes
 
-**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+**Verifiziert am 2026-11-15 gegen `origin/main` (74 Tests grün):**
 
 - Der Befund ist bestätigt: die Modul-Deklaration des KEM-Moduls ist
   auskommentiert, das Modul wird nicht kompiliert, und der Agent sendet die

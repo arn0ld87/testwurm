@@ -48,7 +48,7 @@ Related: ISSUE-3, ISSUE-6
 
 ## Triage Notes
 
-**Verifiziert am 2026-11-15 gegen `origin/main` (63 Tests grün):**
+**Verifiziert am 2026-11-15 gegen `origin/main` (74 Tests grün):**
 
 - Der Port-Fix ist vorhanden: 445 steht in der gescannten Portliste, und das
   Port-zu-Dienst-Mapping kennt den SMB-Dienst. Der ursprüngliche Kernbefund

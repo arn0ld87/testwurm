@@ -78,7 +78,7 @@ Der Start-Smoke-Test ist der eigentliche Abnahmeprüfpunkt: er schlägt heute mi
 ## Triage-Stand (2026-11-15)
 
 Der Tracker war nicht mit `origin/main` synchron. Verifikation gegen `origin/main`
-(63 Tests grün) ergab:
+(74 Tests grün) ergab:
 
 - **ISSUE-6 ist erledigt** — PR #8, Commit `209834e`. Der Agent-Brief entfällt.
 - **ISSUE-2 ist nur halb behoben** — Port 445 ist im Code, das referenzierte
