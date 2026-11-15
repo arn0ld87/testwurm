@@ -24,16 +24,6 @@ pub struct SealedHostKey {
     pub roh: [u8; 32],
 }
 
-impl SealedHostKey {
-    /// Verschluesselt ein Passwort mit dem Master-Key dieses Hosts.
-    ///
-    /// Ohne Master-Key (Agent ohne Server-Schluessel) gibt es nichts zu
-    /// verschluesseln — der Aufrufer sendet dann den Klartext.
-    pub fn seal_secret(&self, plaintext: &str) -> Option<String> {
-        kx_core::secretbox::seal(&self.roh, plaintext.as_bytes()).ok()
-    }
-}
-
 impl KeySealer {
     /// Laedt den oeffentlichen Server-Schluessel aus einer JSON-Datei.
     ///
@@ -62,20 +52,5 @@ impl KeySealer {
             sealed_master: kx_core::util::b64_encode(&kapselung.sealed_master),
             roh: kapselung.master_key,
         })
-    }
-}
-
-/// Verschluesselt ein Passwort mit dem Master-Key eines Hosts.
-///
-/// Liefert das versiegelte Passwort und den Klartext. Ist der Klartext leer,
-/// verliess das Passwort den Agenten nur verschluesselt — der C2-Server
-/// speichert dann nichts im Klartext.
-pub fn versiegel(schluessel: &Option<SealedHostKey>, passwort: &str) -> (Option<String>, String) {
-    match schluessel {
-        Some(k) => match k.seal_secret(passwort) {
-            Some(versiegelt) => (Some(versiegelt), String::new()),
-            None => (None, passwort.to_string()),
-        },
-        None => (None, passwort.to_string()),
     }
 }

