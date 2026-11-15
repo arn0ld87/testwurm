@@ -43,7 +43,7 @@ pub fn hex_decode(text: &str) -> Result<Vec<u8>> {
         let lo = hex_val(pair[1]).ok_or_else(|| {
             crate::Error::State(format!("hex: ungueltiges Zeichen {}", pair[1] as char))
         })?;
-        out.push((hi * 16 + lo) as u8);
+        out.push(hi * 16 + lo);
     }
     Ok(out)
 }
@@ -299,7 +299,7 @@ mod tests {
         let mut seed = 42;
         for _ in 0..500 {
             let v = jitter(60_000, 0.25, &mut seed);
-            assert!(v >= 45_000 && v <= 75_000, "value {v}");
+            assert!((45_000..=75_000).contains(&v), "value {v}");
         }
     }
 

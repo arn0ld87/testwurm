@@ -66,8 +66,6 @@ pub struct TaskRow {
 pub enum DbError {
     #[error("rusqlite-Fehler: {0}")]
     Sqlite(#[from] rusqlite::Error),
-    #[error("Zeilendekodierung fehlgeschlagen")]
-    RowDecode,
 }
 
 /// Die Server-Datenbank, thread-sicher um eine rusqlite-Connection.

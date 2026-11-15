@@ -49,11 +49,17 @@ mod off {
     pub const TAGS_LEN: usize = 44;
     pub const CT_TOTAL: usize = 52;
     pub const RANGE0: usize = 60;
-    pub const RANGE1: usize = 84;
+    /// Der Abstand zwischen zwei Range-Eintraegen im Footer.
+    pub const RANGE_STRIDE: usize = 24;
+    pub const RANGE1: usize = RANGE0 + RANGE_STRIDE;
     pub const WRAPPED_DEK: usize = 108;
     pub const NONCE_BASE: usize = 180;
     pub const RANGE_SHA: usize = 192;
     pub const HOST_ID: usize = 224;
+
+    /// Die Offsets der Range-Eintraege im Footer. Der Footer traegt genau
+    /// `MAX_RANGES` Eintraege — deshalb passt die Zahl in ein Array.
+    pub const RANGE_OFFS: [usize; crate::MAX_RANGES] = [RANGE0, RANGE1];
     pub const BUILD_ID: usize = 240;
     pub const CREATED: usize = 256;
     pub const CRC: usize = 264;
@@ -213,13 +219,13 @@ impl Footer {
                 self.format_version, FORMAT_VERSION
             )));
         }
-        if self.format_version < FORMAT_VERSION {
-            if !crate::READABLE_FORMAT_VERSIONS.contains(&self.format_version) {
-                return Err(Error::Format(format!(
-                    "Formatversion {} ist nicht mehr lesbar",
-                    self.format_version
-                )));
-            }
+        if self.format_version < FORMAT_VERSION
+            && !crate::READABLE_FORMAT_VERSIONS.contains(&self.format_version)
+        {
+            return Err(Error::Format(format!(
+                "Formatversion {} ist nicht mehr lesbar",
+                self.format_version
+            )));
         }
         if self.chunk_size == 0 {
             return Err(Error::Format("chunk_size ist 0".into()));
@@ -311,11 +317,10 @@ impl Footer {
         put_u64(&mut buf, off::PLAIN_SIZE, self.plain_size);
         put_u64(&mut buf, off::TAGS_LEN, self.tags_len);
         put_u64(&mut buf, off::CT_TOTAL, self.ct_total);
-        for (i, r) in self.ranges.iter().enumerate() {
-            let base = off::RANGE0 + i * 24;
-            put_u64(&mut buf, base, r.plain_off);
-            put_u64(&mut buf, base + 8, r.plain_len);
-            put_u64(&mut buf, base + 16, r.ct_off);
+        for (r, base) in self.ranges.iter().zip(off::RANGE_OFFS.iter()) {
+            put_u64(&mut buf, *base, r.plain_off);
+            put_u64(&mut buf, *base + 8, r.plain_len);
+            put_u64(&mut buf, *base + 16, r.ct_off);
         }
         buf[off::WRAPPED_DEK..off::WRAPPED_DEK + WRAPPED_DEK_LEN]
             .copy_from_slice(&self.wrapped_dek);
@@ -338,7 +343,7 @@ impl Footer {
                 FOOTER_LEN
             )));
         }
-        if &bytes[off::MAGIC..off::MAGIC + 4] != FOOTER_MAGIC {
+        if bytes[off::MAGIC..off::MAGIC + 4] != FOOTER_MAGIC {
             return Err(Error::Format("Footer-Magie fehlt".into()));
         }
         let want = crc32(&bytes[..off::CRC_COVER]);
@@ -351,12 +356,11 @@ impl Footer {
         }
         let format_version = bytes[off::VERSION];
         let mut ranges = Self::empty_ranges();
-        for i in 0..MAX_RANGES {
-            let base = off::RANGE0 + i * 24;
-            ranges[i] = Range {
-                plain_off: read_u64(bytes, base),
-                plain_len: read_u64(bytes, base + 8),
-                ct_off: read_u64(bytes, base + 16),
+        for (slot, base) in ranges.iter_mut().zip(off::RANGE_OFFS.iter()) {
+            *slot = Range {
+                plain_off: read_u64(bytes, *base),
+                plain_len: read_u64(bytes, *base + 8),
+                ct_off: read_u64(bytes, *base + 16),
             };
         }
         let declared = bytes[off::N_RANGES] as usize;
@@ -550,18 +554,41 @@ pub fn nonce_for(base: &[u8; NONCE_LEN], range_index: u8, index_in_range: u64) -
 /// Domain-Separator fuer die AAD.
 pub const AAD_LABEL: &[u8] = b"KXENC-AAD1";
 
+/// Der Kontext eines Chunks fuer die AAD-Berechnung.
+///
+/// Die Felder gehen in fester Reihenfolge in die AAD ein. Sie liegen in
+/// einer Struktur statt in acht Einzelargumenten — die Aufrufstellen
+/// bleiben dadurch lesbar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChunkContext<'a> {
+    /// Die Formatversion des Containers.
+    pub format_version: u8,
+    /// Der Index der Range im Container.
+    pub range_index: u8,
+    /// Der Index des Chunks innerhalb der Range.
+    pub index_in_range: u64,
+    /// Die Laenge des Klartexts dieses Chunks.
+    pub plain_len: u64,
+    /// Ob der Chunk der letzte des Containers ist.
+    pub is_final_global: bool,
+    /// Die Datei-Kennung.
+    pub file_id: &'a [u8; FILE_ID_LEN],
+    /// Die Host-Kennung.
+    pub host_id: &'a [u8; HOST_ID_LEN],
+}
+
 /// Additional Authenticated Data pro Chunk. Der Chunk-Index sitzt in der AAD,
 /// darum schlaegt Umsortieren und Duplizieren von Chunks fehl (B003).
-pub fn aad_for(
-    out: &mut Vec<u8>,
-    format_version: u8,
-    range_index: u8,
-    index_in_range: u64,
-    plain_len: u64,
-    is_final_global: bool,
-    file_id: &[u8; FILE_ID_LEN],
-    host_id: &[u8; HOST_ID_LEN],
-) {
+pub fn aad_for(out: &mut Vec<u8>, ctx: &ChunkContext<'_>) {
+    let ChunkContext {
+        format_version,
+        range_index,
+        index_in_range,
+        plain_len,
+        is_final_global,
+        file_id,
+        host_id,
+    } = *ctx;
     out.clear();
     out.extend_from_slice(AAD_LABEL);
     out.push(format_version);
@@ -672,7 +699,7 @@ mod tests {
         for (i, c) in chunks.iter().enumerate() {
             assert_eq!(c.global_index, i as u64);
         }
-        assert_eq!(chunks.last().unwrap().is_final_global, true);
+        assert!(chunks.last().unwrap().is_final_global);
         let total = chunks_for_ranges(&r, 16 * 1024) as usize;
         assert_eq!(chunks.len(), total);
         // Resume nach Absturz muss dieselbe Nummerierung liefern.
@@ -697,16 +724,33 @@ mod tests {
         assert_ne!(nonce_for(&base, 0, 42), nonce_for(&base, 0, 43));
     }
 
+    /// Der Chunk-Kontext der AAD-Tests.
+    fn chunk_ctx<'a>(
+        index_in_range: u64,
+        file_id: &'a [u8; FILE_ID_LEN],
+        host_id: &'a [u8; HOST_ID_LEN],
+    ) -> ChunkContext<'a> {
+        ChunkContext {
+            format_version: 1,
+            range_index: 0,
+            index_in_range,
+            plain_len: 1024,
+            is_final_global: false,
+            file_id,
+            host_id,
+        }
+    }
+
     #[test]
     fn aad_binds_index_and_file() {
         let mut a = Vec::new();
         let mut b = Vec::new();
-        aad_for(&mut a, 1, 0, 3, 1024, false, &[0u8; 16], &[0u8; 16]);
-        aad_for(&mut b, 1, 0, 4, 1024, false, &[0u8; 16], &[0u8; 16]);
+        aad_for(&mut a, &chunk_ctx(3, &[0u8; 16], &[0u8; 16]));
+        aad_for(&mut b, &chunk_ctx(4, &[0u8; 16], &[0u8; 16]));
         assert_ne!(a, b, "Chunk-Index muss in der AAD stehen");
-        aad_for(&mut b, 1, 0, 3, 1024, false, &[1u8; 16], &[0u8; 16]);
+        aad_for(&mut b, &chunk_ctx(3, &[1u8; 16], &[0u8; 16]));
         assert_ne!(a, b, "file_id muss gebunden sein");
-        aad_for(&mut b, 1, 0, 3, 1024, false, &[0u8; 16], &[9u8; 16]);
+        aad_for(&mut b, &chunk_ctx(3, &[0u8; 16], &[9u8; 16]));
         assert_ne!(a, b, "host_id muss gebunden sein");
     }
 

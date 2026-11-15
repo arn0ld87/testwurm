@@ -371,6 +371,7 @@ fn app(state: AppState) -> Router {
 
 /// Der Zugangsschluessel der Tests. Er steht an einer Stelle, damit der
 /// Secret-Scan nicht jedes einzelne Vorkommen als Fund meldet.
+#[cfg(test)]
 const TEST_ZUGANG: &str = "kx-testzugang";
 
 /// Der Wert eines Authorization-Headers.

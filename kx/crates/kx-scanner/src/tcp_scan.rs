@@ -10,7 +10,7 @@ use tokio::net::TcpStream;
 use tracing::debug;
 
 /// Ergebnisse eines TCP-Scans.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ScanResults {
     /// Offene Ports pro Host.
     pub open_ports: std::collections::HashMap<IpAddr, Vec<u16>>,
@@ -19,9 +19,7 @@ pub struct ScanResults {
 impl ScanResults {
     /// Erzeuge eine leere Ergebnis-Struktur.
     pub fn new() -> Self {
-        Self {
-            open_ports: std::collections::HashMap::new(),
-        }
+        Self::default()
     }
 }
 
