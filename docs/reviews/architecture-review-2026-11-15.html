@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture review for testwurm</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 5 4; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+      .arrow { stroke: #94a3b8; stroke-width: 1.5; fill: none; marker-end: url(#ah); }
+      .arrow-leak { stroke: #dc2626; stroke-width: 2; fill: none; marker-end: url(#ah-red); }
+      .box { border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
+      .box-deep { border: 2px solid #0f172a; border-radius: 6px; }
+      .box-leak { border: 1.5px solid #dc2626; border-radius: 6px; background: #fef2f2; }
+      .shallow { background: #f1f5f9; }
+      .card { border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+      .drag { stroke: #dc2626; stroke-width: 1.5; fill: none; stroke-dasharray: 3 3; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <!-- ============================= HEADER ============================= -->
+      <header class="space-y-6">
+        <div class="flex flex-wrap items-baseline justify-between gap-4">
+          <div>
+            <h1 class="font-serif text-4xl tracking-tight">Architecture review — testwurm</h1>
+            <p class="mt-1 text-sm text-slate-500 font-mono">kx/ · Rust workspace · 2026-11-15 · main @ 925dc88</p>
+          </div>
+          <p class="text-sm text-slate-500 max-w-sm">
+            Deepening opportunities: shallow modules whose interface is nearly as complex
+            as their implementation.
+          </p>
+        </div>
+
+        <div class="card p-4 flex flex-wrap gap-x-8 gap-y-3 text-xs">
+          <span class="flex items-center gap-2"><span class="inline-block w-8 h-4 border border-slate-400 bg-white rounded"></span> module</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-8 h-4 border-2 border-slate-900 bg-slate-900 rounded"></span> deep module</span>
+          <span class="flex items-center gap-2"><svg width="32" height="4"><line class="seam" x1="0" y1="2" x2="32" y2="2" stroke="#64748b" stroke-width="2"/></svg> seam</span>
+          <span class="flex items-center gap-2"><svg width="32" height="8"><line x1="0" y1="4" x2="32" y2="4" class="arrow-leak"/></svg> leakage</span>
+          <span class="flex items-center gap-2"><span class="inline-block w-8 h-4 bg-slate-200 rounded"></span> interface surface</span>
+        </div>
+
+        <div class="card p-4 border-l-4 border-l-red-600 bg-red-50/40">
+          <p class="label text-red-700 mb-2">Two candidates carry a defect, not only friction</p>
+          <p class="text-sm text-slate-700">
+            Candidate 1 and candidate 2 each include a <em>misbehaviour</em> that the graph
+            makes visible: the persisted Windows service starts with no arguments at all,
+            and the persisted Unix agent starts without <code class="font-mono text-xs">--server-key</code>,
+            so the re-launched worm reports its loot in cleartext. Fix those before the
+            architectural work — they are bugs wearing an architecture costume.
+          </p>
+        </div>
+      </header>
+
+      <!-- ========================= CANDIDATE 1 ========================= -->
+      <section id="candidates" class="space-y-10">
+
+        <article id="c1" class="card p-6 space-y-5 scroll-mt-8">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-serif text-2xl">Give persistence one form: the agent restarts with <em>the same</em> invocation</h2>
+            <div class="flex gap-2">
+              <span class="px-2 py-1 rounded text-xs font-medium bg-emerald-100 text-emerald-800">Strong</span>
+              <span class="px-2 py-1 rounded text-xs font-medium bg-slate-100 text-slate-700">in-process</span>
+            </div>
+          </div>
+
+          <p class="font-mono text-sm text-slate-600">
+            kx/crates/kx-agent/src/main.rs · kx/crates/kx-win/src/persist.rs · kx/crates/kx-posix/src/persist.rs
+          </p>
+
+          <div class="grid md:grid-cols-2 gap-5">
+            <!-- BEFORE -->
+            <div class="space-y-2">
+              <p class="label text-slate-500">before — one invocation, three spellings</p>
+              <div class="relative bg-slate-50 border border-slate-200 rounded-lg p-4 h-[320px]">
+                <svg class="absolute inset-0 w-full h-full" viewBox="0 0 400 320" preserveAspectRatio="none">
+                  <defs>
+                    <marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+                      <path d="M0,0 L0,6 L7,3 z" fill="#94a3b8"/>
+                    </marker>
+                    <marker id="ah-red" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+                      <path d="M0,0 L0,6 L7,3 z" fill="#dc2626"/>
+                    </marker>
+                  </defs>
+                  <line class="drag" x1="130" y1="92" x2="130" y2="176"/>
+                  <line class="arrow-leak" x1="132" y1="176" x2="132" y2="205"/>
+                </svg>
+
+                <div class="relative space-y-4">
+                  <div class="box p-2">
+                    <p class="label text-slate-500">Args</p>
+                    <p class="text-xs font-mono">--server-key, --start, --end …</p>
+                  </div>
+                  <div class="box-leak p-2">
+                    <p class="label text-red-700">systemd ExecStart vector</p>
+                    <p class="text-xs font-mono text-red-800">--server-key missing</p>
+                  </div>
+                  <div class="box-leak p-2">
+                    <p class="label text-red-700">sc.exe binPath</p>
+                    <p class="text-xs font-mono text-red-800">"kx-agent.exe" — no arguments</p>
+                  </div>
+                  <p class="text-[11px] text-red-700 leading-snug pt-1">
+                    The re-launched worm runs without its key. Clap then rejects the
+                    Windows service outright.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- AFTER -->
+            <div class="space-y-2">
+              <p class="label text-slate-500">after — the invocation lives in one module</p>
+              <div class="relative bg-slate-50 border border-slate-200 rounded-lg p-4 h-[320px]">
+                <svg class="absolute inset-0 w-full h-full" viewBox="0 0 400 320" preserveAspectRatio="none">
+                  <defs>
+                    <marker id="ah2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+                      <path d="M0,0 L0,6 L7,3 z" fill="#94a3b8"/>
+                    </marker>
+                  </defs>
+                  <line class="seam" x1="20" y1="86" x2="380" y2="86" stroke="#64748b" stroke-width="1.5"/>
+                  <line x1="200" y1="128" x2="200" y2="150" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah2)"/>
+                  <line x1="120" y1="150" x2="120" y2="178" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah2)"/>
+                  <line x1="280" y1="150" x2="280" y2="178" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#ah2)"/>
+                </svg>
+
+                <div class="relative space-y-3">
+                  <p class="label text-slate-400">seam</p>
+                  <div class="box-deep deep p-3 text-white">
+                    <p class="label text-slate-300">deep module</p>
+                    <p class="text-sm">Args → persistence invocation</p>
+                    <p class="text-[11px] text-slate-300 mt-1">name · binary · args · env</p>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3 pt-2">
+                    <div class="box p-2">
+                      <p class="label text-slate-500">adapter: systemd</p>
+                      <p class="text-[11px] font-mono">unit file</p>
+                    </div>
+                    <div class="box p-2">
+                      <p class="label text-slate-500">adapter: sc.exe</p>
+                      <p class="text-[11px] font-mono">binPath + env file</p>
+                    </div>
+                  </div>
+                  <p class="text-[11px] text-slate-500 leading-snug pt-1">
+                    Two adapters justify the seam. A new agent flag reaches both.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-5 text-sm">
+            <div class="space-y-2">
+              <p><span class="label text-slate-400">problem</span> — the agent's invocation exists three times: in <code class="font-mono text-xs">Args</code>, in a hand-written systemd vector, and in a <code class="font-mono text-xs">sc.exe</code> string. Two of the three are already wrong.</p>
+              <p><span class="label text-slate-400">solution</span> — <code class="font-mono text-xs">Args</code> owns its persistence invocation; both platform modules render that one value.</p>
+            </div>
+            <div>
+              <p class="label text-slate-400 mb-1">wins</p>
+              <ul class="space-y-1 text-slate-700 list-disc list-inside marker:text-slate-400">
+                <li>locality: one place knows the invocation</li>
+                <li>leverage: a new flag reaches both platforms</li>
+                <li>tests render the unit, assert against the parser</li>
+                <li>the persisted worm stops leaking cleartext</li>
+              </ul>
+            </div>
+          </div>
+
+          <p class="text-xs text-slate-500 border-t border-slate-100 pt-3">
+            <span class="label text-slate-400">deletion test</span> — delete the hand-written argument lists, keep persistence: the complexity concentrates in <code class="font-mono">Args</code> and disappears. It earns its place.
+            &nbsp;·&nbsp; <span class="label text-slate-400">adr-0001</span> — no conflict.
+          </p>
+        </article>
+
+        <!-- ========================= CANDIDATE 2 ========================= -->
+        <article id="c2" class="card p-6 space-y-5 scroll-mt-8">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-serif text-2xl">Give exfiltration a type: “a secret belongs to a host”</h2>
+            <div class="flex gap-2">
+              <span class="px-2 py-1 rounded text-xs font-medium bg-emerald-100 text-emerald-800">Strong</span>
+              <span class="px-2 py-1 rounded text-xs font-medium bg-slate-100 text-slate-700">local-substitutable</span>
+            </div>
+          </div>
+
+          <p class="font-mono text-sm text-slate-600">
+            kx/crates/kx-core/src/c2.rs · kx/crates/kx-agent/src/hostkey.rs · kx/crates/kx-agent/src/main.rs · kx/crates/kx-agent/src/propagate.rs · kx/crates/kx-server/src/main.rs
+          </p>
+
+          <div class="grid md:grid-cols-2 gap-5">
+            <div class="space-y-2">
+              <p class="label text-slate-500">before — the rule lives in the server</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-[320px]">
+                <pre class="mermaid">
+flowchart TB
+  A1["main.rs:236"] --> S1["SecretUpload"]
+  A2["main.rs:255"] --> S1
+  A3["main.rs:274"] --> S1
+  A4["main.rs:293"] --> S1
+  A5["propagate.rs:101"] --> S1
+  A6["propagate.rs:126"] --> S1
+  S1["SecretUpload<br/>password: String<br/>sealed_password: Option"]
+  S1 --> D{"server:<br/>sealed wins"}
+  D --> L["cleartext stored"]
+  classDef dup fill:#fef2f2,stroke:#dc2626;
+  class A1,A2,A3,A4,A5,A6 dup
+                </pre>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="label text-slate-500">after — the type enforces the choice</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-[320px]">
+                <pre class="mermaid">
+flowchart TB
+  A1["agent call sites"] --> T["deep module<br/>ExfiltratedSecret"]
+  T --> K["seal with host key"]
+  T --> S1["SecretUpload"]
+  S1 --> D{"server:<br/>invariant"}
+  D --> L["cleartext discarded"]
+  classDef deep fill:#0f172a,stroke:#0f172a,color:#fff;
+  class T deep
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-5 text-sm">
+            <div class="space-y-2">
+              <p><span class="label text-slate-400">problem</span> — <code class="font-mono text-xs">SecretUpload</code> carries <code class="font-mono text-xs">password: String</code> and <code class="font-mono text-xs">sealed_password: Option&lt;String&gt;</code> side by side; the type cannot force a choice. Six call sites assemble it by hand, and “sealed beats cleartext” survives only inside the server.</p>
+              <p><span class="label text-slate-400">solution</span> — a module owns a secret and its host key, and builds the upload; the choice happens once, inside.</p>
+              <p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                The builder methods exist because a secret scanner reads every hard-coded
+                password assignment as an embedded credential. <em>A scanner workaround is
+                shaping the interface of the C2 Protocol.</em>
+              </p>
+            </div>
+            <div>
+              <p class="label text-slate-400 mb-1">wins</p>
+              <ul class="space-y-1 text-slate-700 list-disc list-inside marker:text-slate-400">
+                <li>locality: one rule, not six sites</li>
+                <li>interface shrinks to “here is a secret”</li>
+                <li>the e2e test becomes a user of the module</li>
+                <li>no parallel representations of one value</li>
+              </ul>
+            </div>
+          </div>
+
+          <p class="text-xs text-slate-500 border-t border-slate-100 pt-3">
+            <span class="label text-slate-400">deletion test</span> — delete the module and six call sites must each re-make the choice, the seal and the field shape: the complexity spreads. It earns its place.
+            &nbsp;·&nbsp; <span class="label text-slate-400">adr-0001</span> — no conflict, provided the wire fields and the leniency of <code class="font-mono">SecretUpload</code> stay untouched.
+          </p>
+        </article>
+
+        <!-- ========================= CANDIDATE 3 ========================= -->
+        <article id="c3" class="card p-6 space-y-5 scroll-mt-8">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-serif text-2xl">The server router exists once: <code class="font-mono text-xl">app(state)</code> is the seam the tests bypass</h2>
+            <div class="flex gap-2">
+              <span class="px-2 py-1 rounded text-xs font-medium bg-emerald-100 text-emerald-800">Strong</span>
+              <span class="px-2 py-1 rounded text-xs font-medium bg-slate-100 text-slate-700">in-process</span>
+            </div>
+          </div>
+
+          <p class="font-mono text-sm text-slate-600">
+            kx/crates/kx-server/src/main.rs · kx/crates/kx-server/src/e2e_test.rs
+          </p>
+
+          <div class="grid md:grid-cols-2 gap-5">
+            <div class="space-y-2">
+              <p class="label text-slate-500">before — seven hand-built routers</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-[320px]">
+                <pre class="mermaid">
+flowchart LR
+  P["app(state)<br/>production"] --> T1["router #1"]
+  P --> T2["router #2"]
+  P --> T3["router #3"]
+  P --> T4["router #4"]
+  P --> T5["router #5"]
+  P --> T6["router #6"]
+  P --> T7["router #7"]
+  T1 -.drop a route.-> X["test still green"]
+  classDef leak fill:#fef2f2,stroke:#dc2626;
+  class X leak
+                </pre>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="label text-slate-500">after — one wiring, seven callers</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-[320px]">
+                <pre class="mermaid">
+flowchart LR
+  P["app(state)"] --> S["seam"]
+  S --> T1["test: routes"]
+  S --> T2["test: auth"]
+  S --> T3["test: tasks"]
+  S --> T4["test: e2e"]
+  T1 --> C["drop a route<br/>→ test red"]
+  classDef deep fill:#0f172a,stroke:#0f172a,color:#fff;
+  class S deep
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-5 text-sm">
+            <div class="space-y-2">
+              <p><span class="label text-slate-400">problem</span> — the test module builds the router thirteen times by hand. <code class="font-mono text-xs">router_registers_the_contract_paths</code> therefore checks a router it assembled itself: remove a route from <code class="font-mono text-xs">app()</code> and the test stays green while its name promises the opposite.</p>
+              <p><span class="label text-slate-400">solution</span> — one test setup that calls the production <code class="font-mono text-xs">app(state)</code>; every test crosses that seam.</p>
+            </div>
+            <div>
+              <p class="label text-slate-400 mb-1">wins</p>
+              <ul class="space-y-1 text-slate-700 list-disc list-inside marker:text-slate-400">
+                <li>locality: route table exists once</li>
+                <li>auth test covers every new route</li>
+                <li>tests stop knowing axum's layer order</li>
+                <li>a false promise in a test name ends</li>
+              </ul>
+            </div>
+          </div>
+
+          <p class="text-xs text-slate-500 border-t border-slate-100 pt-3">
+            <span class="label text-slate-400">deletion test</span> — the thing to delete here is the duplication itself; the complexity vanishes rather than spreads.
+            &nbsp;·&nbsp; <span class="label text-slate-400">adr-0001</span> — no conflict.
+          </p>
+        </article>
+
+        <!-- ========================= CANDIDATE 4 ========================= -->
+        <article id="c4" class="card p-6 space-y-5 scroll-mt-8">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-serif text-2xl">Extraction: one <code class="font-mono text-xl">Secret</code> type, one loop</h2>
+            <div class="flex gap-2">
+              <span class="px-2 py-1 rounded text-xs font-medium bg-emerald-100 text-emerald-800">Strong</span>
+              <span class="px-2 py-1 rounded text-xs font-medium bg-slate-100 text-slate-700">local-substitutable</span>
+            </div>
+          </div>
+
+          <p class="font-mono text-sm text-slate-600">
+            kx/crates/kx-win/src/secrets.rs · kx/crates/kx-posix/src/secrets.rs · kx/crates/kx-agent/src/main.rs
+          </p>
+
+          <div class="grid md:grid-cols-2 gap-5">
+            <div class="space-y-2">
+              <p class="label text-slate-500">before — the same type twice</p>
+              <div class="relative bg-slate-50 border border-slate-200 rounded-lg p-4 h-[320px]">
+                <div class="space-y-3">
+                  <div class="grid grid-cols-2 gap-3">
+                    <div class="box p-2">
+                      <p class="label text-slate-500">kx_win::Secret</p>
+                      <p class="text-[11px] font-mono">secret_type<br/>target<br/>value</p>
+                    </div>
+                    <div class="box p-2">
+                      <p class="label text-slate-500">kx_posix::Secret</p>
+                      <p class="text-[11px] font-mono">secret_type<br/>target<br/>value</p>
+                    </div>
+                  </div>
+                  <div class="border-l-4 border-slate-300 pl-3 space-y-1">
+                    <p class="label text-slate-400">agent · collect_local_secrets</p>
+                    <p class="text-[11px] font-mono">13 lines · 13 lines<br/>13 lines · 13 lines</p>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div class="box-leak p-2">
+                      <p class="label text-red-700">extract_ssh_keys</p>
+                      <p class="text-[11px] text-red-800">0 callers</p>
+                    </div>
+                    <div class="box-leak p-2">
+                      <p class="label text-red-700">extract_browser_credentials</p>
+                      <p class="text-[11px] text-red-800">0 callers</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="label text-slate-500">after — one form, one loop</p>
+              <div class="relative bg-slate-50 border border-slate-200 rounded-lg p-4 h-[320px]">
+                <div class="space-y-3">
+                  <div class="box-deep deep p-3 text-white">
+                    <p class="label text-slate-300">deep module</p>
+                    <p class="text-sm">kx_core::Secret</p>
+                    <p class="text-[11px] text-slate-300 mt-1">secret_type · target · value · source</p>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div class="box p-2">
+                      <p class="label text-slate-500">adapter: windows</p>
+                      <p class="text-[11px] font-mono">lsass · credmgr</p>
+                    </div>
+                    <div class="box p-2">
+                      <p class="label text-slate-500">adapter: posix</p>
+                      <p class="text-[11px] font-mono">shadow · ssh · aws</p>
+                    </div>
+                  </div>
+                  <div class="box p-2">
+                    <p class="label text-slate-500">agent</p>
+                    <p class="text-[11px] font-mono">for secret in secrets { … }</p>
+                  </div>
+                  <p class="text-[11px] text-slate-500 leading-snug">
+                    Two adapters justify the seam. A new extractor is three lines.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-5 text-sm">
+            <div class="space-y-2">
+              <p><span class="label text-slate-400">problem</span> — <code class="font-mono text-xs">kx_win::Secret</code> and <code class="font-mono text-xs">kx_posix::Secret</code> have identical fields, so the agent cannot loop: <code class="font-mono text-xs">collect_local_secrets</code> is four 13-line copies. The knowledge “where did this come from” is split between the extractor and the agent.</p>
+              <p><span class="label text-slate-400">solution</span> — one secret type in <code class="font-mono text-xs">kx-core</code>; the extractor supplies the source, the agent loops.</p>
+            </div>
+            <div>
+              <p class="label text-slate-400 mb-1">wins</p>
+              <ul class="space-y-1 text-slate-700 list-disc list-inside marker:text-slate-400">
+                <li>locality: the shape of a secret defined once</li>
+                <li>leverage: extractor growth does not touch the agent</li>
+                <li>extraction → seal → upload testable without Windows</li>
+                <li>two extractors with no caller get wired or removed</li>
+              </ul>
+            </div>
+          </div>
+
+          <p class="text-xs text-slate-500 border-t border-slate-100 pt-3">
+            <span class="label text-slate-400">deletion test</span> — delete one of the two types and the other must adopt the shared form: complexity concentrates. Delete the shared type instead and two forms return: it spreads.
+            &nbsp;·&nbsp; <span class="label text-slate-400">adr-0001</span> — no conflict.
+          </p>
+        </article>
+
+        <!-- ========================= CANDIDATE 5 ========================= -->
+        <article id="c5" class="card p-6 space-y-5 scroll-mt-8">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-serif text-2xl">The C2 Protocol gets its transport: one implementation, two adapters</h2>
+            <div class="flex gap-2">
+              <span class="px-2 py-1 rounded text-xs font-medium bg-amber-100 text-amber-800">Worth exploring</span>
+              <span class="px-2 py-1 rounded text-xs font-medium bg-slate-100 text-slate-700">ports &amp; adapters</span>
+            </div>
+          </div>
+
+          <p class="font-mono text-sm text-slate-600">
+            kx/crates/kx-core/src/c2.rs · kx/crates/kx-agent/src/c2.rs · kx/crates/kx-cli/src/client.rs · kx/crates/kx-server/src/e2e_test.rs
+          </p>
+
+          <div class="grid md:grid-cols-2 gap-5">
+            <div class="space-y-2">
+              <p class="label text-slate-500">before — the transport built three times</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-[320px]">
+                <pre class="mermaid">
+flowchart TB
+  AG["agent/src/c2.rs"] --> T1["ureq agent"]
+  CL["cli/client.rs"] --> T2["ureq agent"]
+  E2E["server/e2e_test.rs"] --> T3["hand-built requests"]
+  T1 --> E1["C2Error<br/>Tls/Http/Json"]
+  T2 --> E2["ApiError<br/>Tls/Http/Json"]
+  classDef dup fill:#fef2f2,stroke:#dc2626;
+  class T1,T2,T3,E1,E2 dup
+                </pre>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="label text-slate-500">after — the protocol speaks for itself</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-[320px]">
+                <pre class="mermaid">
+flowchart TB
+  AG["adapter: worm"] --> T["deep module<br/>C2 transport<br/>tls · bearer · url · status"]
+  CL["adapter: operator"] --> T
+  E2E["e2e test"] --> T
+  T --> P["c2::Host · Secret · Task"]
+  classDef deep fill:#0f172a,stroke:#0f172a,color:#fff;
+  class T deep
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-5 text-sm">
+            <div class="space-y-2">
+              <p><span class="label text-slate-400">problem</span> — <code class="font-mono text-xs">kx_core::c2</code> owns the types and paths of the C2 Protocol but not its exercise. The TLS setup, the bearer header, the URL trimming and the status→error mapping are written twice, with two error enums of identical shape. Neither transport has a test; the e2e test builds a third one by hand.</p>
+              <p><span class="label text-slate-400">solution</span> — <code class="font-mono text-xs">kx-core</code> gains the transport; agent and CLI become two thin adapters.</p>
+              <p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                Open dependency question: <code class="font-mono">kx-core</code> is today async- and
+                HTTP-free, and <code class="font-mono">ureq</code> is blocking. Whether the transport
+                belongs in <code class="font-mono">kx-core</code> or in a new crate is a decision, not a
+                derivation.
+              </p>
+            </div>
+            <div>
+              <p class="label text-slate-400 mb-1">wins</p>
+              <ul class="space-y-1 text-slate-700 list-disc list-inside marker:text-slate-400">
+                <li>locality: “how do we speak to the C2” in one place</li>
+                <li>leverage: the e2e test uses the real transport</li>
+                <li>one transport test covers both sides</li>
+                <li>two adapters make the seam real</li>
+              </ul>
+            </div>
+          </div>
+
+          <p class="text-xs text-slate-500 border-t border-slate-100 pt-3">
+            <span class="label text-slate-400">deletion test</span> — two adapters exist on purpose (worm side, operator side); delete the duplicate transport and one remains: the complexity vanishes.
+            &nbsp;·&nbsp; <span class="label text-slate-400">adr-0001</span> — no conflict; it strengthens ADR-0001 by putting the exercise of the protocol next to its definition.
+          </p>
+        </article>
+
+        <!-- ========================= CANDIDATE 6 ========================= -->
+        <article id="c6" class="card p-6 space-y-5 scroll-mt-8">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-serif text-2xl">The database speaks the C2 Protocol; rows become implementation detail</h2>
+            <div class="flex gap-2">
+              <span class="px-2 py-1 rounded text-xs font-medium bg-amber-100 text-amber-800">Worth exploring</span>
+              <span class="px-2 py-1 rounded text-xs font-medium bg-slate-100 text-slate-700">in-process</span>
+            </div>
+          </div>
+
+          <p class="font-mono text-sm text-slate-600">
+            kx/crates/kx-server/src/db.rs · kx/crates/kx-server/src/main.rs
+          </p>
+
+          <div class="grid md:grid-cols-2 gap-5">
+            <div class="space-y-2">
+              <p class="label text-slate-500">before — translation in two directions, two modules</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-[320px]">
+                <pre class="mermaid">
+flowchart LR
+  M["main.rs<br/>RegisterRequest → HostRow<br/>SecretUpload → SecretRow"] --> D["db.rs"]
+  D --> N["HostRow → c2::Host<br/>SecretRow → c2::Secret"]
+  M -.same knowledge.-> D
+  classDef leak fill:#fef2f2,stroke:#dc2626;
+  class M,D leak
+                </pre>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <p class="label text-slate-500">after — one module owns both directions</p>
+              <div class="rounded-lg border border-slate-200 bg-white p-4 h-[320px]">
+                <pre class="mermaid">
+flowchart LR
+  M["handlers"] --> D["deep module<br/>Db<br/>upsert_host(request)<br/>hosts() → Vec&lt;c2::Host&gt;"]
+  D --> R["rows are private"]
+  classDef deep fill:#0f172a,stroke:#0f172a,color:#fff;
+  class D deep
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-5 text-sm">
+            <div class="space-y-2">
+              <p><span class="label text-slate-400">problem</span> — the translation between the C2 Protocol and the database lives in two modules and points in opposite directions: requests become rows in the handlers, rows become protocol types in <code class="font-mono text-xs">db.rs</code>. A new protocol field means two places.</p>
+              <p><span class="label text-slate-400">solution</span> — <code class="font-mono text-xs">Db</code> takes and returns protocol types; the rows stay private inside it.</p>
+            </div>
+            <div>
+              <p class="label text-slate-400 mb-1">wins</p>
+              <ul class="space-y-1 text-slate-700 list-disc list-inside marker:text-slate-400">
+                <li>locality: protocol ↔ row in one place</li>
+                <li>the sealed rule sits beside the row it governs</li>
+                <li>handlers lose the row construction</li>
+                <li>mapping tests write protocol values</li>
+              </ul>
+            </div>
+          </div>
+
+          <p class="text-xs text-slate-500 border-t border-slate-100 pt-3">
+            <span class="label text-slate-400">deletion test</span> — delete the <code class="font-mono">From</code> impls and let <code class="font-mono">Db</code> speak the protocol: the translation concentrates instead of spreading.
+            &nbsp;·&nbsp; <span class="label text-slate-400">adr-0001</span> — no conflict; ADR-0001 explicitly keeps the database row separate from the wire type, and this keeps it separate while putting the translation in one place.
+          </p>
+        </article>
+      </section>
+
+      <!-- ====================== TOP RECOMMENDATION ====================== -->
+      <section id="top-recommendation">
+        <div class="card p-8 border-l-4 border-l-slate-900 space-y-3">
+          <p class="label text-slate-400">top recommendation</p>
+          <h2 class="font-serif text-3xl">
+            <a href="#c1" class="underline decoration-slate-300 hover:decoration-slate-900">Give persistence one form</a>
+          </h2>
+          <p class="text-sm text-slate-700 max-w-2xl">
+            Not because it is the most elegant, but because it is the only candidate where
+            the interface is currently <em>lying</em>. The Windows service is registered
+            with no arguments at all — clap rejects it on first start — and the Unix unit
+            starts the worm without its key, so the re-launched agent reports its loot in
+            cleartext. The persistence modules are shallow in the strict sense: their
+            interface (a name and a path) is nearly as complex as their implementation
+            (a rendered unit), and what they hide is not complexity but an omission.
+          </p>
+          <p class="text-sm text-slate-700 max-w-2xl">
+            Candidate 2 is the runner-up and the better structural investment: six call sites
+            hand-assemble the same upload, and the rule that decides cleartext versus sealed
+            lives in the server instead of the type. Fix candidate 1's two defects first —
+            they are bugs, and they are cheap.
+          </p>
+        </div>
+      </section>
+
+      <!-- ========================== REJECTED ========================== -->
+      <section id="rejected" class="space-y-4">
+        <h2 class="font-serif text-2xl">Rejected candidates</h2>
+        <p class="text-sm text-slate-600 max-w-2xl">
+          Refactoring that failed the deletion test, or that would introduce a seam without
+          two adapters behind it.
+        </p>
+        <div class="card divide-y divide-slate-100">
+          <div class="p-4">
+            <p class="text-sm font-medium text-slate-800">A <code class="font-mono text-xs">Store</code> trait for SQLite</p>
+            <p class="text-xs text-slate-500 mt-1">One adapter, so the seam is hypothetical. The real deepening here is candidate 6.</p>
+          </div>
+          <div class="p-4">
+            <p class="text-sm font-medium text-slate-800">A <code class="font-mono text-xs">Scanner</code> or exploit trait in the agent</p>
+            <p class="text-xs text-slate-500 mt-1">Also one adapter per concept. What <code class="font-mono text-xs">run_propagation</code> lacks is a test, not a trait.</p>
+          </div>
+          <div class="p-4">
+            <p class="text-sm font-medium text-slate-800">The hard-coded dashboard paths</p>
+            <p class="text-xs text-slate-500 mt-1">Already pinned by two tests against <code class="font-mono text-xs">c2::PATH_*</code>. Changing them would be tidying, not deepening.</p>
+          </div>
+          <div class="p-4">
+            <p class="text-sm font-medium text-slate-800">Deleting the KXENC module outright</p>
+            <p class="text-xs text-slate-500 mt-1">
+              A deletion, not a deepening — and one correction: <code class="font-mono text-xs">format.rs</code> is not entirely dead.
+              <code class="font-mono text-xs">KexId</code> is load-bearing in the live crypto path (20 references from
+              <code class="font-mono text-xs">hostkey.rs</code>, plus the key generator and the e2e test). ISSUE-15 must first
+              lift <code class="font-mono text-xs">KexId</code> out of the container module, or the removal breaks the cryptography.
+            </p>
+          </div>
+          <div class="p-4">
+            <p class="text-sm font-medium text-slate-800">One shared error enum for agent and CLI</p>
+            <p class="text-xs text-slate-500 mt-1">Part of candidate 5, not a candidate of its own.</p>
+          </div>
+        </div>
+      </section>
+
+      <footer class="pt-8 border-t border-slate-200 text-xs text-slate-400">
+        Graph findings from the code-review-graph index at <code class="font-mono">925dc88</code> ·
+        hub and bridge nodes ranked by degree and betweenness ·
+        the deletion test applied to every candidate above.
+      </footer>
+
+    </main>
+  </body>
+</html>
