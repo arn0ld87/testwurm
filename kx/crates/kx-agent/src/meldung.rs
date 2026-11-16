@@ -236,6 +236,17 @@ mod tests {
             }
             Ok(())
         }
+
+        fn hole_tasks(&self) -> Result<Vec<kx_core::c2::Task>, TransportError> {
+            Ok(Vec::new())
+        }
+
+        fn melde_task_ergebnis(
+            &self,
+            _report: &kx_core::c2::TaskResultRequest,
+        ) -> Result<(), TransportError> {
+            Ok(())
+        }
     }
 
     fn fund(host_id: &str, anzahl: usize) -> HostFund {

