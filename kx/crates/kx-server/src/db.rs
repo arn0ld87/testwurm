@@ -707,6 +707,42 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
+    /// Beute im Klartext übersteht den Readout.
+    ///
+    /// Ein Agent ohne Server-Schlüssel — der dokumentierte Normalfall — meldet
+    /// die Beute unverschlüsselt. Der Server darf sie beim Auslesen nicht
+    /// wegwerfen: sonst ginge die Beute verloren, ohne dass irgendwo ein
+    /// Fehler auftaucht. Genau das tat ein Builder, der das Klartextfeld
+    /// **immer** leerte.
+    #[test]
+    fn beute_im_klartext_uebersteht_den_readout() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-secret-klartext-{}.db", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+        registriere(&db, "10.0.0.5");
+
+        let upload = c2::SecretUpload {
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: String::new(),
+            source: Some("smb_relay".into()),
+            master_key: None,
+            sealed_password: None,
+        }
+        .mit_passwort("hash");
+
+        db.upsert_secret(&upload).expect("Beute");
+        let secrets = db.list_secrets().expect("secrets");
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(
+            secrets[0].password, "hash",
+            "der Klartext ging beim Auslesen verloren"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
     /// Der Zeitstempel ist handgerechnet — er muss also geprueft werden.
     ///
     /// Der Server speichert genau diese Form; ein Rechenfehler faellt im
