@@ -959,7 +959,8 @@ Der Arbeitsvorrat liegt als Markdown-Issues unter
 [`.scratch/c2-operability/issues/`](./.scratch/c2-operability/issues/), der
 Ablaufplan in [`EPIC.md`](./.scratch/c2-operability/EPIC.md).
 
-**Beide Wellen sind abgeschlossen — alle 14 erfassten Issues sind erledigt**,
+**Beide Wellen sind abgeschlossen — die 14 Issues der Wellen 1 und 2 sind
+erledigt**,
 die zugehörigen GitHub-Issues sind geschlossen und die Issue-Dateien stehen auf
 `status: done`. Sie bleiben als Historie im Verzeichnis liegen.
 
@@ -976,7 +977,8 @@ wenn der Agent mit `--server-key` den öffentlichen Server-Schlüssel bekommt
 `kx/crates/kx-core/src/format.rs` beschreibt Header, Footer, Chunk-Nummerierung,
 AAD und Noncen — aber es verschlüsselt nichts. Der Wurm transportiert Passwörter
 und NT-Hashes, keine Dateien. Erfasst als ISSUE-15 in
-[`.scratch/c2-operability/issues/`](./.scratch/c2-operability/issues/).
+[`.scratch/c2-operability/issues/`](./.scratch/c2-operability/issues/) — das ist
+das **einzige** noch offene Issue, die Datei steht auf `status: open`.
 
 Die Felder `sealed_master` und `master_key` gehören zum Wire-Vertrag. Der Agent
 füllt sie, wenn er mit `--server-key` den öffentlichen Server-Schlüssel bekommt.

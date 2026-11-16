@@ -267,7 +267,8 @@ liegt in `EPIC.md`, der Designentwurf (Wellenplan, Entscheidungen D1–D7) in
 ISSUE-8 (`ml-kem`-Pin), ISSUE-10 (systemd-Unit), ISSUE-12 (API-Authentifizierung),
 ISSUE-13 (Dashboard-Escaping, Token im Query-String).
 
-**Welle 2 (C2 betriebsfähig) ist abgeschlossen** — alle 14 Issues sind erledigt.
+**Welle 2 (C2 betriebsfähig) ist abgeschlossen** — die 14 Issues der Wellen 1
+und 2 sind erledigt.
 
 **Erledigt:** ISSUE-2 (SMB-Relay: Relay-Skript liegt als Asset im Repository,
 der Aufruf nutzt die reale CLI, es gibt einen Port-445-Test), ISSUE-3 und
