@@ -92,8 +92,11 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   `verify_token(candidate: &str, expected: &str) -> bool` [auth.rs:verify_token] und
   die Middleware `require_auth(req: Request, next: Next) -> Response`
   [auth.rs:require_auth]
-- Dashboard: `DASHBOARD_HTML` — statische HTML-Seite mit den Tabellen `#hosts`, `#secrets`
-  und `#tasks` sowie dem Login-Formular `#login` [dashboard.rs:DASHBOARD_HTML]
+- Dashboard: `DASHBOARD_HTML` — die HTML-Vorlage mit den Platzhaltern `{tabellen}` und
+  `{mapper}`; `dashboard_html()` füllt sie aus `SPALTEN` — den Spalten je Bereich,
+  mit den Feldnamen des Wire-Typs. Die Tabellen `#hosts`, `#secrets` und `#tasks`
+  sowie das Login-Formular `#login` entstehen daraus [dashboard.rs:DASHBOARD_HTML]
+  [dashboard.rs:dashboard_html] [dashboard.rs:SPALTEN]
 - Ende-zu-Ende-Test der Beutekette [e2e_test.rs:die_beutekette_laueft_vom_agent_bis_zum_operator] —
   baut seine Requests mit dem C2-Transport aus `kx_core::c2::transport`
   (`post_json_request`, `get_request`) und ruft den Router direkt auf;
