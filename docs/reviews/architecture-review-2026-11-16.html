@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — testwurm / kx</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 5 5; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .faded { opacity: .38; }
+      .mass { border-radius: 2px; }
+      .cap { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .leakbox { border-color: #dc2626; }
+      article:target { scroll-margin-top: 1.5rem; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans antialiased">
+    <main class="max-w-6xl mx-auto px-6 py-12 space-y-14">
+
+      <!-- ═══════════ HEADER ═══════════ -->
+      <header class="border-b border-slate-300 pb-8">
+        <div class="flex flex-wrap items-baseline justify-between gap-4">
+          <div>
+            <p class="cap text-slate-500 mb-2">Architektur-Review</p>
+            <h1 class="font-serif text-4xl tracking-tight">testwurm — der <span class="font-mono text-3xl">kx</span>-Workspace</h1>
+            <p class="mt-2 text-sm text-slate-600">
+              9 Crates · 9.453 LOC · 164 Tests · Stand <span class="mono">b747888</span> · 16.11.2026
+            </p>
+          </div>
+        </div>
+
+        <div class="mt-6 grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+          <div class="border border-slate-300 bg-white rounded p-3">
+            <div class="inline-block w-4 h-3 border-2 border-slate-500 align-middle mr-2"></div><span class="cap text-slate-600">Modul</span>
+          </div>
+          <div class="border border-slate-300 bg-white rounded p-3">
+            <svg class="inline-block w-5 align-middle mr-2" height="10"><line x1="0" y1="5" x2="22" y2="5" stroke="#475569" stroke-width="2" stroke-dasharray="4 4"/></svg><span class="cap text-slate-600">Seam</span>
+          </div>
+          <div class="border border-slate-300 bg-white rounded p-3">
+            <svg class="inline-block w-5 align-middle mr-2" height="10"><line x1="0" y1="5" x2="22" y2="5" stroke="#dc2626" stroke-width="2"/></svg><span class="cap text-slate-600">Leck</span>
+          </div>
+          <div class="border border-slate-300 bg-white rounded p-3">
+            <div class="inline-block w-4 h-3 deep align-middle mr-2"></div><span class="cap text-slate-600">Tiefes Modul</span>
+          </div>
+          <div class="border border-slate-300 bg-white rounded p-3">
+            <div class="inline-block w-4 h-3 bg-white border-2 border-slate-400 align-middle mr-2"></div><span class="cap text-slate-600">Flach</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- ═══════════ K1 ═══════════ -->
+      <section id="kandidaten" class="space-y-12">
+
+      <article id="k1" class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+        <div class="px-7 pt-6">
+          <div class="flex flex-wrap items-center gap-2 mb-3">
+            <span class="cap px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold">Strong</span>
+            <span class="cap px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">Ports &amp; Adapters</span>
+            <span class="cap px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <h2 class="font-serif text-2xl mb-1">K1 — Der Agentlauf hat kein Modul</h2>
+          <p class="text-xs mono text-slate-500 mb-5">
+            kx/crates/kx-agent/src/main.rs:189–371 · kx/crates/kx-agent/src/c2.rs:18 · kx/crates/kx-core/src/c2/transport.rs:115
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-px bg-slate-200 border-y border-slate-200">
+          <div class="bg-white p-5">
+            <p class="cap text-red-700 mb-3">Heute</p>
+            <div class="rounded border border-slate-200 p-3 bg-stone-50">
+              <pre class="mermaid">
+flowchart TB
+  M["main() — 180 Zeilen<br/>main.rs:189"] --> I1["tracing::init + Args::parse"]
+  M --> I2["KeySealer::load"]
+  M --> I3["C2Client::new"]
+  M --> I4["Selbstregistrierung"]
+  M --> I5["collect_local_secrets"]
+  M --> I6["install_persistence"]
+  M --> I7["ARP-Sweep / Bereich"]
+  M --> I8["run_propagation"]
+  M --> I9["run_pending_tasks"]
+  M --> I10["Exit-Policy"]
+  I3 -.->|"konkrete struct,<br/>kein Trait"| T["Transport · ureq::Agent"]
+  classDef leak stroke:#dc2626,stroke-width:2px,fill:#fef2f2;
+  class T leak
+              </pre>
+            </div>
+            <p class="mt-3 text-xs text-slate-600 leading-relaxed">
+              <span class="mono">main()</span> ist der höchste Knoten im Graph (degree 86) und laut CRG ein
+              <em>untested hotspot</em>. Der Lauf hat kein Interface — die Reihenfolge lebt in einer Funktion.
+            </p>
+          </div>
+
+          <div class="bg-white p-5">
+            <p class="cap text-emerald-700 mb-3">Nach dem Deepening</p>
+            <div class="rounded border border-slate-200 p-3 bg-stone-50">
+              <div class="deep rounded p-4 text-white">
+                <p class="cap text-slate-400 mb-2">Interface</p>
+                <p class="mono text-sm text-emerald-300">Agentlauf::run(Abhaengigkeiten) -&gt; Laufergebnis</p>
+                <div class="faded mt-3 pt-3 border-t border-slate-600 space-y-1.5 text-xs text-slate-300">
+                  <p>Init · Identität · Sealer · Registrierung · Beute · Persistenz · Entdeckung · Propagation · Tasks · Exit-Policy</p>
+                </div>
+              </div>
+              <div class="text-center my-2">
+                <svg height="22" width="100%"><line x1="50%" y1="0" x2="50%" y2="22" stroke="#475569" stroke-width="2" stroke-dasharray="4 4"/></svg>
+                <p class="cap text-slate-500">Seam</p>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div class="border-2 border-slate-500 rounded p-2 text-center">
+                  <p class="cap text-slate-600">Adapter 1</p><p class="text-xs mono">TLS-Transport</p>
+                </div>
+                <div class="border-2 border-emerald-400 rounded p-2 text-center bg-emerald-50">
+                  <p class="cap text-emerald-700">Adapter 2</p><p class="text-xs mono">In-Memory</p>
+                </div>
+              </div>
+            </div>
+            <p class="mt-3 text-xs text-slate-600 leading-relaxed">
+              Zwei Adapter machen den Seam real: <span class="mono">ureq</span> im Betrieb, ein In-Memory-Adapter im Test.
+              Der Baum hat heute <strong>0 Traits, 0 Mocks, 0 In-Memory-Adapter</strong>.
+            </p>
+          </div>
+        </div>
+
+        <div class="px-7 py-6 space-y-4">
+          <div class="grid md:grid-cols-2 gap-6">
+            <div>
+              <p class="cap text-slate-500 mb-1">Problem</p>
+              <p class="text-sm leading-relaxed">Der Ablauf des Agenten hat kein Interface und damit keinen Seam: er lässt sich nur gegen einen echten TLS-Server prüfen. Jeder der 18 Agent-Tests prüft ein Einzelteil, nie den Lauf.</p>
+            </div>
+            <div>
+              <p class="cap text-slate-500 mb-1">Lösung</p>
+              <p class="text-sm leading-relaxed">Ein Lauf-Modul im Crate <span class="mono">kx-agent</span>, das die Sequenz besitzt. Der C2-Zugriff wird ein Port mit zwei Adaptern — erweitert ADR-0002, widerspricht ihm nicht.</p>
+            </div>
+          </div>
+          <div>
+            <p class="cap text-slate-500 mb-2">Gewinn</p>
+            <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1.5 text-sm">
+              <li>· locality: die Reihenfolge an einer Stelle</li>
+              <li>· leverage: ein Interface, M Tests</li>
+              <li>· Der Lauf wird testbar, ohne Netz</li>
+              <li>· interface schrumpft, der Caller wird dünner</li>
+              <li>· Exit-Policy wird eine Entscheidung</li>
+              <li>· Blast-Radius: degree 86 sinkt</li>
+            </ul>
+          </div>
+          <div class="bg-amber-50 border-l-4 border-amber-500 rounded-r p-3 text-sm">
+            <strong>ADR-Bezug:</strong> erweitert ADR-0002 (Transport bleibt im Kern) und greift ADR-0001 nicht an.
+            Der Server-Test ruft heute bewusst den Router direkt auf — genau diese Umgehung des Interfaces wäre überflüssig, sobald ein In-Memory-Adapter existiert.
+          </div>
+        </div>
+      </article>
+
+      <!-- ═══════════ K2 ═══════════ -->
+      <article id="k2" class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+        <div class="px-7 pt-6">
+          <div class="flex flex-wrap items-center gap-2 mb-3">
+            <span class="cap px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold">Strong</span>
+            <span class="cap px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <h2 class="font-serif text-2xl mb-1">K2 — Die Meldung der Beute liegt auf zwei Pfaden, und einer zählt falsch</h2>
+          <p class="text-xs mono text-slate-500 mb-5">
+            kx/crates/kx-agent/src/main.rs:255–266, :336–342, :352–370 · kx/crates/kx-agent/src/propagate.rs:103, :129, :152
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-px bg-slate-200 border-y border-slate-200">
+          <div class="bg-white p-5">
+            <p class="cap text-red-700 mb-3">Heute</p>
+            <div class="rounded border border-slate-200 p-3 bg-stone-50">
+              <pre class="mermaid">
+flowchart TB
+  subgraph P1["Pfad 1 — lokale Beute"]
+    A["collect_local_secrets<br/>main.rs:382"] --> B["hochgeladen += 1<br/>main.rs:259"]
+  end
+  subgraph P2["Pfad 2 — Propagations-Beute"]
+    C["run_propagation<br/>propagate.rs:58"] --> D["SecretUpload<br/>propagate.rs:109"]
+    E["SecretUpload<br/>propagate.rs:135"] --> F["let _ = upload<br/>main.rs:341"]
+    G["let _ = register_host<br/>main.rs:337"] --> F
+  end
+  B --> H["Abschlussmeldung<br/>main.rs:355"]
+  F -.->|"Ergebnis verworfen"| H
+  B --> I["Exit-Policy<br/>main.rs:363"]
+  F -.->|"nicht gezählt"| I
+  classDef leak stroke:#dc2626,stroke-width:2px,fill:#fef2f2;
+  class F,G leak
+              </pre>
+            </div>
+          </div>
+
+          <div class="bg-white p-5">
+            <p class="cap text-emerald-700 mb-3">Nach dem Deepening</p>
+            <div class="rounded border border-slate-200 p-3 bg-stone-50">
+              <div class="deep rounded p-4 text-white">
+                <p class="cap text-slate-400 mb-2">Interface</p>
+                <p class="mono text-sm text-emerald-300">beute::aufnehmen(Secret, Kontext) -&gt; Option&lt;Fund&gt;</p>
+                <div class="faded mt-3 pt-3 border-t border-slate-600 space-y-1.5 text-xs text-slate-300">
+                  <p>Secret → ExfiltratedSecret → versiegeln → Upload</p>
+                  <p>eine Fehlerregel · eine Quelle · ein Typ · ein Zähler</p>
+                </div>
+              </div>
+              <div class="text-center my-2">
+                <svg height="22" width="100%"><line x1="50%" y1="0" x2="50%" y2="22" stroke="#475569" stroke-width="2" stroke-dasharray="4 4"/></svg>
+                <p class="cap text-slate-500">Seam</p>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div class="border-2 border-slate-500 rounded p-2 text-center"><p class="cap text-slate-600">Aufrufer</p><p class="text-xs mono">propagate.rs</p></div>
+                <div class="border-2 border-slate-500 rounded p-2 text-center"><p class="cap text-slate-600">Aufrufer</p><p class="text-xs mono">main.rs</p></div>
+              </div>
+              <div class="border-2 border-emerald-400 rounded p-2 mt-2 text-center bg-emerald-50">
+                <p class="text-xs mono">ein Zähler → eine Abschlussmeldung → eine Exit-Policy</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-7 py-6 space-y-4">
+          <div class="grid md:grid-cols-2 gap-6">
+            <div>
+              <p class="cap text-slate-500 mb-1">Problem</p>
+              <p class="text-sm leading-relaxed">Die Beuteaufnahme steht dreimal im Baum (<span class="mono">propagate.rs:103</span>, <span class="mono">:129</span>, <span class="mono">main.rs:417</span>). Nur ein Pfad zählt; der andere verwirft sein Ergebnis mit <span class="mono">let _ =</span>. Die Abschlussmeldung nennt <em>vorbereitete</em>, nicht <em>zugestellte</em> Secrets — und ein Lauf, in dem alle Propagations-Uploads scheitern, endet mit Exit 0.</p>
+            </div>
+            <div>
+              <p class="cap text-slate-500 mb-1">Lösung</p>
+              <p class="text-sm leading-relaxed">Ein Beute-Modul, das Aufnahme, Versiegelung und Verweigerung besitzt. Der Fund trägt den Zustand „gemeldet / nicht gemeldet" selbst; der Aufrufer entscheidet nichts mehr.</p>
+            </div>
+          </div>
+          <div>
+            <p class="cap text-slate-500 mb-2">Gewinn</p>
+            <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1.5 text-sm">
+              <li>· locality: ein Fehlerpfad statt drei</li>
+              <li>· ein Zähler, eine Abschlussmeldung</li>
+              <li>· delete 2 Kopien</li>
+              <li>· Der Lauf meldet Erfolg, den es gab</li>
+              <li>· ein Interface, 3 Aufrufer</li>
+              <li>· Testbarkeit ohne Netz</li>
+            </ul>
+          </div>
+          <div class="bg-red-50 border-l-4 border-red-500 rounded-r p-3 text-sm">
+            <strong>Live-Befund:</strong> verwirft der Agent die Host-Registrierung, kann eine Beutezeile entstehen, deren <span class="mono">host_id</span> der Server nie gesehen hat — auf <span class="mono">secrets</span> gibt es keinen Fremdschlüssel. Genau das wollte ADR-0001 verhindern.
+          </div>
+        </div>
+      </article>
+
+      <!-- ═══════════ K3 ═══════════ -->
+      <article id="k3" class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+        <div class="px-7 pt-6">
+          <div class="flex flex-wrap items-center gap-2 mb-3">
+            <span class="cap px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold">Strong</span>
+            <span class="cap px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <h2 class="font-serif text-2xl mb-1">K3 — <span class="mono">kx-core</span> trägt eine tote Bibliothek</h2>
+          <p class="text-xs mono text-slate-500 mb-5">
+            kx/crates/kx-core/src/format.rs (796 LOC) · util.rs (321 LOC) · error.rs (261 LOC)
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-px bg-slate-200 border-y border-slate-200">
+          <div class="bg-white p-5">
+            <p class="cap text-red-700 mb-3">Heute — Interface fast so breit wie die Implementierung</p>
+            <div class="rounded border border-slate-200 p-4 bg-stone-50 space-y-4">
+              <div class="flex gap-3 items-end">
+                <div class="flex-1">
+                  <div class="mass h-14 bg-slate-300 border border-slate-400"></div>
+                  <p class="cap text-slate-500 mt-1 text-center">Interface</p>
+                  <p class="text-[10px] mono text-center text-slate-500">Footer · Range · ChunkRef · CipherId</p>
+                </div>
+                <div class="flex-1">
+                  <div class="mass h-28 bg-red-100 border-2 border-red-400"></div>
+                  <p class="cap text-slate-500 mt-1 text-center">Implementierung</p>
+                  <p class="text-[10px] mono text-center text-slate-500">format.rs · 796 LOC</p>
+                </div>
+              </div>
+              <p class="text-[11px] text-slate-600 leading-snug">
+                <strong class="text-red-700">0 Aufrufer</strong> außerhalb der Datei — für <span class="mono">plan_ranges</span>,
+                <span class="mono">chunk_iter</span>, <span class="mono">nonce_for</span>, <span class="mono">aad_for</span>,
+                <span class="mono">Footer</span>, <span class="mono">Range</span>, <span class="mono">ChunkRef</span>,
+                <span class="mono">CipherId</span>, <span class="mono">FooterFlags</span>.
+                Nur <span class="mono">KexId</span> lebt.
+              </p>
+              <div class="grid grid-cols-2 gap-3 pt-2 border-t border-slate-200">
+                <div>
+                  <p class="cap text-slate-500">util.rs</p>
+                  <p class="text-xs mono mt-1">9 von 14 Helfern ohne Aufrufer</p>
+                  <p class="text-[11px] text-slate-500 mt-1">canon_json · path_key · clamp · jitter · now_unix · rfc3339_utc · parse_rfc3339_secs · Sha256Stream · hex_decode</p>
+                </div>
+                <div>
+                  <p class="cap text-slate-500">error.rs</p>
+                  <p class="text-xs mono mt-1">0 Aufrufer außerhalb kx-core</p>
+                  <p class="text-[11px] text-slate-500 mt-1">Error · ErrorClass · class_from_errkind — zwei errno-/Win32-Tabellen, die kein Test erreicht</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-white p-5">
+            <p class="cap text-emerald-700 mb-3">Nach dem Deepening</p>
+            <div class="rounded border border-slate-200 p-4 bg-stone-50 space-y-3">
+              <div class="border-2 border-emerald-400 rounded p-3 bg-emerald-50">
+                <p class="cap text-emerald-700">Encoder — ISSUE-15</p>
+                <p class="text-xs mono mt-1">ein Aufrufer, ein Interface</p>
+                <p class="text-[11px] text-slate-600 mt-1">Das Interface schrumpft auf das, was der Encoder braucht. Der Rest von <span class="mono">format.rs</span> fällt weg.</p>
+              </div>
+              <div class="deep rounded p-4 text-white">
+                <p class="cap text-slate-400 mb-2">kx-core</p>
+                <div class="faded space-y-1 text-xs text-slate-300">
+                  <p>c2 · transport · hostkey · secretbox · secret · exfil · persist</p>
+                </div>
+                <div class="mt-3 pt-3 border-t border-slate-600 text-xs text-emerald-300">
+                  7 lebende Module — Interface und Implementierung fallen zusammen
+                </div>
+              </div>
+              <div class="border border-slate-300 rounded p-3 text-center">
+                <p class="cap text-slate-500">oder</p>
+                <p class="text-xs mt-1">Formatmodul entfernen — es ist der spezifizierte Ort für ISSUE-15, also eine Entscheidung, kein Refactor.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-7 py-6 space-y-4">
+          <div class="grid md:grid-cols-2 gap-6">
+            <div>
+              <p class="cap text-slate-500 mb-1">Problem</p>
+              <p class="text-sm leading-relaxed">19 von 67 Tests in <span class="mono">kx-core</span> prüfen Code, den niemand aufruft. Das CI-Gate sieht es nicht: <span class="mono">pub</span> erzeugt keine Warnung, und im Baum steht weder <span class="mono">#[allow(dead_code)]</span> noch <span class="mono">#![deny(warnings)]</span>.</p>
+            </div>
+            <div>
+              <p class="cap text-slate-500 mb-1">Lösung</p>
+              <p class="text-sm leading-relaxed">ISSUE-15 umsetzen — dann bekommt <span class="mono">format.rs</span> seinen Aufrufer und sein Interface schrumpft. Sonst entfernen. <span class="mono">util.rs</span> und <span class="mono">error.rs</span>: lebende Helfer wandern an ihren einzigen Aufrufer, tote werden gelöscht.</p>
+            </div>
+          </div>
+          <div>
+            <p class="cap text-slate-500 mb-2">Gewinn</p>
+            <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1.5 text-sm">
+              <li>· delete ~1.250 LOC toten Gerüst</li>
+              <li>· 19 Tests prüfen wieder echtes Verhalten</li>
+              <li>· kx-core schrumpft um ein Drittel</li>
+              <li>· locality: der Kern trägt nur Kernsachen</li>
+              <li>· das CI-Gate sieht toten Code</li>
+              <li>· ISSUE-15 bekommt seinen Vorlaufwerk</li>
+            </ul>
+          </div>
+          <div class="bg-amber-50 border-l-4 border-amber-500 rounded-r p-3 text-sm">
+            <strong>Deletion-Test:</strong> Löschen konzentriert nichts — die Komplexität verschwindet und kehrt nicht zurück. Ausnahme: <span class="mono">format.rs</span> ist der spezifizierte Ort für ISSUE-15. Das ist eine Weichenstellung, kein Refactor.
+          </div>
+        </div>
+      </article>
+
+      <!-- ═══════════ K4 ═══════════ -->
+      <article id="k4" class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+        <div class="px-7 pt-6">
+          <div class="flex flex-wrap items-center gap-2 mb-3">
+            <span class="cap px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 font-semibold">Worth exploring</span>
+            <span class="cap px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">True external (Mock)</span>
+          </div>
+          <h2 class="font-serif text-2xl mb-1">K4 — Der Aufrufvertrag mit <span class="mono">smbrelayx.py</span> liegt an zwei Stellen</h2>
+          <p class="text-xs mono text-slate-500 mb-5">
+            kx/crates/kx-exploit/src/smb_relay.rs:91, :181, :218 · kx/assets/smbrelayx.py
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-px bg-slate-200 border-y border-slate-200">
+          <div class="bg-white p-5">
+            <p class="cap text-red-700 mb-3">Heute</p>
+            <div class="rounded border border-slate-200 p-3 bg-stone-50">
+              <pre class="mermaid">
+flowchart TB
+  R["Rust: smb_relay_dcsync<br/>smb_relay.rs:111"] -->|"argumente"| P["python3 smbrelayx.py"]
+  P -->|"stdout: NT-Hashes"| R
+  P -.->|"schreibt"| L["smb.log<br/>im CWD des Prozesses"]
+  R -.->|"liest: read_to_string"| L
+  D["Constraint nachgebaut:<br/>domain nur mit account+hashes<br/>smb_relay.rs:91"] -.-> R
+  classDef leak stroke:#dc2626,stroke-width:2px,fill:#fef2f2;
+  class L,D leak
+              </pre>
+            </div>
+            <p class="mt-3 text-xs text-slate-600 leading-relaxed">
+              Die Regel „<span class="mono">-domain</span> nur zusammen mit <span class="mono">-machine-account</span> und <span class="mono">-machine-hashes</span>" gehört dem Python-Werkzeug — das Rust bildet sie nach. ISSUE-19 war genau dieses Auseinanderlaufen.
+            </p>
+          </div>
+
+          <div class="bg-white p-5">
+            <p class="cap text-emerald-700 mb-3">Nach dem Deepening</p>
+            <div class="rounded border border-slate-200 p-3 bg-stone-50">
+              <div class="deep rounded p-4 text-white">
+                <p class="cap text-slate-400 mb-2">Interface</p>
+                <p class="mono text-sm text-emerald-300">relay::uebernehmen(Ziel) -&gt; Ergebnis&lt;Credential&gt;</p>
+                <div class="faded mt-3 pt-3 border-t border-slate-600 space-y-1.5 text-xs text-slate-300">
+                  <p>Argumentbau · Logdatei des Kindprozesses · Timeout · Ausgabeformate</p>
+                  <p>eine Constraint, eine Fehlerquelle</p>
+                </div>
+              </div>
+              <div class="text-center my-2">
+                <svg height="22" width="100%"><line x1="50%" y1="0" x2="50%" y2="22" stroke="#475569" stroke-width="2" stroke-dasharray="4 4"/></svg>
+                <p class="cap text-slate-500">Seam</p>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div class="border-2 border-slate-500 rounded p-2 text-center"><p class="cap text-slate-600">Adapter</p><p class="text-xs mono">echter Prozess</p></div>
+                <div class="border-2 border-emerald-400 rounded p-2 text-center bg-emerald-50"><p class="cap text-emerald-700">Adapter</p><p class="text-xs mono">Aufzeichnung</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-7 py-6 space-y-4">
+          <div class="grid md:grid-cols-2 gap-6">
+            <div>
+              <p class="cap text-slate-500 mb-1">Problem</p>
+              <p class="text-sm leading-relaxed">Der Rust-Code liest <span class="mono">smb.log</span> aus dem Arbeitsverzeichnis des <em>Rust</em>-Prozesses — unter systemd ist das <span class="mono">/</span>. Der Pfad ist hart kodiert, es gibt keine Prüfung, ob die Datei zum aktuellen Lauf gehört. Ein manueller Lauf zieht eine alte Logdatei eines anderen Ziels in die Fehlermeldung.</p>
+            </div>
+            <div>
+              <p class="cap text-slate-500 mb-1">Lösung</p>
+              <p class="text-sm leading-relaxed">Ein Adapter-Modul im Crate <span class="mono">kx-exploit</span>, das den Aufrufvertrag besitzt: Argumentbau, Logdatei des Kindprozesses, Zeitgrenze, Ausgabeformate. Alles dahinter, nichts davon an zwei Stellen.</p>
+            </div>
+          </div>
+          <div>
+            <p class="cap text-slate-500 mb-2">Gewinn</p>
+            <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1.5 text-sm">
+              <li>· locality: die Constraint an einer Stelle</li>
+              <li>· die Diagnose überlebt systemd</li>
+              <li>· parse_ntlm_hash bleibt die reine Funktion</li>
+              <li>· ein Adapter, eine Aufzeichnung</li>
+              <li>· ISSUE-19 kann nicht erneut auftritt</li>
+              <li>· leverage: ein Aufrufvertrag, ein Aufrufer</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <!-- ═══════════ K5 ═══════════ -->
+      <article id="k5" class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+        <div class="px-7 pt-6">
+          <div class="flex flex-wrap items-center gap-2 mb-3">
+            <span class="cap px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 font-semibold">Worth exploring</span>
+            <span class="cap px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <h2 class="font-serif text-2xl mb-1">K5 — Der C2-Vertrag ist an fünf Stellen gepinnt, drei davon sind Kopien</h2>
+          <p class="text-xs mono text-slate-500 mb-5">
+            kx/crates/kx-core/src/c2.rs:267–337, :479, :616 · kx-agent/src/c2.rs:67, :85, :101 · kx-cli/src/client.rs:217 · kx-server/src/db.rs:525 · kx-server/src/dashboard.rs:91–138
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-px bg-slate-200 border-y border-slate-200">
+          <div class="bg-white p-5">
+            <p class="cap text-red-700 mb-3">Heute</p>
+            <div class="rounded border border-slate-200 p-4 bg-stone-50">
+              <div class="border-2 border-slate-700 rounded p-2 text-center">
+                <p class="cap text-slate-600">Quelle</p>
+                <p class="text-xs mono">kx-core/src/c2.rs</p>
+              </div>
+              <div class="text-center my-1.5"><svg height="16" width="100%"><line x1="50%" y1="0" x2="50%" y2="16" stroke="#475569" stroke-width="2"/></svg></div>
+              <div class="space-y-1.5">
+                <div class="border border-emerald-400 rounded p-2 bg-emerald-50"><p class="text-xs mono">Golden-Fixtures + Key-Set-Pinning</p></div>
+                <div class="border border-red-300 rounded p-2 bg-red-50"><p class="text-xs mono">agent/c2.rs:101 — Pfad gegen eigenes Literal</p></div>
+                <div class="border border-red-300 rounded p-2 bg-red-50"><p class="text-xs mono">cli/client.rs:217 — dritte Abschrift von „der Server sendet result"</p></div>
+                <div class="border border-red-300 rounded p-2 bg-red-50"><p class="text-xs mono">db.rs:525 — dieselbe Tatsache, dritte Crate</p></div>
+                <div class="border border-red-300 rounded p-2 bg-red-50"><p class="text-xs mono">dashboard.rs:91–138 — 48 Zeilen Rust parsen JavaScript</p></div>
+              </div>
+              <p class="text-[11px] text-slate-600 mt-3 leading-snug">
+                Ein Test, der Konstante <em>und</em> Literal im selben Commit ändert, kann nur scheitern, wenn beide geändert werden — er besagt wenig.
+              </p>
+            </div>
+          </div>
+
+          <div class="bg-white p-5">
+            <p class="cap text-emerald-700 mb-3">Nach dem Deepening</p>
+            <div class="rounded border border-slate-200 p-4 bg-stone-50">
+              <div class="deep rounded p-4 text-white">
+                <p class="cap text-slate-400 mb-2">Interface</p>
+                <p class="mono text-sm text-emerald-300">kx_core::c2 — die einzige Definition</p>
+                <div class="faded mt-3 pt-3 border-t border-slate-600 space-y-1 text-xs text-slate-300">
+                  <p>Typen · Pfade · Feldsätze</p>
+                </div>
+              </div>
+              <div class="text-center my-2"><svg height="18" width="100%"><line x1="50%" y1="0" x2="50%" y2="18" stroke="#475569" stroke-width="2" stroke-dasharray="4 4"/></svg><p class="cap text-slate-500">Seam</p></div>
+              <div class="grid grid-cols-3 gap-2 text-center">
+                <div class="border-2 border-slate-500 rounded p-2"><p class="cap text-slate-600">Agent</p><p class="text-[10px] mono">liest</p></div>
+                <div class="border-2 border-slate-500 rounded p-2"><p class="cap text-slate-600">CLI</p><p class="text-[10px] mono">liest</p></div>
+                <div class="border-2 border-slate-500 rounded p-2"><p class="cap text-slate-600">Server</p><p class="text-[10px] mono">liest</p></div>
+              </div>
+              <p class="text-[11px] text-slate-600 mt-3 leading-snug">
+                Die drei Kopien fallen weg. Das Dashboard liest die Feldliste aus dem Typ, nicht aus einem HTML-String.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-7 py-6 space-y-4">
+          <div class="grid md:grid-cols-2 gap-6">
+            <div>
+              <p class="cap text-slate-500 mb-1">Problem</p>
+              <p class="text-sm leading-relaxed">Die Feldliste des Wire-Typs steht an drei handgeschriebenen Stellen: im Vertrag, im Dashboard-JavaScript und in der CSV-Spaltenliste der CLI. Nur das Dashboard pinnt sich gegen den Vertrag; die CSV tut es nicht.</p>
+            </div>
+            <div>
+              <p class="cap text-slate-500 mb-1">Lösung</p>
+              <p class="text-sm leading-relaxed">Die Feldmenge des Wire-Typs ist eine Funktion des Typs. Dashboard und Export lesen sie, statt sie zu abschreiben. ADR-0001 bleibt die eine Quelle — die Kopien sind der Bruch.</p>
+            </div>
+          </div>
+          <div>
+            <p class="cap text-slate-500 mb-2">Gewinn</p>
+            <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1.5 text-sm">
+              <li>· locality: eine Quelle für den Feldsatz</li>
+              <li>· delete 3 Kopien</li>
+              <li>· ADR-0001 wird voll durchgesetzt</li>
+              <li>· 48 Zeilen Testparsen entfallen</li>
+              <li>· eine Umbenennung bricht laut</li>
+              <li>· leverage: ein Typ, drei Ansichten</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <!-- ═══════════ K6 ═══════════ -->
+      <article id="k6" class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+        <div class="px-7 pt-6">
+          <div class="flex flex-wrap items-center gap-2 mb-3">
+            <span class="cap px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 font-semibold">Worth exploring</span>
+            <span class="cap px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <h2 class="font-serif text-2xl mb-1">K6 — Die CLI führt eine zweite Secret-Form und exportiert darüber</h2>
+          <p class="text-xs mono text-slate-500 mb-5">
+            kx/crates/kx-cli/src/decrypt.rs:15–21 · kx/crates/kx-cli/src/main.rs:152–170 · kx/crates/kx-core/src/c2.rs:124, :220
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-px bg-slate-200 border-y border-slate-200">
+          <div class="bg-white p-5">
+            <p class="cap text-red-700 mb-3">Heute</p>
+            <div class="rounded border border-slate-200 p-3 bg-stone-50">
+              <pre class="mermaid">
+flowchart TB
+  W["ExfiltratedSecret<br/>7 Felder — der Vertrag"] --> K["Klartext<br/>decrypt.rs:15 — 5 Felder"]
+  K --> R["zurückgebaut<br/>main.rs:158"]
+  R -->|"id: leer"| E["Export"]
+  R -->|"collected_at: leer"| E
+  classDef leak stroke:#dc2626,stroke-width:2px,fill:#fef2f2;
+  class R leak
+              </pre>
+            </div>
+            <p class="mt-3 text-xs text-slate-600 leading-relaxed">
+              <span class="mono">Klartext</span> ist <span class="mono">ExfiltratedSecret</span> minus <span class="mono">id</span> und <span class="mono">collected_at</span> — derselbe Sachverhalt, zweimal im Baum.
+            </p>
+          </div>
+
+          <div class="bg-white p-5">
+            <p class="cap text-emerald-700 mb-3">Nach dem Deepening</p>
+            <div class="rounded border border-slate-200 p-3 bg-stone-50">
+              <div class="deep rounded p-4 text-white">
+                <p class="cap text-slate-400 mb-2">Interface</p>
+                <p class="mono text-sm text-emerald-300">entschluesseln(&amp;Secret) -&gt; ExfiltratedSecret</p>
+                <div class="faded mt-3 pt-3 border-t border-slate-600 space-y-1 text-xs text-slate-300">
+                  <p>eine Form · der Export ist ein Feld-Transfer</p>
+                  <p>Invarianten hängen am Typ, nicht an der Baustelle</p>
+                </div>
+              </div>
+              <div class="text-center my-2"><svg height="18" width="100%"><line x1="50%" y1="0" x2="50%" y2="18" stroke="#475569" stroke-width="2" stroke-dasharray="4 4"/></svg><p class="cap text-slate-500">Seam</p></div>
+              <div class="grid grid-cols-2 gap-2 text-center">
+                <div class="border-2 border-slate-500 rounded p-2"><p class="cap text-slate-600">Export</p><p class="text-[10px] mono">vollständig</p></div>
+                <div class="border-2 border-emerald-400 rounded p-2 bg-emerald-50"><p class="cap text-emerald-700">Export</p><p class="text-[10px] mono">vollständig</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-7 py-6 space-y-4">
+          <div class="grid md:grid-cols-2 gap-6">
+            <div>
+              <p class="cap text-slate-500 mb-1">Problem</p>
+              <p class="text-sm leading-relaxed">Im entschlüsselten Export ist <span class="mono">collected_at</span> in <em>jeder</em> Zeile leer — die CSV-Spalte existiert, der Wert nicht. Im JSON-Export zusätzlich <span class="mono">id</span>. Die Invariante „nie beide Passwortfelder gefüllt" hängt am Aufrufer, nicht am Typ: <span class="mono">mit_passwort</span> leert <span class="mono">sealed_password</span> nicht.</p>
+            </div>
+            <div>
+              <p class="cap text-slate-500 mb-1">Lösung</p>
+              <p class="text-sm leading-relaxed">Der Entschlüssler liefert denselben Typ zurück, mit allen Feldern. Der Export wird ein Feld-Transfer statt eines Typwechsels.</p>
+            </div>
+          </div>
+          <div>
+            <p class="cap text-slate-500 mb-2">Gewinn</p>
+            <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1.5 text-sm">
+              <li>· delete 1 Typ</li>
+              <li>· der Export verliert keine Spalte</li>
+              <li>· Invarianten hängen am Typ</li>
+              <li>· locality: eine Form der Beute</li>
+              <li>· die CLI hört auf, den Vertrag nachzubauen</li>
+              <li>· Der Operator sieht vollständige Zeilen</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <!-- ═══════════ K7 ═══════════ -->
+      <article id="k7" class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+        <div class="px-7 pt-6">
+          <div class="flex flex-wrap items-center gap-2 mb-3">
+            <span class="cap px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 font-semibold">Worth exploring</span>
+            <span class="cap px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">in-process</span>
+          </div>
+          <h2 class="font-serif text-2xl mb-1">K7 — Die Tests kleben an der Oberfläche statt am Interface</h2>
+          <p class="text-xs mono text-slate-500 mb-5">
+            kx/crates/kx-server/src/main.rs:438, :651–655 · kx/crates/kx-agent/src/tasks.rs:223, :251 · 0 Tests in <span class="mono">tests/</span>
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-px bg-slate-200 border-y border-slate-200">
+          <div class="bg-white p-5">
+            <p class="cap text-red-700 mb-3">Heute — Testoberfläche ist die Oberfläche</p>
+            <div class="rounded border border-slate-200 p-4 bg-stone-50 space-y-2">
+              <div class="border border-red-300 bg-red-50 rounded p-2">
+                <p class="text-xs mono">format!("{app:?}").contains("PATH")</p>
+                <p class="text-[11px] text-slate-600">prüft die Debug-Ausgabe, nicht die Registrierung</p>
+              </div>
+              <div class="border border-red-300 bg-red-50 rounded p-2">
+                <p class="text-xs mono">assert_eq!(res.status(), 404)</p>
+                <p class="text-[11px] text-slate-600">9 Assertions — prüfen die Middleware, nicht den Zustand</p>
+              </div>
+              <div class="border border-red-300 bg-red-50 rounded p-2">
+                <p class="text-xs mono">body.contains("whoami")</p>
+                <p class="text-[11px] text-slate-600">Substring auf rohem JSON, während der Nachbartest korrekt parst</p>
+              </div>
+              <div class="border border-red-300 bg-red-50 rounded p-2">
+                <p class="text-xs mono">tasks.rs:223 — tasks.rs:251</p>
+                <p class="text-[11px] text-slate-600">zwei Tests, derselbe Inhalt, zwei Namen</p>
+              </div>
+              <p class="text-[11px] text-slate-600 pt-2 border-t border-slate-200">
+                Alle 164 Tests liegen <strong>inline</strong> im Modul. Es gibt keine einzige Datei in <span class="mono">tests/</span> — kein Test prüft ein Interface von außen.
+              </p>
+            </div>
+          </div>
+
+          <div class="bg-white p-5">
+            <p class="cap text-emerald-700 mb-3">Nach dem Deepening</p>
+            <div class="rounded border border-slate-200 p-4 bg-stone-50">
+              <div class="deep rounded p-4 text-white">
+                <p class="cap text-slate-400 mb-2">Interface</p>
+                <p class="mono text-sm text-emerald-300">die Aussage wird am Interface getroffen</p>
+                <div class="faded mt-3 pt-3 border-t border-slate-600 space-y-1 text-xs text-slate-300">
+                  <p>Router-Routenliste statt Debug-String</p>
+                  <p>Zustand nach der Assertion statt nur Status</p>
+                  <p>geparstes JSON statt Substring</p>
+                </div>
+              </div>
+              <div class="text-center my-2"><svg height="18" width="100%"><line x1="50%" y1="0" x2="50%" y2="18" stroke="#475569" stroke-width="2" stroke-dasharray="4 4"/></svg><p class="cap text-slate-500">Seam</p></div>
+              <div class="grid grid-cols-2 gap-2 text-center">
+                <div class="border-2 border-slate-500 rounded p-2"><p class="cap text-slate-600">vorher</p><p class="text-[10px] mono">164 Unit-Tests</p></div>
+                <div class="border-2 border-emerald-400 rounded p-2 bg-emerald-50"><p class="cap text-emerald-700">nachher</p><p class="text-[10px] mono">+ Integrationstests</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-7 py-6 space-y-4">
+          <div class="grid md:grid-cols-2 gap-6">
+            <div>
+              <p class="cap text-slate-500 mb-1">Problem</p>
+              <p class="text-sm leading-relaxed">„Das Interface ist die Testoberfläche" heißt hier: die Tests greifen an die Oberfläche, nicht an das Interface. Der Router-Test prüft einen Debug-String; neun Assertions prüfen nur einen Status, ohne den Zustand anzusehen.</p>
+            </div>
+            <div>
+              <p class="cap text-slate-500 mb-1">Lösung</p>
+              <p class="text-sm leading-relaxed">Nach K1 und K2 entstehen die natürlichen Testflächen: ein In-Memory-Adapter für den Lauf, ein Beute-Interface für die Meldung. Die alten Unit-Tests werden <em>ersetzt</em>, nicht überlagert.</p>
+            </div>
+          </div>
+          <div>
+            <p class="cap text-slate-500 mb-2">Gewinn</p>
+            <ul class="grid md:grid-cols-3 gap-x-6 gap-y-1.5 text-sm">
+              <li>· Tests überleben interne Umbauten</li>
+              <li>· Aussage statt Status</li>
+              <li>· delete 1 doppelten Test</li>
+              <li>· replace, don't layer</li>
+              <li>· Integrationstests statt Debug-Parse</li>
+              <li>· der Test prüft das Interface</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      </section>
+
+      <!-- ═══════════ TOP ═══════════ -->
+      <section id="top-recommendation" class="bg-slate-900 text-white rounded-lg p-8">
+        <p class="cap text-slate-400 mb-2">Top-Empfehlung</p>
+        <h2 class="font-serif text-3xl mb-4"><a href="#k2" class="underline decoration-emerald-400 decoration-2 underline-offset-4">K2 — Die Meldung der Beute liegt auf zwei Pfaden</a></h2>
+        <p class="text-slate-300 leading-relaxed max-w-3xl">
+          K2 ist der einzige Fund, der heute eine <em>falsche Aussage</em> produziert: der Agent meldet
+          <span class="mono">N neue Secrets</span> für Secrets, die nie zugestellt wurden, und kann eine Beutezeile erzeugen,
+          deren Host der Server nie gesehen hat. Der Fix ist klein, richtet echten Schaden, und legt mit dem Beute-Modul
+          genau das Interface an, das K1 (der Lauf) und K7 (die Testoberfläche) danach brauchen.
+        </p>
+        <div class="mt-6 grid md:grid-cols-3 gap-4 text-sm">
+          <div class="bg-slate-800 rounded p-4">
+            <p class="cap text-emerald-400 mb-2">Danach</p>
+            <p class="text-slate-300"><a href="#k3" class="underline">K3</a> — die tote Bibliothek: Weichenstellung zu ISSUE-15, ~1.250 LOC.</p>
+          </div>
+          <div class="bg-slate-800 rounded p-4">
+            <p class="cap text-emerald-400 mb-2">Danach</p>
+            <p class="text-slate-300"><a href="#k1" class="underline">K1</a> — der Lauf als Modul mit Port; höchster Blast-Radius im Baum (degree 86).</p>
+          </div>
+          <div class="bg-slate-800 rounded p-4">
+            <p class="cap text-emerald-400 mb-2">Begleitend</p>
+            <p class="text-slate-300"><a href="#k4" class="underline">K4</a> — der stille Dateivertrag mit <span class="mono">smbrelayx.py</span>; ISSUE-19 darf nicht zurückkehren.</p>
+          </div>
+        </div>
+      </section>
+
+      <footer class="text-xs text-slate-500 pt-4 border-t border-slate-300">
+        <p>Belege: code-review-graph (built_at_sha <span class="mono">b747888</span>, 605 Knoten / 6.591 Kanten), cocoindex-code semantische Suche, Ripgrep über <span class="mono">kx/crates</span>, Git-Churn der letzten 3 Monate. Keine Datei im Repository wurde verändert.</p>
+      </footer>
+
+    </main>
+  </body>
+</html>
