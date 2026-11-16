@@ -36,7 +36,7 @@ Das Repository-Root enthält keinen Code; die Architektur beginnt unter `kx/`.
   (`rustc 1.99.1` verifiziert auf dem macOS-Host). Cargo-Arbeitsverzeichnis ist
   ausschließlich `kx/` — der Workspace-Root ist `kx/`, nicht das Repo-Root.
 - **PATH:** `export PATH="$HOME/.cargo/bin:$PATH"`, falls rustup pro Shell frisch.
-- **Tests:** `cargo test --workspace` — 157 Tests grün, 0 Fehler (Stand 2026-11-16).
+- **Tests:** `cargo test --workspace` — 164 Tests grün, 0 Fehler (Stand 2026-11-16).
 - **Qualität:** `cargo fmt --check` ist grün und wird in der CI **erzwungen**
   (seit Commit 825511b ist der Workspace formatiert). `cargo clippy
   --workspace --all-targets` meldet noch einige Warnungen — clippy ist bewusst
@@ -53,7 +53,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # Bauen (CI-Matrix: Ubuntu und macOS)
 cargo build --workspace --all-targets
 
-# Tests (157 grün); gezielt ein Crate:
+# Tests (164 grün); gezielt ein Crate:
 cargo test --workspace
 cargo test -p kx-core
 
