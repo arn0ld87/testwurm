@@ -20,7 +20,7 @@
 //!   Restore ohne Manifest moeglich (B006).
 //! - **Detached-Tags statt Attached.** Ein Chunk-Ciphertext hat damit exakt die
 //!   Laenge des Klartexts; die Reichweitenplanung bleibt eindeutig (Risiko R2).
-use crate::util::{crc32, hex};
+use crate::codec::hex;
 use crate::{Error, Result, FORMAT_VERSION, MAX_RANGES};
 
 pub const FOOTER_MAGIC: [u8; 4] = *b"KXNF";
@@ -792,5 +792,52 @@ mod tests {
         let r = plan_ranges(1000, 100, 100, 1);
         assert_eq!(chunks_for_ranges(&r, 0), 0);
         assert!(chunk_iter(&r, 0).is_empty());
+    }
+}
+
+const CRC_TABLE: [u32; 256] = build_crc_table();
+
+const fn build_crc_table() -> [u32; 256] {
+    let mut table = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut c = i as u32;
+        let mut k = 0;
+        while k < 8 {
+            c = if c & 1 != 0 {
+                0xEDB8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
+            k += 1;
+        }
+        table[i] = c;
+        i += 1;
+    }
+    table
+}
+
+/// CRC-32 (IEEE, wie gzip). Sichert den Footer gegen einzelne Bitkippen und
+/// gegen das Abschieben von Dateienden ohne Neuschreiben des Fusses.
+pub fn crc32(bytes: &[u8]) -> u32 {
+    let mut c = 0xFFFF_FFFFu32;
+    for b in bytes {
+        c = CRC_TABLE[((c ^ (*b as u32)) & 0xFF) as usize] ^ (c >> 8);
+    }
+    c ^ 0xFFFF_FFFF
+}
+
+#[cfg(test)]
+mod crc_tests {
+    use super::crc32;
+
+    #[test]
+    fn crc32_matches_known_vectors() {
+        assert_eq!(crc32(b""), 0);
+        assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+        assert_eq!(
+            crc32(b"The quick brown fox jumps over the lazy dog"),
+            0x414F_A339
+        );
     }
 }

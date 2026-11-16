@@ -186,7 +186,7 @@ impl Db {
     /// Die Felder, die der Server erzeugt — Zeitstempel, Vorgabe-Status —
     /// stehen hier, nicht im Handler: dort steht nur noch der Protokoll-Wert.
     pub fn upsert_host(&self, req: &c2::RegisterRequest) -> Result<(), DbError> {
-        let now = kx_core::util::now_rfc3339();
+        let now = now_rfc3339();
         let row = HostRow {
             id: req.host_id.clone(),
             ip: req.ip.clone(),
@@ -234,7 +234,7 @@ impl Db {
     /// Liefert `true`, wenn der Host existierte — der Agent kann daran
     /// erkennen, ob sein Heartbeat zu einem registrierten Host gehoerte.
     pub fn touch_host(&self, host_id: &str) -> Result<bool, DbError> {
-        let now = kx_core::util::now_rfc3339();
+        let now = now_rfc3339();
         let changed = self.conn.lock().unwrap().execute(
             "UPDATE hosts SET last_seen = ?2 WHERE id = ?1",
             params![host_id, now],
@@ -312,7 +312,7 @@ impl Db {
             username: upload.username.clone(),
             password,
             source: upload.source.clone().unwrap_or_default(),
-            collected_at: kx_core::util::now_rfc3339(),
+            collected_at: now_rfc3339(),
             versiegelt: sealed_password,
         };
         self.upsert_secret_row(&row)
@@ -392,7 +392,7 @@ impl Db {
             command: req.command.clone(),
             status: c2::STATUS_PENDING.into(),
             result: String::new(),
-            created_at: kx_core::util::now_rfc3339(),
+            created_at: now_rfc3339(),
         };
         self.insert_task_row(&row)?;
         Ok(row.to_contract())
@@ -707,6 +707,17 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
+    /// Der Zeitstempel ist handgerechnet — er muss also geprueft werden.
+    ///
+    /// Der Server speichert genau diese Form; ein Rechenfehler faellt im
+    /// Audit-Log sofort auf.
+    #[test]
+    fn der_zeitstempel_ist_rfc3339() {
+        assert_eq!(rfc3339_utc(1_762_483_200), "2025-11-07T02:40:00Z");
+        assert_eq!(rfc3339_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(rfc3339_utc(-86_400), "1969-12-31T00:00:00Z");
+    }
+
     #[test]
     fn secret_row_maps_to_wire_secret() {
         let row = SecretRow {
@@ -954,4 +965,50 @@ mod tests {
 
         std::fs::remove_file(&path).ok();
     }
+}
+
+// ── Der Zeitstempel ──────────────────────────────────────────────────────
+//
+// Der Server speichert genau diese Form, damit Journal, Konsole und Audit-Log
+// identische Strings nutzen. Sie stand im Kern, obwohl nur der Server sie
+// braucht: der Kern soll keine Datumslibrary mitschleppen, die niemand liest.
+
+/// Zeitstempel im RFC-3339-Format (Sekunden, UTC). Der Server speichert genau
+/// diese Form, damit Journal, Konsole und Audit-Log identische Strings nutzen.
+fn now_rfc3339() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    rfc3339_utc(secs)
+}
+
+/// Sekunden -> RFC 3339 in UTC. Handgerechnet, weil diese Notiz ohne
+/// Zeitcrates auskommen muss (Agent-Binaer soll klein und pruefbar bleiben).
+fn rfc3339_utc(secs: i64) -> String {
+    let (days, day_secs) = div_mod_i64(secs, 86_400);
+    let (y, m, d) = civil_from_days(days);
+    let hh = day_secs / 3600;
+    let mm = (day_secs % 3600) / 60;
+    let ss = day_secs % 60;
+    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
+}
+
+fn div_mod_i64(a: i64, b: i64) -> (i64, i64) {
+    let q = a.div_euclid(b);
+    (q, a.rem_euclid(b))
+}
+
+/// Howard Hinnant's civil_from_days (public domain).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
 }

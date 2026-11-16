@@ -44,7 +44,7 @@ impl Decryptor {
             if host.sealed_master.is_empty() {
                 continue;
             }
-            let roh = match kx_core::util::b64_decode(&host.sealed_master) {
+            let roh = match kx_core::codec::b64_decode(&host.sealed_master) {
                 Ok(bytes) => bytes,
                 Err(_) => continue,
             };

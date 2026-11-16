@@ -8,14 +8,15 @@
 //! `platform::PlatformHooks`, implementiert in `kx-win` und `kx-posix`.
 
 pub mod c2;
+pub mod codec;
 pub mod error;
 pub mod exfil;
 pub mod format;
 pub mod hostkey;
+pub mod kex;
 pub mod persist;
 pub mod secret;
 pub mod secretbox;
-pub mod util;
 
 pub use error::{Error, Result};
 

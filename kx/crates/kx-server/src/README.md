@@ -102,6 +102,17 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
 - Ende-zu-Ende-Test der Deduplizierung [e2e_test.rs:ein_wiederholter_upload_verdoppelt_die_secrets_nicht] —
   zwei POSTs mit demselben Upload, danach liefert `GET /api/secrets` genau ein Objekt
 
+### Der Zeitstempel
+
+- `now_rfc3339()` — der Zeitstempel in RFC 3339 (Sekunden, UTC), mit dem die
+  Zeilen der Ablage entstehen. Handgerechnet, weil der Core ohne Zeitcrate
+  auskommen soll. Er stand im Kern, obwohl nur der Server ihn braucht — der
+  Core schleppte eine Datumslibrary mit, die dort niemand las
+  [db.rs:now_rfc3339] [db.rs:rfc3339_utc]
+- `rfc3339_utc(secs)` — Sekunden -> RFC 3339 in UTC; der feste Aufbau
+  `{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z` mit literalem UTC-`Z`
+  [db.rs:rfc3339_utc]
+
 ## Invariants
 
 - Die fünf Vertragspfade sind über eine `from_fn`-Middleware geschützt, die per
@@ -227,6 +238,10 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   "Auth fehlgeschlagen" [dashboard.rs:DASHBOARD_HTML]
 
 ## Side Effects
+
+- [db.rs:now_rfc3339] — Liest die Systemuhr über `std::time::SystemTime::now()`.
+  Das ist der einzige externe Zugriff des Crates.
+
 
 - Öffnet bzw. legt die SQLite-Datenbankdatei am Pfad aus `--db` an (Default `kx.db`,
   relativ zum Arbeitsverzeichnis des Prozesses) [db.rs:Db::open]

@@ -50,13 +50,13 @@ async fn die_beutekette_laueft_vom_agent_bis_zum_operator() {
     // Der Operator erzeugt sein Schluesselpaar — nur der oeffentliche
     // Teil geht an den Agenten.
     let mut rng = rand_core::OsRng;
-    let bundle = ServerKeyBundle::generate(kx_core::format::KexId::X25519, &mut rng);
+    let bundle = ServerKeyBundle::generate(kx_core::kex::KexId::X25519, &mut rng);
     let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");
     let dekodiert = oeffentlich.decode().expect("dekodierter Schluessel");
 
     // Der Agent kapselt seinen Master-Key gegen den oeffentlichen Schluessel.
     let kapselung = encapsulate_host_master_key_os(&dekodiert).expect("Kapselung");
-    let sealed_master = kx_core::util::b64_encode(&kapselung.sealed_master);
+    let sealed_master = kx_core::codec::b64_encode(&kapselung.sealed_master);
 
     // Der Agent verschluesselt das erbeutete Passwort mit dem Master-Key.
     let sealed_password = secretbox::seal(&kapselung.master_key, b"loremipsum").expect("Siegel");
@@ -135,7 +135,7 @@ async fn die_beutekette_laueft_vom_agent_bis_zum_operator() {
     // 5. Der Operator entschluesselt das Secret wieder.
     let server = ServerKeyPair::from_bundle(&bundle).expect("Server-Schluessel");
     let master = server
-        .unseal_master_key(&kx_core::util::b64_decode(&sealed_master).expect("base64"))
+        .unseal_master_key(&kx_core::codec::b64_decode(&sealed_master).expect("base64"))
         .expect("Master-Key");
     let klartext = secretbox::open(&master, &secrets[0].sealed_password).expect("Entschluesselung");
     assert_eq!(klartext, "loremipsum");
