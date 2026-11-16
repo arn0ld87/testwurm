@@ -183,7 +183,7 @@ async fn list_tasks(State(st): State<AppState>) -> impl IntoResponse {
 /// selbst per `fetch` mit `Authorization`-Header, und genau dieser `fetch`
 /// läuft in einen geschützten Pfad. Ohne Anmeldung bleiben die Tabellen leer.
 async fn dashboard() -> impl IntoResponse {
-    Html(dashboard::DASHBOARD_HTML)
+    Html(dashboard::dashboard_html())
 }
 
 /// Prüft ein vom Dashboard gesendetes Token.

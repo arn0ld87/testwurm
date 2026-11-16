@@ -91,7 +91,7 @@ Die Datenmodelle stammen aus `kx_core::c2` — derselben Quelle der Wahrheit, di
 - [client.rs:Client::secrets] — Netzwerk: HTTP GET auf `{base_url}/api/secrets` mit Header `Authorization: Bearer {token}`.
 - [client.rs:Client::tasks] — Netzwerk: HTTP GET auf `{base_url}/api/tasks` mit Header `Authorization: Bearer {token}`.
 - [client.rs:export] — Dateisystem-Schreibzugriff: `std::fs::File::create(path)` legt die Exportdatei an oder überschreibt sie; das Anlegen erfolgt in beiden Zweigen vor dem verzweigungsspezifischen Schreiben.
-- [client.rs:export] — Dateisystem-Schreibzugriff (CSV-Zweig): Kopfzeile `host_id,cred_type,username,password,source,collected_at` gefolgt von einer Zeile pro Secret im Klartext, einschließlich `password`.
+- [client.rs:export] — Dateisystem-Schreibzugriff (CSV-Zweig): die Kopfzeile entsteht aus `CSV_SPALTEN` — alle Felder des Wire-Typs außer `id`, also `host_id,cred_type,username,password,sealed_password,source,collected_at` — gefolgt von einer Zeile pro Secret im Klartext. Kopfzeile und Zeilen entstehen aus **einer** Liste, sie können nicht auseinanderlaufen [client.rs:CSV_SPALTEN].
 - [client.rs:export] — Dateisystem-Schreibzugriff (JSON-Zweig): `serde_json::to_writer_pretty(&mut file, secrets)` schreibt das vollständige `Vec<ExfiltratedSecret>` als formatiertes JSON, einschließlich `id` und `password`.
 - [main.rs:main] — stdout-Schreibzugriffe: `println!` pro Host (`ip, hostname, os, status`), pro Secret (`cred_type, username, source, collected_at` — das Passwort wird nicht ausgegeben) und pro Task (`id, status, created_at`).
 - [main.rs:main] — Prozessabbruch: `std::process::exit(1)` bei Client-Init-Fehler sowie bei fehlgeschlagener Host-, Secret-, Export- und Task-Abfrage.

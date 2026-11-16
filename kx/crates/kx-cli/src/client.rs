@@ -81,6 +81,38 @@ fn csv_feld(wert: &str) -> String {
     }
 }
 
+/// Die Spalten des CSV-Exports.
+///
+/// Alle Felder des Wire-Typs außer der `id` — die ist eine Serverkennung und
+/// im Export des Operators nur Ballast. Die Kopfzeile **und** die Zeilen
+/// entstehen aus dieser einen Liste; sie können nicht auseinanderlaufen.
+///
+/// `sealed_password` gehoert dazu: bei versiegelter Beute ist `password`
+/// leer, und ohne die Chiffretext-Spalte wirft der CSV-Export die Beute weg.
+const CSV_SPALTEN: &[&str] = &[
+    "host_id",
+    "cred_type",
+    "username",
+    "password",
+    "sealed_password",
+    "source",
+    "collected_at",
+];
+
+/// Der Wert eines Feldes — die Brücke zwischen Spaltenliste und Zeile.
+fn feld_wert<'a>(secret: &'a ExfiltratedSecret, feld: &str) -> &'a str {
+    match feld {
+        "host_id" => &secret.host_id,
+        "cred_type" => &secret.cred_type,
+        "username" => &secret.username,
+        "password" => &secret.password,
+        "sealed_password" => &secret.sealed_password,
+        "source" => &secret.source,
+        "collected_at" => &secret.collected_at,
+        other => panic!("unbekanntes Feld '{other}'"),
+    }
+}
+
 /// Exportiert Secrets als JSON oder CSV.
 ///
 /// Die Datei entsteht mit Mode 0600: sie kann versiegelte Beute enthalten,
@@ -98,27 +130,14 @@ pub fn export(secrets: &[ExfiltratedSecret], path: &Path, format: &str) -> Resul
     };
     match format {
         "csv" => {
-            // `sealed_password` gehoert in die Liste: bei versiegelter Beute
-            // ist `password` leer, und ohne die Chiffretext-Spalte wirft der
-            // CSV-Export die Beute weg.
-            writeln!(
-                datei,
-                "host_id,cred_type,username,password,sealed_password,source,collected_at"
-            )
-            .map_err(|e| ApiError::Io(e.to_string()))?;
-            for s in secrets {
-                writeln!(
-                    datei,
-                    "{},{},{},{},{},{},{}",
-                    csv_feld(&s.host_id),
-                    csv_feld(&s.cred_type),
-                    csv_feld(&s.username),
-                    csv_feld(&s.password),
-                    csv_feld(&s.sealed_password),
-                    csv_feld(&s.source),
-                    csv_feld(&s.collected_at),
-                )
+            writeln!(datei, "{}", CSV_SPALTEN.join(","))
                 .map_err(|e| ApiError::Io(e.to_string()))?;
+            for s in secrets {
+                let zeile: Vec<String> = CSV_SPALTEN
+                    .iter()
+                    .map(|feld| csv_feld(feld_wert(s, feld)))
+                    .collect();
+                writeln!(datei, "{}", zeile.join(",")).map_err(|e| ApiError::Io(e.to_string()))?;
             }
         }
         _ => {
@@ -210,6 +229,47 @@ mod tests {
             zeile.contains("2026-11-16T09:30:00Z"),
             "der Erfassungszeitpunkt fehlt im Export: {zeile}"
         );
+        std::fs::remove_file(path).ok();
+    }
+
+    /// Die CSV-Spalten sind genau die Felder des Wire-Typs — ohne die `id`.
+    ///
+    /// Die Liste steht an **einer** Stelle: die Kopfzeile und die Zeilen
+    /// entstehen daraus. Der Test vergleicht sie mit dem Typ, damit kein Feld
+    /// verloren geht und keines erfunden ist.
+    #[test]
+    fn die_csv_spalten_sind_die_felder_des_typs_ohne_id() {
+        let mut erwartet: Vec<&str> = ExfiltratedSecret::FIELDS
+            .iter()
+            .copied()
+            .filter(|f| *f != "id")
+            .collect();
+        erwartet.sort_unstable();
+        let mut ist = CSV_SPALTEN.to_vec();
+        ist.sort_unstable();
+        assert_eq!(ist, erwartet, "die CSV-Spalten weichen vom Wire-Typ ab");
+    }
+
+    /// Die Kopfzeile nennt genau die Spalten der Liste — in derselben
+    /// Reihenfolge.
+    #[test]
+    fn die_csv_kopfzeile_nennt_die_spalten_der_liste() {
+        let secrets = vec![ExfiltratedSecret {
+            id: "1".into(),
+            host_id: "h1".into(),
+            cred_type: "password".into(),
+            username: "admin".into(),
+            password: "secret".into(),
+            source: "test".into(),
+            collected_at: "2026-11-16T00:00:00Z".into(),
+            sealed_password: String::new(),
+        }];
+        let dir = std::env::temp_dir();
+        let path = dir.join("kx-cli-test-kopf.csv");
+        export(&secrets, &path, "csv").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let kopf = content.lines().next().unwrap_or_default();
+        assert_eq!(kopf, CSV_SPALTEN.join(","));
         std::fs::remove_file(path).ok();
     }
 

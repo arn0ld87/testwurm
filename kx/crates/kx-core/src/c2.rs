@@ -119,7 +119,41 @@ pub struct ExfiltratedSecret {
     pub sealed_password: String,
 }
 
+impl Host {
+    /// Die Feldnamen des Hosts — die **einzige** Fundstelle.
+    ///
+    /// Der Key-Set-Pinning-Test vergleicht sie mit der Serialisierung, und
+    /// jede Ansicht, die den Host liest, benutzt sie: das Dashboard baut seine
+    /// Spalten daraus, der Export seine Kopfzeile. Vorher stand die Feldliste
+    /// an drei Stellen — im Vertrag, im Dashboard-JavaScript und im
+    /// CSV-Export.
+    pub const FIELDS: &'static [&'static str] = &[
+        "host_id",
+        "ip",
+        "hostname",
+        "os",
+        "status",
+        "first_seen",
+        "last_seen",
+        "sealed_master",
+    ];
+}
+
 impl ExfiltratedSecret {
+    /// Die Feldnamen des Secrets — die **einzige** Fundstelle.
+    ///
+    /// Siehe [`Host::FIELDS`].
+    pub const FIELDS: &'static [&'static str] = &[
+        "id",
+        "host_id",
+        "cred_type",
+        "username",
+        "password",
+        "source",
+        "collected_at",
+        "sealed_password",
+    ];
+
     /// Setzt das Klartext-Passwort.
     ///
     /// Das versiegelte Feld wird dabei geleert: **nie beide Passwortfelder
@@ -166,6 +200,14 @@ pub struct Task {
     /// Ergebnis des Tasks. Leer, solange der Task nicht ausgeführt wurde.
     pub result: String,
     pub created_at: String,
+}
+
+impl Task {
+    /// Die Feldnamen des Tasks — die **einzige** Fundstelle.
+    ///
+    /// Siehe [`Host::FIELDS`].
+    pub const FIELDS: &'static [&'static str] =
+        &["id", "host_id", "command", "status", "result", "created_at"];
 }
 
 /// Registrierung eines Hosts beim C2-Server.
@@ -549,6 +591,22 @@ mod tests {
                 .cloned()
                 .collect()
         }
+        /// Die Feldliste des Typs gegen seine Serialisierung.
+        ///
+        /// Die Liste steht am Typ — `Host::FIELDS` und so weiter. Dieser
+        /// Test beweist, dass die Serialisierung genau sie liefert. Damit ist
+        /// die Feldmenge eine Funktion des Typs und nicht eine Abschrift, die
+        /// irgendwo veralten kann.
+        fn felder_sind_gepinnt<T: Serialize>(felder: &[&str], wert: &T) {
+            assert_eq!(
+                keys(wert),
+                felder
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<BTreeSet<_>>(),
+                "die Serialisierung weicht von der gepinnten Feldliste ab"
+            );
+        }
 
         let host = Host {
             host_id: "h".into(),
@@ -560,19 +618,7 @@ mod tests {
             last_seen: "l".into(),
             sealed_master: String::new(),
         };
-        assert_eq!(
-            keys(&host),
-            BTreeSet::from([
-                "first_seen".to_string(),
-                "hostname".to_string(),
-                "host_id".to_string(),
-                "ip".to_string(),
-                "last_seen".to_string(),
-                "os".to_string(),
-                "sealed_master".to_string(),
-                "status".to_string(),
-            ])
-        );
+        felder_sind_gepinnt(Host::FIELDS, &host);
 
         let secret = ExfiltratedSecret {
             id: "i".into(),
@@ -584,19 +630,7 @@ mod tests {
             collected_at: "c".into(),
             sealed_password: String::new(),
         };
-        assert_eq!(
-            keys(&secret),
-            BTreeSet::from([
-                "collected_at".to_string(),
-                "cred_type".to_string(),
-                "host_id".to_string(),
-                "id".to_string(),
-                "password".to_string(),
-                "sealed_password".to_string(),
-                "source".to_string(),
-                "username".to_string(),
-            ])
-        );
+        felder_sind_gepinnt(ExfiltratedSecret::FIELDS, &secret);
 
         let task = Task {
             id: "i".into(),
@@ -606,17 +640,7 @@ mod tests {
             result: "r".into(),
             created_at: "c".into(),
         };
-        assert_eq!(
-            keys(&task),
-            BTreeSet::from([
-                "command".to_string(),
-                "created_at".to_string(),
-                "host_id".to_string(),
-                "id".to_string(),
-                "result".to_string(),
-                "status".to_string(),
-            ])
-        );
+        felder_sind_gepinnt(Task::FIELDS, &task);
     }
 
     /// Der Strictness-Nachweis: Antworttypen lehnen unbekannte Felder ab.
