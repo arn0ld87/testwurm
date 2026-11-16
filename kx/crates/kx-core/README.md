@@ -45,7 +45,7 @@ damit Teil der oeffentlichen API — siehe [src/README.md](./src/README.md).
 
 ## Subdirectories & Boundaries
 
-- [src](./src/README.md) - Vollständige Implementierung des Encoder-Kerns: `lib.rs` (Crate-Wurzel mit den Formatkonstanten), `c2.rs` (C2-Protokoll: Endpunktpfade, Host-Status, Wire-Typen) mit dem Untermodul `c2/transport.rs` (Transport: TLS-Aufbau, Bearer-Header, URL-Bildung, Status→Fehler), `error.rs` (Fehlerklassifikation `ErrorClass`/`Error`), `format.rs` (KXENC-v1-Dateiformat, Reichweitenplanung, Nonce/AAD) und `util.rs` (plattformneutrale Hilfsfunktionen). `hostkey.rs` liegt im Quellbaum, ist aber nicht kompiliert.
+- [src](./src/README.md) - Vollständige Implementierung des Encoder-Kerns: `lib.rs` (Crate-Wurzel mit den Formatkonstanten), `c2.rs` (C2-Protokoll: Endpunktpfade, Host-Status, Wire-Typen) mit dem Untermodul `c2/transport.rs` (Transport: TLS-Aufbau, Bearer-Header, URL-Bildung, Status→Fehler), `error.rs` (die Fehlerarten des Kerns), `format.rs` (KXENC-v1-Dateiformat, Reichweitenplanung, Nonce/AAD), `codec.rs` (Base64 und Hex) und `kex.rs` (die Art des Schlüsselaustauschs). `hostkey.rs` liegt im Quellbaum, ist aber nicht kompiliert.
 
 ## Interface
 
@@ -76,9 +76,7 @@ damit Teil der oeffentlichen API — siehe [src/README.md](./src/README.md).
 
 ## Side Effects
 
-- Der einzige externe Zugriff im Crate ist der Systemuhr-Read in `util::now_rfc3339` und `util::now_unix` (`std::time::SystemTime::now()`) `[src/util.rs:now_rfc3339]` `[src/util.rs:now_unix]`
-- `util::jitter` schreibt den neuen xorshift64*-Zustand in den vom Aufrufer gelieferten Seed zurueck `[src/util.rs:jitter]`
-- `util::Sha256Stream::update` mutiert den ueber `&mut self` fortgeschriebenen Hashzustand `[src/util.rs:update]`
+- Der Core liest keine Systemuhr: der Zeitstempel liegt beim Server, der ihn braucht — `kx-server/src/db.rs`
 - `format::FooterFlags::insert` und `format::FooterFlags::remove` mutieren den Flag-Wert des Aufrufers in place `[src/format.rs:FooterFlags::insert]` `[src/format.rs:FooterFlags::remove]`
 - `format::aad_for` leert den uebergebenen `&mut Vec<u8>` und befuellt ihn mit den AAD-Bytes `[src/format.rs:aad_for]`
 - `c2.rs` ist reines Datenmodell ohne Datei-, Netzwerk- oder Prozesszugriff; die (De-)Serialisierung allokiert je Wire-Feld einen `String` `[src/c2.rs:Host]` `[src/c2.rs:SecretUpload]`
@@ -88,4 +86,4 @@ damit Teil der oeffentlichen API — siehe [src/README.md](./src/README.md).
 ## Verification
 
 - Run: `cargo test` (ausgefuehrt in `/Volumes/T7/Projekte/testwurm/kx`)
-- Stand: `cargo test --workspace` ist gruen — **130 Tests, 0 Fehler**; davon `cargo test -p kx-core`: **66 Tests, 0 Fehler** (4 in `c2/transport.rs`, der Rest in `c2.rs`, `format.rs`, `util.rs`, `error.rs` und `lib.rs`)
+- Stand: `cargo test --workspace` ist gruen — **130 Tests, 0 Fehler**; davon `cargo test -p kx-core`: **64 Tests, 0 Fehler** (4 in `c2/transport.rs`, der Rest in `c2.rs`, `format.rs`, `codec.rs`, `kex.rs` und `lib.rs`)

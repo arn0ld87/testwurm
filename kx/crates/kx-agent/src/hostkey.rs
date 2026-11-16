@@ -83,7 +83,7 @@ impl KeySealer {
     fn kapsel_neu(&self) -> Option<SealedHostKey> {
         let kapselung = kx_core::hostkey::encapsulate_host_master_key_os(&self.server).ok()?;
         Some(SealedHostKey {
-            sealed_master: kx_core::util::b64_encode(&kapselung.sealed_master),
+            sealed_master: kx_core::codec::b64_encode(&kapselung.sealed_master),
             roh: kapselung.master_key,
         })
     }
@@ -98,7 +98,7 @@ mod tests {
     fn sealer() -> KeySealer {
         let mut rng = rand_core::OsRng;
         let bundle = kx_core::hostkey::ServerKeyBundle::generate(
-            kx_core::format::KexId::HybridX25519MlKem768,
+            kx_core::kex::KexId::HybridX25519MlKem768,
             &mut rng,
         );
         let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");

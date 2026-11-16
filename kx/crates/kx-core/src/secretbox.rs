@@ -66,7 +66,7 @@ pub fn seal(master_key: &[u8], plaintext: &[u8]) -> Result<String> {
     gesammelt.extend_from_slice(&ciphertext);
     Ok(format!(
         "{SEALED_PREFIX}{}",
-        crate::util::b64_encode(&gesammelt)
+        crate::codec::b64_encode(&gesammelt)
     ))
 }
 
@@ -75,7 +75,7 @@ pub fn open(master_key: &[u8], sealed: &str) -> Result<String> {
     let roh = sealed
         .strip_prefix(SEALED_PREFIX)
         .ok_or_else(|| Error::Crypto("Secret ist nicht versiegelt (Präfix fehlt)".into()))?;
-    let bytes = crate::util::b64_decode(roh)
+    let bytes = crate::codec::b64_decode(roh)
         .map_err(|e| Error::Crypto(format!("Secretbox-Base64: {e}")))?;
     if bytes.len() <= NONCE_LEN {
         return Err(Error::Crypto("Secretbox-Payload zu kurz".into()));
@@ -126,7 +126,7 @@ mod tests {
 
         assert!(!versiegelt.contains("loremipsum"));
         assert!(
-            !crate::util::b64_decode(versiegelt.strip_prefix(SEALED_PREFIX).unwrap())
+            !crate::codec::b64_decode(versiegelt.strip_prefix(SEALED_PREFIX).unwrap())
                 .unwrap()
                 .windows(10)
                 .any(|fenster| fenster == b"loremipsum")

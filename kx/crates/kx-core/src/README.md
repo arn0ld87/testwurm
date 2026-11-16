@@ -4,8 +4,7 @@
 
 Quellmodulbaum des Crates `kx-core`. `lib.rs` ist die Crate-Wurzel und deklariert
 die Module sowie die Formatkonstanten. `error.rs` enthaelt die Fehlertaxonomie,
-`format.rs` das Dateiformat `KXENC` v1, `util.rs` die plattformneutralen
-Hilfsfunktionen, `c2.rs` das C2-Protokoll (Endpunktpfade, Host-Status, Wire-Typen)
+`format.rs` das Dateiformat `KXENC` v1, `codec.rs` die Textkodierungen, `c2.rs` das C2-Protokoll (Endpunktpfade, Host-Status, Wire-Typen)
 und `c2/transport.rs` die Ausuebung des Protokolls (TLS-Aufbau, Bearer-Header,
 URL-Bildung, Status→Fehler).
 `hostkey.rs` (per-Host-Schluessel und Hybrid-KEM) und `secretbox.rs` (das
@@ -100,25 +99,20 @@ Funktion.
 
 ### error.rs — Fehlertaxonomie
 
-- `pub enum ErrorClass` mit den Varianten `NotFound`, `Access`, `Sharing`,
-  `UserMapped`, `DiskFull`, `Network`, `InvalidInput`, `BufferTooSmall`, `Crypto`,
-  `State`, `Other`; abgeleitet sind `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`,
-  `serde::Serialize`, `serde::Deserialize` [error.rs:ErrorClass]
-- `pub fn ErrorClass::aborts_run(self) -> bool` [error.rs:aborts_run]
-- `pub fn ErrorClass::retryable(self) -> bool` [error.rs:retryable]
-- `pub fn ErrorClass::as_str(self) -> &'static str` [error.rs:as_str]
-- `impl fmt::Display for ErrorClass` [error.rs:Display for ErrorClass]
-- `pub enum Error` mit den Varianten `Io { class, path, message, raw }`, `Crypto`,
-  `Format`, `State`, `Config`, `Platform { os, message }`, `Transport`, `Aborted`,
-  `Paused`, `Serde(#[from] serde_json::Error)`; abgeleitet sind `Debug` und
-  `thiserror::Error` [error.rs:Error]
-- `pub fn Error::io(class, path, message) -> Self` [error.rs:io]
-- `pub fn Error::io_raw(class, path, message, raw) -> Self` [error.rs:io_raw]
-- `pub fn Error::from_io(path, err: &std::io::Error) -> Self` [error.rs:from_io]
-- `pub fn Error::class(&self) -> ErrorClass` [error.rs:class]
-- `pub fn Error::path(&self) -> Option<&str>` [error.rs:path]
+Der Kern hat **eine** Fehlerart: `Error`. Sie unterscheidet, was schiefging —
+ein Formatfehler, ein Kryptografiefehler, eine Fehlkonfiguration, ein
+inkonsistenter Zustand, ein Serialisierungsfehler.
+
+- `pub enum Error` mit den Varianten `Format(String)`, `Crypto(String)`,
+  `Config(String)`, `State(String)`, `Serde(serde_json::Error)`;
+  Ableitung `Debug, thiserror::Error` [error.rs:Error]
 - `pub type Result<T> = std::result::Result<T, Error>;` [error.rs:Result]
-- `pub fn class_from_errkind(kind: std::io::ErrorKind, raw: Option<i32>) -> ErrorClass` [error.rs:class_from_errkind]
+
+Vorher stand hier ein Katalog: eine Fehlerklasse (`ErrorClass`), eine
+errno-Tabelle, eine Win32-Tabelle und Konstruktoren für Dateifehler. Keine
+davon hatte einen Aufrufer außerhalb dieses Moduls — die errno- und die
+Win32-Tabelle erreichte kein einziger Test, und die Win32-Tabelle wurde nicht
+einmal übersetzt.
 
 ### format.rs — Dateiformat KXENC v1
 
@@ -133,8 +127,8 @@ Funktion.
 - `pub const WRAPPED_DEK_LEN: usize = NONCE_LEN + DEK_LEN + NONCE_LEN + TAG_LEN;` [format.rs:WRAPPED_DEK_LEN]
 - `pub enum CipherId` mit `ChaCha20Poly1305Detached = 1` [format.rs:CipherId]
 - `pub fn CipherId::from_u8(v: u8) -> Result<Self>` [format.rs:CipherId::from_u8]
-- `pub enum KexId` mit `X25519 = 0` und `HybridX25519MlKem768 = 1` [format.rs:KexId]
-- `pub fn KexId::from_u8(v: u8) -> Result<Self>` [format.rs:KexId::from_u8]
+- `pub enum KexId` mit `X25519 = 0` und `HybridX25519MlKem768 = 1` [kex.rs:KexId]
+- `pub fn KexId::from_u8(v: u8) -> Result<Self>` [kex.rs:KexId::from_u8]
 - `pub struct FooterFlags(pub u8)` mit den Bitkonstanten `PARTIAL = 1`,
   `RENAMED = 2`, `PASSPHRASE = 4`, `LOCK_ONLY = 8` [format.rs:FooterFlags]
 - `pub const fn FooterFlags::empty() -> Self` [format.rs:FooterFlags::empty]
@@ -164,25 +158,27 @@ Funktion.
 - `pub const AAD_LABEL: &[u8] = b"KXENC-AAD1";` [format.rs:AAD_LABEL]
 - `pub fn aad_for(out: &mut Vec<u8>, format_version: u8, range_index: u8, index_in_range: u64, plain_len: u64, is_final_global: bool, file_id: &[u8; FILE_ID_LEN], host_id: &[u8; HOST_ID_LEN])` [format.rs:aad_for]
 
-### util.rs — Hilfsfunktionen
+### codec.rs — die Textkodierungen
 
-- `pub fn b64_encode(bytes: &[u8]) -> String` [util.rs:b64_encode]
-- `pub fn b64_decode(text: &str) -> Result<Vec<u8>>` [util.rs:b64_decode]
-- `pub fn hex(bytes: &[u8]) -> String` [util.rs:hex]
-- `pub fn hex_decode(text: &str) -> Result<Vec<u8>>` [util.rs:hex_decode]
-- `pub fn sha256(bytes: &[u8]) -> [u8; 32]` [util.rs:sha256]
-- `pub struct Sha256Stream(Sha256)` mit `pub fn new() -> Self`,
-  `pub fn update(&mut self, bytes: &[u8])` und `pub fn finish(self) -> [u8; 32]`
-  sowie `impl Default` [util.rs:Sha256Stream] [util.rs:new] [util.rs:update] [util.rs:finish]
-- `pub fn now_rfc3339() -> String` [util.rs:now_rfc3339]
-- `pub fn now_unix() -> i64` [util.rs:now_unix]
-- `pub fn rfc3339_utc(secs: i64) -> String` [util.rs:rfc3339_utc]
-- `pub fn parse_rfc3339_secs(text: &str) -> Option<i64>` [util.rs:parse_rfc3339_secs]
-- `pub fn crc32(bytes: &[u8]) -> u32` [util.rs:crc32]
-- `pub fn canon_json<T: serde::Serialize>(value: &T) -> Result<String>` [util.rs:canon_json]
-- `pub fn path_key(path: &str, case_insensitive: bool) -> String` [util.rs:path_key]
-- `pub fn clamp(v: u64, lo: u64, hi: u64) -> u64` [util.rs:clamp]
-- `pub fn jitter(base_ms: u64, spread: f64, seed: &mut u64) -> u64` [util.rs:jitter]
+Base64 und Hex. Beide werden an mehreren Stellen gebraucht: das versiegelte
+Master-Key-Material und die Beute des Agenten gehen als Base64 über die Leitung,
+die Fingerabdrücke der Schlüssel als Hex.
+
+- `pub fn b64_encode(bytes: &[u8]) -> String` [codec.rs:b64_encode]
+- `pub fn b64_decode(text: &str) -> Result<Vec<u8>>` [codec.rs:b64_decode]
+- `pub fn hex(bytes: &[u8]) -> String` [codec.rs:hex]
+
+Sie standen in einer Sammlung mit neun weiteren Helfern, die niemand aufrief.
+Die sind weg — die lebenden ziehen an ihre Aufrufer.
+
+### kex.rs — die Art des Schlüsselaustauschs
+
+`KexId` stand im Containerformat-Modul, obwohl es nichts mit einem Container zu
+tun hat: wer das Format entfernen will, bricht damit die Kryptografie. Der
+Bericht vom 2026-11-15 hat das festgehalten — hier liegt es jetzt an seinem Ort.
+
+- `pub enum KexId` mit `X25519 = 0` und `HybridX25519MlKem768 = 1` [kex.rs:KexId]
+- `pub fn KexId::from_u8(v: u8) -> Result<Self>` [kex.rs:KexId::from_u8]
 
 ### hostkey.rs — per-Host-Schluessel und Hybrid-KEM
 
@@ -224,7 +220,7 @@ aufloest — dadurch gibt es nur ein `kem` im Lockfile.
 - `pub struct MlKemSecret(MlKemDecapsulationKey)` — das Nullen beim Drop uebernimmt
   `ml-kem` selbst (`ZeroizeOnDrop`, Feature `zeroize`) [hostkey.rs:MlKemSecret]
 - `pub struct ServerKeyBundle { pub kex, pub x25519_secret, pub mlkem_secret }` mit
-  `pub fn generate(kex: crate::format::KexId, rng: &mut (impl RngCore + CryptoRng)) -> Self`,
+  `pub fn generate(kex: crate::kex::KexId, rng: &mut (impl RngCore + CryptoRng)) -> Self`,
   `pub fn public(&self) -> Result<ServerPublicKey>`,
   `pub fn to_json_pretty(&self) -> Result<String>` und
   `pub fn from_json(text: &str) -> Result<Self>` [hostkey.rs:ServerKeyBundle] [hostkey.rs:ServerKeyBundle::generate] [hostkey.rs:ServerKeyBundle::public] [hostkey.rs:ServerKeyBundle::to_json_pretty] [hostkey.rs:ServerKeyBundle::from_json]
@@ -311,7 +307,7 @@ sind Teil des Formats.
 - Die CRC32 im Footer deckt alle Felder bis Offset 263 ab (`crc32(&buf[..off::CRC_COVER])` mit `CRC_COVER = 264`, `format.rs:60,330`) und erkennt damit einzelne Bitfehler sowie ein abgeschnittenes Dateiende, ohne den Footer neu zu schreiben. Offset 264 ist das CRC-Feld selbst und bleibt ungedeckt [format.rs:Footer::encode]
 - Alle Footer-Integer sind little-endian kodiert [format.rs:put_u32] [format.rs:put_u64] [format.rs:read_u32] [format.rs:read_u64]
 - Jede Aenderung der Footer-Feldoffsets ist eine Formatversion, kein Patch [format.rs:off]
-- `CipherId::from_u8` akzeptiert nur die Kennung `1`, `KexId::from_u8` nur `0` und `1`; alles andere ergibt `Err(Error::Format(..))` [format.rs:CipherId::from_u8] [format.rs:KexId::from_u8]
+- `CipherId::from_u8` akzeptiert nur die Kennung `1`, `KexId::from_u8` nur `0` und `1`; alles andere ergibt `Err(Error::Format(..))` [format.rs:CipherId::from_u8] [kex.rs:KexId::from_u8]
 - `FooterFlags::contains` ist nur wahr, wenn *alle* Bits der Maske gesetzt sind (`self.0 & mask == mask`) [format.rs:FooterFlags::contains]
 - `FooterFlags::describe` liefert genau die Namen `"partial"`, `"renamed"`, `"passphrase"` und `"lock_only"` in dieser Reihenfolge [format.rs:FooterFlags::describe]
 - Eine Reichweite gilt genau dann als leer, wenn `plain_len == 0` [format.rs:Range::is_empty]
@@ -324,20 +320,9 @@ sind Teil des Formats.
 
 ### Hilfsfunktionen
 
-- `hex_decode` lehnt ungerade Laenge und ungueltige Hex-Zeichen ab [util.rs:hex_decode]
-- `hex` emittiert genau zwei Kleinbuchstaben-Hexziffern je Byte, die Ausgabelaenge ist also doppelt so gross wie die Eingabelaenge [util.rs:hex]
-- `b64_decode` trimmt umgebenden Whitespace und bildet jeden Dekodierfehler auf `Error::State` ab [util.rs:b64_decode]
-- `canon_json` erzeugt kanonisches JSON mit sortierten Schluesseln und ohne Leerzeichen, verwendet fuer Task-Hashes und Anti-Wiederholungs-Fingerabdruecke [util.rs:canon_json]
-- `Sha256Stream::finish` verbraucht `self`, ein Stream kann also nicht zweimal abgeschlossen werden [util.rs:finish]
-- `now_rfc3339` und `now_unix` fallen auf `0` zurueck, wenn die Uhr vor `UNIX_EPOCH` liegt [util.rs:now_rfc3339]
-- `rfc3339_utc` emittiert immer die feste Form `{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z` mit literalem UTC-`Z` [util.rs:rfc3339_utc]
-- `parse_rfc3339_secs` akzeptiert `T` oder Leerzeichen als Trenner und `Z` oder numerische `±HH:MM`-Zonen; ein fehlendes Sekundenfeld gilt als `0` [util.rs:parse_rfc3339_secs]
-- Die Zonenerkennung akzeptiert ein Minuszeichen nur an Position groesser 10, damit das Trennzeichen im Datum nicht als Zonenzeichen missverstanden wird; ein fehlender `:` in der Zone ergibt `mm = 0` [util.rs:split_zone]
-- `crc32` ist CRC-32/IEEE (reflektiert, Polynom `0xEDB88320`, Init und Final-XOR `0xFFFFFFFF`) und schuetzt den Footer gegen einzelne Bitfehler und gegen ein abgeschnittenes Dateiende [util.rs:crc32]
-- `clamp` liefert immer einen Wert im inklusiven Bereich `[lo, hi]` [util.rs:clamp]
-- `jitter` liefert `0` fuer `base_ms == 0`, klemmt `spread` auf `[0.0, 0.95]`, liefert nie weniger als 1 ms und ersetzt einen Null-Seed durch die Konstante `0x2545_F491_4F6C_DD1D` [util.rs:jitter]
-- `jitter` ist deterministisch und nutzt kein `rand` im Beacon-Pfad, damit der Jitter reproduzierbar protokolliert werden kann [util.rs:jitter]
-- `path_key` kleinschreibt nur bei `case_insensitive == true`; der Aufrufer uebergibt bereits normalisierte Pfade [util.rs:path_key]
+- `hex` emittiert genau zwei Kleinbuchstaben-Hexziffern je Byte, die Ausgabelaenge ist also doppelt so gross wie die Eingabelaenge [codec.rs:hex]
+- `b64_decode` trimmt umgebenden Whitespace und bildet jeden Dekodierfehler auf `Error::State` ab [codec.rs:b64_decode]
+- `KexId::from_u8` akzeptiert nur `0` und `1`; alles andere ergibt `Err(Error::Format(..))` [kex.rs:KexId::from_u8]
 
 ### hostkey.rs
 
@@ -355,9 +340,6 @@ sind Teil des Formats.
 
 ## Side Effects
 
-- `util::now_rfc3339` und `util::now_unix` lesen die Systemuhr ueber `std::time::SystemTime::now()` [util.rs:now_rfc3339] [util.rs:now_unix]
-- `util::jitter` schreibt den neuen xorshift64*-Zustand in den vom Aufrufer gelieferten `&mut u64`-Seed zurueck [util.rs:jitter]
-- `util::Sha256Stream::update` mutiert den ueber `&mut self` fortgeschriebenen Hashzustand [util.rs:update]
 - `format::FooterFlags::insert` und `format::FooterFlags::remove` mutieren den Flag-Wert des Aufrufers in place [format.rs:FooterFlags::insert] [format.rs:FooterFlags::remove]
 - `format::aad_for` leert den uebergebenen `&mut Vec<u8>` und befuellt ihn mit den AAD-Bytes [format.rs:aad_for]
 - Im kompilierten Crate gibt es keinen Prozesszugriff: kein Aufruf von `std::process`. Dateisystem- und Netzwerkzugriff gibt es seit dem Transport — siehe unten [lib.rs:error] [lib.rs:format] [lib.rs:util]
@@ -375,7 +357,7 @@ sind Teil des Formats.
 ## Verification
 
 - Run: `cargo test` (ausgefuehrt in `/Volumes/T7/Projekte/testwurm/kx`)
-- Stand: `cargo test --workspace` ist gruen — **130 Tests, 0 Fehler**; davon `cargo test -p kx-core`: **66 Tests, 0 Fehler** (4 in `c2/transport.rs`, 62 in `c2.rs`, `format.rs`, `util.rs`, `error.rs` und `lib.rs`)
-- Die Testmodule liegen in `c2.rs` [c2.rs:tests], `c2/transport.rs` [c2/transport.rs:tests], `error.rs` [error.rs:tests], `util.rs` [util.rs:tests] und `format.rs` [format.rs:tests]; `hostkey.rs` fuehrt mangels Kompilierung keine Tests aus
+- Stand: `cargo test --workspace` ist gruen — **130 Tests, 0 Fehler**; davon `cargo test -p kx-core`: **64 Tests, 0 Fehler** (4 in `c2/transport.rs`, der Rest in `c2.rs`, `format.rs`, `codec.rs`, `kex.rs` und `lib.rs`)
+- Die Testmodule liegen in `c2.rs` [c2.rs:tests], `c2/transport.rs` [c2/transport.rs:tests], `error.rs` [error.rs:tests], `codec.rs` [codec.rs:tests] und `format.rs` [format.rs:tests]
 - `c2/transport.rs` traegt 4 Vertragstests: der Bearer-Header, der Body eines GET (leer, ohne Content-Type), der JSON-Body eines POST (mit Content-Type) und die getrimmte Basis-URL [c2/transport.rs:tests::der_request_traegt_den_bearer_header] [c2/transport.rs:tests::ein_get_trägt_keinen_body] [c2/transport.rs:tests::ein_post_trägt_den_json_body] [c2/transport.rs:tests::die_basis_url_wird_getrimmt]
 - `c2.rs` traegt 10 Vertragstests: Key-Set-Pinning, Strictness-Nachweis (Antworttypen lehnen unbekannte Felder ab, Request-Typen tolerieren sie), Roundtrips ueber Golden-JSON und die Stabilitaet der Endpunktpfade [c2.rs:tests::response_key_sets_are_pinned] [c2.rs:tests::response_types_reject_unknown_fields] [c2.rs:tests::request_types_tolerate_unknown_fields] [c2.rs:tests::endpoint_paths_are_stable]

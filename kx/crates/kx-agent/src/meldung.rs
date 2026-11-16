@@ -317,7 +317,7 @@ mod tests {
     fn gueltiger_sealer() -> crate::hostkey::KeySealer {
         let mut rng = rand_core::OsRng;
         let bundle =
-            kx_core::hostkey::ServerKeyBundle::generate(kx_core::format::KexId::X25519, &mut rng);
+            kx_core::hostkey::ServerKeyBundle::generate(kx_core::kex::KexId::X25519, &mut rng);
         let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");
         let dekodiert = oeffentlich.decode().expect("dekodierter Schluessel");
         crate::hostkey::KeySealer::from_server_key(dekodiert)
@@ -327,7 +327,7 @@ mod tests {
     /// ML-KEM-Schlüssel fehlt.
     fn kaputter_sealer() -> crate::hostkey::KeySealer {
         crate::hostkey::KeySealer::from_server_key(kx_core::hostkey::DecodedServerKey {
-            kex: kx_core::format::KexId::HybridX25519MlKem768,
+            kex: kx_core::kex::KexId::HybridX25519MlKem768,
             x25519: vec![0u8; 32],
             mlkem: None,
         })

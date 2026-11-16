@@ -12,8 +12,8 @@
 //! cargo run -p kx-core --example gen_server_key -- x25519 server_key.json server_pub.json
 //! ```
 
-use kx_core::format::KexId;
 use kx_core::hostkey::ServerKeyBundle;
+use kx_core::kex::KexId;
 
 fn main() {
     let argumente: Vec<String> = std::env::args().collect();
