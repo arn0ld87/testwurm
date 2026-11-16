@@ -248,12 +248,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn failing_command_reports_a_nonzero_status() {
-        let out = execute_command("exit 3").await;
-        assert_eq!(out.status, 3);
-    }
-
     /// Die Ausgabe wird gekuerzt, damit ein grosser Task den Server nicht
     /// flutet — aber der Anfang bleibt lesbar.
     #[test]

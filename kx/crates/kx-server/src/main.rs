@@ -433,18 +433,22 @@ mod tests {
     /// Geprüft wird der Router, den der Server selbst benutzt. Vorher hat der
     /// Test seinen eigenen gebaut — eine aus `app()` entfernte Route liess den
     /// Test gruen, und der Name versprach das Gegenteil.
-    #[test]
-    fn router_registers_the_contract_paths() {
+    #[tokio::test]
+    async fn router_registers_the_contract_paths() {
         let path = std::env::temp_dir().join(format!("kx-routes-{}.db", uuid::Uuid::new_v4()));
         let state = AppState {
             db: Arc::new(Db::open(&path).expect("db")),
             token: Arc::new(TEST_ZUGANG.to_string()),
         };
         let app = app(state);
-        // Ohne State lässt sich der Router nicht in einen Request schicken —
-        // die Route-Pfade lassen sich aber über die Debug-Ausgabe prüfen.
-        let debug = format!("{app:?}");
-        for path in [
+        // Die **Wirkung**, nicht die Debug-Ausgabe. Ein Pfad, den der Router
+        // nicht kennt, antwortet mit 404; ein registrierter Pfad antwortet
+        // anders — hier mit 401, weil die Anfrage kein Token trägt.
+        //
+        // Vorher prüfte der Test `format!("{app:?}")` mit `contains`: eine aus
+        // dem Router entfernte Route ließ ihn grün, während der Name das
+        // Gegenteil behauptete.
+        for pfad in [
             PATH_REGISTER,
             PATH_HEARTBEAT,
             PATH_SECRETS,
@@ -453,8 +457,23 @@ mod tests {
             PATH_TASKS_CREATE,
             PATH_TASKS_RESULT,
         ] {
-            assert!(debug.contains(path), "der Router registriert {path} nicht");
+            let antwort = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(pfad)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .expect("Antwort");
+            assert_ne!(
+                antwort.status(),
+                StatusCode::NOT_FOUND,
+                "der Router registriert {pfad} nicht"
+            );
         }
+        std::fs::remove_file(&path).ok();
     }
 
     /// Der Auth-Test, der gefehlt hat: ohne Token muss jeder Vertragspfad 401
@@ -655,12 +674,19 @@ mod tests {
         let bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024)
             .await
             .expect("Task-Liste serialisiert");
-        let body = String::from_utf8(bytes.to_vec()).expect("Task-Liste als UTF-8");
-        assert!(
-            body.contains("whoami"),
-            "der Task fehlt in der Liste: {body}"
+        // Die Liste **parsen**, nicht nach Stichworten durchsuchen. Eine
+        // Substring-Suche behauptet nichts: sie findet das Kommando auch
+        // an irgendeiner anderen Stelle.
+        let tasks: Vec<kx_core::c2::Task> =
+            serde_json::from_slice(&bytes).expect("Task-Liste als JSON");
+        assert_eq!(tasks.len(), 1, "die Liste enthaelt nicht genau einen Task");
+        assert_eq!(tasks[0].command, "whoami", "das Kommando fehlt");
+        assert_eq!(tasks[0].host_id, "10.0.0.5", "der Host fehlt");
+        assert_eq!(
+            tasks[0].status,
+            kx_core::c2::STATUS_PENDING,
+            "der Status fehlt"
         );
-        assert!(body.contains("pending"), "der Status fehlt: {body}");
         std::fs::remove_file(&path).ok();
     }
 
