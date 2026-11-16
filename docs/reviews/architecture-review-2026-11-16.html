@@ -763,11 +763,34 @@ flowchart TB
         </div>
 
         <div class="bg-amber-50 border-l-4 border-amber-500 rounded-r p-4 max-w-3xl text-sm">
-          <strong>Zusätzlich gefunden:</strong> ein Antigravity-Review über den
-          Meldeweg (<a class="underline" href="https://github.com/arn0ld87/testwurm/pull/57">#57</a>)
-          fand einen blockierenden Fehler: lag ein Server-Schlüssel vor und
-          schlug die Kapselung fehl, ging die Beute im <em>Klartext</em> an den
-          C2. Der Fehler ist behoben.
+          <strong>Zusätzlich gefunden — zwei Review-Runden:</strong>
+          <ul class="mt-2 space-y-2 list-disc list-inside">
+            <li>Ein Antigravity-Review über den Meldeweg
+              (<a class="underline" href="https://github.com/arn0ld87/testwurm/pull/57">#57</a>)
+              fand einen <em>blockierenden</em> Fehler: lag ein Server-Schlüssel vor
+              und schlug die Kapselung fehl, ging die Beute im <em>Klartext</em> an den
+              C2. Behoben.</li>
+            <li>Ein Antigravity-Gesamtreview über alle elf PRs
+              (<a class="underline" href="https://github.com/arn0ld87/testwurm/pull/64">#64</a>)
+              fand fünf weitere Stellen — darunter: bricht das <em>Laden</em> des
+              Server-Schlüssels ab, meldete der Agent weiterhin alles im Klartext;
+              und ein Host <em>ohne</em> Beute galt als Erfolg, obwohl der C2 ihn
+              nicht kannte. Behoben.</li>
+            <li>Ein Reviewer-Subagent fand <em>im selben PR, der die Regel eingeführt
+              hatte</em> (PR&nbsp;#56): die Builder, die die Passwortfelder gegeneinander
+              ausschließen, leerten das andere Feld <em>immer</em> — auch wenn sie selbst
+              nichts setzten. Der Server rief sie beim Auslesen auf, also ging bei jeder
+              Beute im Klartext das Passwort verloren: <strong>ohne Fehler und ohne
+              Spur</strong>. Behoben, mit zwei Regressionstests, die den Fehler nachweislich
+              fangen.</li>
+          </ul>
+        </div>
+
+        <div class="bg-emerald-50 border-l-4 border-emerald-600 rounded-r p-4 max-w-3xl text-sm">
+          <strong>Betriebsnachweis:</strong> der C2-Server läuft auf <span class="mono">rocky</span>
+          mit dem neuen Stand (Smoke-Test: 401 / 401 / <strong>200</strong> / 404, Datenbestand
+          unversehrt), der Agent läuft in der Kali-VM im Fünf-Minuten-Takt gegen den
+          Server. <strong>186 Tests</strong> grün.
         </div>
       </section>
 
