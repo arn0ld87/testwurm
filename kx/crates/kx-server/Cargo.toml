@@ -7,6 +7,10 @@ license.workspace = true
 authors.workspace = true
 description = "Kx-C2-Server: Host-Registry, Secret-Store, Dashboard"
 
+[lib]
+name = "kx_server"
+path = "src/lib.rs"
+
 [dependencies]
 kx-core = { workspace = true }
 kx-tls = { workspace = true }
