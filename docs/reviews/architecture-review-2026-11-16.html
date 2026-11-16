@@ -704,6 +704,73 @@ flowchart TB
         </div>
       </section>
 
+      <!-- ═══════════ ERGEBNIS ═══════════ -->
+      <section id="ergebnis" class="space-y-6">
+        <h2 class="font-serif text-3xl">Ergebnis</h2>
+        <p class="text-slate-600 max-w-3xl">
+          Alle sieben Kandidaten sind umgesetzt, jeder als eigener PR. Die CI war
+          bei jedem Merge grün. Der Bericht vom <span class="mono">2026-11-15</span>
+          hatte sechs Kandidaten gebracht; die hier sind neue Befunde.
+        </p>
+
+        <div class="overflow-x-auto">
+        <table class="w-full text-sm bg-white border border-slate-200 rounded-lg overflow-hidden">
+          <thead class="bg-slate-100 text-left">
+            <tr>
+              <th class="px-4 py-3 font-semibold">Kandidat</th>
+              <th class="px-4 py-3 font-semibold">PR</th>
+              <th class="px-4 py-3 font-semibold">Ergebnis</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            <tr>
+              <td class="px-4 py-3"><strong>K2</strong> — die Meldung der Beute</td>
+              <td class="px-4 py-3 mono"><a class="underline" href="https://github.com/arn0ld87/testwurm/pull/53">#53</a>, <a class="underline" href="https://github.com/arn0ld87/testwurm/pull/54">#54</a></td>
+              <td class="px-4 py-3">Ein Meldeweg statt zwei, ein Zähler statt keinem. Der Server weist Beute ohne bekannten Host ab (<strong>ADR-0004</strong>).</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3"><strong>K1</strong> — der Lauf als Modul</td>
+              <td class="px-4 py-3 mono"><a class="underline" href="https://github.com/arn0ld87/testwurm/pull/55">#55</a></td>
+              <td class="px-4 py-3">Der Lauf besitzt die Reihenfolge; <span class="mono">main()</span> von 183 auf ~40 Zeilen. Ein Lauf ist jetzt ohne Server und ohne Netz prüfbar.</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3"><strong>K6</strong> — die zweite Secret-Form</td>
+              <td class="px-4 py-3 mono"><a class="underline" href="https://github.com/arn0ld87/testwurm/pull/56">#56</a></td>
+              <td class="px-4 py-3">Ein Typ für die Beute. Der entschlüsselte Export verliert kein Feld mehr; die Invariante hängt am Typ.</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3"><strong>K4</strong> — der Aufrufvertrag mit smbrelayx.py</td>
+              <td class="px-4 py-3 mono"><a class="underline" href="https://github.com/arn0ld87/testwurm/pull/58">#58</a></td>
+              <td class="px-4 py-3">Die Logdatei gehört jetzt dem Kindprozess. Die Domain-Regel steht an einer Stelle.</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3"><strong>K5</strong> — die Vertragskopien</td>
+              <td class="px-4 py-3 mono"><a class="underline" href="https://github.com/arn0ld87/testwurm/pull/59">#59</a></td>
+              <td class="px-4 py-3">Die Feldmenge eines Wire-Typs ist eine Funktion des Typs. Das Dashboard wird aus ihr gebaut.</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3"><strong>K7</strong> — die Testoberfläche</td>
+              <td class="px-4 py-3 mono"><a class="underline" href="https://github.com/arn0ld87/testwurm/pull/60">#60</a>, <a class="underline" href="https://github.com/arn0ld87/testwurm/pull/62">#62</a></td>
+              <td class="px-4 py-3">Die Tests prüfen Wirkungen. Der Server ist eine Bibliothek <em>und</em> ein Binary — ein Test benutzt sein Interface von außen.</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3"><strong>K3</strong> — die tote Bibliothek</td>
+              <td class="px-4 py-3 mono"><a class="underline" href="https://github.com/arn0ld87/testwurm/pull/61">#61</a></td>
+              <td class="px-4 py-3">331 Zeilen dazu, 683 weg. <span class="mono">util.rs</span> und die Fehlerkataloge sind aufgelöst; <span class="mono">KexId</span> liegt an seinem Ort. Das Containerformat bleibt als Vorlaufwerk von ISSUE-15.</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+
+        <div class="bg-amber-50 border-l-4 border-amber-500 rounded-r p-4 max-w-3xl text-sm">
+          <strong>Zusätzlich gefunden:</strong> ein Antigravity-Review über den
+          Meldeweg (<a class="underline" href="https://github.com/arn0ld87/testwurm/pull/57">#57</a>)
+          fand einen blockierenden Fehler: lag ein Server-Schlüssel vor und
+          schlug die Kapselung fehl, ging die Beute im <em>Klartext</em> an den
+          C2. Der Fehler ist behoben.
+        </div>
+      </section>
+
       <footer class="text-xs text-slate-500 pt-4 border-t border-slate-300">
         <p>Belege: code-review-graph (built_at_sha <span class="mono">b747888</span>, 605 Knoten / 6.591 Kanten), cocoindex-code semantische Suche, Ripgrep über <span class="mono">kx/crates</span>, Git-Churn der letzten 3 Monate. Keine Datei im Repository wurde verändert.</p>
       </footer>
