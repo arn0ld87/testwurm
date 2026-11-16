@@ -156,6 +156,13 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   `StatusCode::INTERNAL_SERVER_ERROR` ohne Body zurück [main.rs:heartbeat]
 - `upload_secret` lehnt ein leeres `host_id` mit `StatusCode::BAD_REQUEST` und dem Body
   "host_id darf nicht leer sein" ab [main.rs:upload_secret]
+- `upload_secret` lehnt ein Secret ab, dessen `host_id` der Server nicht kennt:
+  `DbError::UnbekannterHost` wird zu `StatusCode::BAD_REQUEST` mit dem Body
+  "unbekannter Host {id} — der Host muss vor der Beute registriert sein". Eine
+  Beutezeile ohne bekannten Host waere eine Waisenzeile — der Operator koennte
+  sie keinem Zielhost zuordnen. Die Regel steht in der Datenbank, neben der
+  Zeile, die sie betrifft, nicht im Handler [db.rs:Db::upsert_secret]
+  [main.rs:upload_secret] [db.rs:DbError::UnbekannterHost]
 - Ein neu angelegtes Secret erhält eine frische `Uuid::new_v4()` als ID; ein fehlendes
   `source` wird `""`, `collected_at` ist `kx_core::util::now_rfc3339()` [main.rs:upload_secret]
 - Die fachliche Identitaet eines Secrets ist `(host_id, cred_type, username, source)`;

@@ -197,7 +197,10 @@ sequenceDiagram
 
 Die **Host-Kennung** kommt aus dem Request und wird nicht mehr aus der IP
 abgeleitet — Registrierung und Secret-Upload können so nicht auseinanderlaufen.
-Eine leere `host_id` lehnt der Server mit 400 ab.
+Eine leere `host_id` lehnt der Server mit 400 ab. Ein Secret, dessen `host_id`
+der Server nicht kennt, lehnt er ebenfalls ab: der Host muss **vor** seiner
+Beute registriert sein, sonst entstünde eine Zeile, die der Operator keinem
+Zielhost zuordnen kann ([ADR-0004](docs/adr/0004-ein-secret-gehoert-zu-einem-bekannten-host.md)).
 
 ---
 
