@@ -285,15 +285,15 @@ sind Teil des Formats.
 
 ### Fehlerklassifikation
 
-- Die `ErrorClass`-Strings sind absichtlich stabil, weil Konsolen-Fehlerliste und Journal danach gefiltert und gezaehlt werden [error.rs:ErrorClass]
-- `ErrorClass::aborts_run` ist nur fuer `DiskFull` wahr — ein halbvoller Lauf ohne Platz ist nicht sinnvoll fortsetzbar [error.rs:aborts_run]
-- `ErrorClass::retryable` ist nur fuer `Sharing`, `UserMapped` und `Network` wahr; blockierte Dateien werden nach N Versuchen aufgegeben [error.rs:retryable]
-- `Error::io` speichert `raw = None`, `Error::io_raw` speichert `raw = Some(raw)`, `Error::from_io` uebernimmt `err.raw_os_error()` [error.rs:io] [error.rs:io_raw] [error.rs:from_io]
-- `Error::path` liefert nur bei `Error::Io` mit nicht leerem Pfad `Some(path)`, sonst `None` [error.rs:path]
-- `Error::class` bildet `Crypto`/`Format` auf `Crypto`, `State`/`Serde` auf `State`, `Config` auf `InvalidInput`, `Transport` auf `Network` und `Aborted`/`Paused`/`Platform` auf `Other` ab [error.rs:class]
-- `class_from_errkind` mappt POSIX-errno (`EACCES`/`EPERM`→`Access`, `ENOENT`→`NotFound`, `ENOSPC`→`DiskFull`, `EAGAIN`/`EBUSY`→`Sharing`, `ETXTBSY`→`UserMapped`, `ENOTCONN`/`EHOSTUNREACH`/`ENETDOWN`→`Network`) und Win32-Codes (2/3→`NotFound`, 5→`Access`, 32/33→`Sharing`, 1224→`UserMapped`, 39/8→`DiskFull`, 53/64/1231→`Network`); ohne Treffer greift die `ErrorKind`-Zuordnung mit `Other` als Auffangwert [error.rs:class_from_errkind]
-- Die errno- und die Win32-Tabelle sind per `#[cfg(unix)]` und `#[cfg(windows)]` getrennt — je Build existiert nur eine der beiden; die Klassen heissen auf beiden Plattformen gleich, nur die Zahlen unterscheiden sich [error.rs:class_from_errkind]
-- Die NTSTATUS-Uebersetzung ist absichtlich `kx-win` ueberlassen, weil `raw_os_error()` dort Win32-Message-Codes traegt [error.rs:from_io]
+- `Error` traegt vier Varianten: `Format`, `Crypto`, `Config` und `State`; `Serde` kommt aus der Serde-Ableitung [error.rs:Error]
+- `Error::State` meint: der Zustand ist unbrauchbar, aber die Ursache ist klar — ein Aufrufer kann die Meldung dem Benutzer zeigen [error.rs:State]
+
+Der Katalog, der hier früher stand — eine Fehlerklasse (`ErrorClass`), eine
+errno-Tabelle, eine Win32-Tabelle und Konstruktoren für Dateifehler — ist
+weg. Keine davon hatte einen Aufrufer außerhalb dieses Moduls: die errno- und
+die Win32-Tabelle erreichte kein einziger Test, und die Win32-Tabelle wurde
+nicht einmal übersetzt. Wer wieder eine Klassifikation braucht, baut sie dort,
+wo sie benutzt wird.
 
 ### Dateiformat
 

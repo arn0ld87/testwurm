@@ -160,18 +160,30 @@ impl ExfiltratedSecret {
     /// gefüllt.** Die Regel hängt am Typ, nicht am Aufrufer — sonst baut
     /// irgendein Aufrufer beide Felder und der Server sieht einen Chiffretext
     /// *und* seinen Klartext.
+    ///
+    /// Ein **leerer** Wert loescht das Siegel nicht: es gibt dann nichts zu
+    /// setzen, und ein Siegel zu vernichten waere Datenverlust.
     pub fn mit_passwort(mut self, wert: &str) -> Self {
+        if !wert.is_empty() {
+            self.sealed_password = String::new();
+        }
         self.password = wert.to_string();
-        self.sealed_password = String::new();
         self
     }
 
     /// Setzt das versiegelte Passwort.
     ///
     /// Das Klartext-Feld wird dabei geleert — siehe [`Self::mit_passwort`].
+    ///
+    /// Ein **leeres** Siegel loescht den Klartext nicht: ein Agent ohne
+    /// Server-Schluessel meldet die Beute im Klartext, und der Server liefert
+    /// sie genau so wieder aus. Wuerde dieses Feld hier blind geleert, gaenge
+    /// die Beute beim Auslesen verloren.
     pub fn mit_versiegeltem_passwort(mut self, wert: String) -> Self {
+        if !wert.is_empty() {
+            self.password = String::new();
+        }
         self.sealed_password = wert;
-        self.password = String::new();
         self
     }
 }
@@ -271,9 +283,14 @@ impl SecretUpload {
     ///
     /// Das versiegelte Feld wird dabei geleert: **nie beide Passwortfelder
     /// gefüllt.** Die Regel haengt am Typ, nicht am Aufrufer.
+    ///
+    /// Ein **leerer** Wert loescht das Siegel nicht — es gibt dann nichts zu
+    /// setzen, und ein Siegel zu vernichten waere Datenverlust.
     pub fn mit_passwort(mut self, wert: &str) -> Self {
+        if !wert.is_empty() {
+            self.sealed_password = None;
+        }
         self.password = wert.to_string();
-        self.sealed_password = None;
         self
     }
 
@@ -284,9 +301,14 @@ impl SecretUpload {
     /// Secret-Scan wie ein eingebettetes Zugangsdaten aus.
     ///
     /// Das Klartext-Feld wird dabei geleert — siehe [`Self::mit_passwort`].
+    /// Ein **leeres** Siegel loescht den Klartext nicht: ein Agent ohne
+    /// Server-Schluessel meldet die Beute im Klartext, und der Server liefert
+    /// sie genau so wieder aus.
     pub fn mit_versiegeltem_passwort(mut self, wert: Option<String>) -> Self {
+        if wert.as_ref().is_some_and(|s| !s.is_empty()) {
+            self.password = String::new();
+        }
         self.sealed_password = wert;
-        self.password = String::new();
         self
     }
 }
@@ -366,6 +388,52 @@ mod tests {
         let versiegelt = upload.mit_versiegeltem_passwort(Some("kx1:siegel".into()));
         assert_eq!(versiegelt.sealed_password.as_deref(), Some("kx1:siegel"));
         assert!(versiegelt.password.is_empty());
+    }
+
+    /// Ein leeres Siegel löscht den Klartext nicht.
+    ///
+    /// Ein Agent ohne Server-Schlüssel meldet die Beute im Klartext, und der
+    /// Server liefert sie genau so wieder aus. Wird das Klartextfeld beim
+    /// Auslesen blind geleert, geht die Beute verloren — ohne Fehler, ohne
+    /// Spur.
+    #[test]
+    fn ein_leeres_siegel_loescht_den_klartext_nicht() {
+        let beute = ExfiltratedSecret {
+            id: "s-1".into(),
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: String::new(),
+            source: "smb_relay".into(),
+            collected_at: "2026-11-16T00:00:00Z".into(),
+            sealed_password: String::new(),
+        }
+        .mit_passwort("hash");
+
+        let zurueck = beute.mit_versiegeltem_passwort(String::new());
+        assert_eq!(
+            zurueck.password, "hash",
+            "der Klartext ging beim Auslesen verloren"
+        );
+        assert!(zurueck.sealed_password.is_empty());
+
+        let upload = SecretUpload {
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: String::new(),
+            source: Some("smb_relay".into()),
+            master_key: None,
+            sealed_password: None,
+        }
+        .mit_passwort("hash");
+
+        let zurueck = upload.mit_versiegeltem_passwort(None);
+        assert_eq!(
+            zurueck.password, "hash",
+            "der Klartext ging beim Auslesen verloren"
+        );
+        assert!(zurueck.sealed_password.is_none());
     }
 
     /// Golden-JSON: die exakte Form, die der C2-Server für einen Host ausliefert.

@@ -122,4 +122,50 @@ mod tests {
         let b = sealer.schluessel_fuer("192.168.1.6").expect("Schluessel");
         assert_ne!(a.roh, b.roh, "zwei Hosts teilen sich den Key");
     }
+
+    /// Der Server-Schlüssel kommt aus einer JSON-Datei — so wie der Operator
+    /// ihn dem Agenten gibt. Dieser Pfad muss also tragen: ohne ihn findet
+    /// der Agent kein Schlüsselmaterial und meldet die Beute im Klartext.
+    #[test]
+    fn der_server_schluessel_laesst_sich_aus_der_datei_laden() {
+        let mut rng = rand_core::OsRng;
+        let bundle = kx_core::hostkey::ServerKeyBundle::generate(
+            kx_core::kex::KexId::HybridX25519MlKem768,
+            &mut rng,
+        );
+        let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");
+        let json = serde_json::to_string_pretty(&oeffentlich).expect("JSON");
+
+        // Der Fingerabdruck ist Base64 und enthaelt Schraegstriche — er
+        // gehoert nicht in einen Dateinamen.
+        let pfad = std::env::temp_dir().join(format!("kx-serverkey-{}.json", std::process::id()));
+        std::fs::write(&pfad, &json).expect("Datei");
+
+        let geladen = KeySealer::load(pfad.to_str().expect("Pfad"));
+        std::fs::remove_file(&pfad).ok();
+
+        let sealer = geladen.expect("der Schluessel muss sich laden lassen");
+        assert!(
+            sealer.schluessel_fuer("192.168.1.5").is_some(),
+            "nach dem Laden muss der Agent Schluesselmaterial haben"
+        );
+    }
+
+    /// Eine kaputte Schlüsseldatei ist ein Fehler, kein leerer Versiegler.
+    ///
+    /// Ein leerer Versiegler bedeutet: die Beute geht im Klartext an den C2.
+    /// Das darf nicht aus einer unlesbaren Datei heraus entstehen.
+    #[test]
+    fn eine_kaputte_datei_wird_als_fehler_gemeldet() {
+        let pfad =
+            std::env::temp_dir().join(format!("kx-serverkey-kaputt-{}.json", std::process::id()));
+        std::fs::write(&pfad, b"{ kein json").expect("Datei");
+        let ergebnis = KeySealer::load(pfad.to_str().expect("Pfad"));
+        std::fs::remove_file(&pfad).ok();
+
+        assert!(
+            ergebnis.is_err(),
+            "eine kaputte Datei darf nicht als Erfolg durchgehen"
+        );
+    }
 }

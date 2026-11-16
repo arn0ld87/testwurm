@@ -15,7 +15,7 @@ die Module `auth`, `dashboard` und `db`.
 Laut Manifest (`../Cargo.toml`) deklariert das Crate `kx-core`, `kx-tls`, `serde`,
 `serde_json`, `thiserror`, `tracing`, `tracing-subscriber`, `tokio`, `axum`, `axum-server`,
 `rusqlite`, `time`, `clap` und `uuid`. Nachweislich verwendet werden `kx-core`
-(`kx_core::c2` und `kx_core::util::now_rfc3339` [lib.rs:app] [lib.rs:register]),
+(`kx_core::c2` und `kx-tls` [lib.rs:app] [lib.rs:register]),
 `kx-tls` (`kx_tls::generate_server_tls` [lib.rs:app]), `thiserror` [db.rs:DbError],
 `tracing` [lib.rs:app], `tracing-subscriber` [lib.rs:app], `tokio` (`#[tokio::main]`
 [lib.rs:app]), `axum` (`Router` [lib.rs:app]), `axum-server` [lib.rs:app],
@@ -178,7 +178,7 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   Zeile, die sie betrifft, nicht im Handler [db.rs:Db::upsert_secret]
   [lib.rs:upload_secret] [db.rs:DbError::UnbekannterHost]
 - Ein neu angelegtes Secret erhält eine frische `Uuid::new_v4()` als ID; ein fehlendes
-  `source` wird `""`, `collected_at` ist `kx_core::util::now_rfc3339()` [lib.rs:upload_secret]
+  `source` wird `""`, `collected_at` ist der Zeitstempel des Servers [lib.rs:upload_secret]
 - Die fachliche Identitaet eines Secrets ist `(host_id, cred_type, username, source)`;
   ein wiederholter Upload derselben Identitaet aktualisiert die bekannte Zeile und legt
   keine zweite an — der Agent meldet dieselben Secrets bei jedem Lauf erneut

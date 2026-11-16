@@ -92,7 +92,7 @@ Der Angriffspfad folgt der Kette Scanner → Exploit → Post-Exploitation → C
 
 ### Bibliotheken
 
-- `kx-core` — Fehlerklassifikation (`Error`, `ErrorClass`), KXENC-v1-Dateiformat (`Footer`, `FooterFlags`, `CipherId`, `KexId`, `plan_ranges`, `chunk_iter`, `nonce_for`, `aad_for`) und plattformneutrale Hilfsfunktionen (`util`) [`crates/kx-core/src/README.md`](./crates/kx-core/src/README.md).
+- `kx-core` — Fehlerkatalog (`Error`), KXENC-v1-Dateiformat (`Footer`, `FooterFlags`, `CipherId`, `plan_ranges`, `chunk_iter`, `nonce_for`, `aad_for`), die Schlüsselarten des C2-Schlüsselaustauschs (`kex`) und die Textkodierungen (`codec`) [`crates/kx-core/src/README.md`](./crates/kx-core/src/README.md).
 - `kx-scanner` — `arp_sweep`, `scan_tcp`, `fingerprint` [`crates/kx-scanner/src/README.md`](./crates/kx-scanner/src/README.md).
 - `kx-exploit` — `smb_relay_dcsync`, `try_default_credentials`, `validate_payload` [`crates/kx-exploit/src/README.md`](./crates/kx-exploit/src/README.md).
 - `kx-win` — `extract_lsass`, `extract_credential_manager`, `extract_browser_credentials`, `create_scheduled_task`, `create_registry_run_key`, `install_service`, `start_service` [`crates/kx-win/src/README.md`](./crates/kx-win/src/README.md).
