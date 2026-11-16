@@ -9,10 +9,10 @@ und die Persistenz (`persist.rs`).
 
 Die Extraktionsfunktionen lesen Passwort-Hashes aus `/etc/shadow`, SSH-Private-Keys aus
 `$HOME/.ssh` und AWS-Credentials aus `$HOME/.aws/credentials`. Die Persistenzfunktionen
-installieren einen systemd-Systemdienst unter `/etc/systemd/system/` oder einen Cron-Eintrag
-über `crontab`. Jede öffentliche POSIX-Funktion existiert doppelt: eine `#[cfg(unix)]`-Variante
-mit echter Logik und eine `#[cfg(not(unix))]`-Variante als Stub, damit der Crate auf
-Nicht-Unix-Zielplattformen kompiliert.
+installieren einen systemd-Systemdienst mit Timer unter `/etc/systemd/system/` oder einen
+Cron-Eintrag über `crontab`. Jede öffentliche POSIX-Funktion existiert doppelt: eine
+`#[cfg(unix)]`-Variante mit echter Logik und eine `#[cfg(not(unix))]`-Variante als Stub, damit
+der Crate auf Nicht-Unix-Zielplattformen kompiliert.
 
 `Cargo.toml` deklariert `kx-core`, `serde`, `thiserror`, `tracing` und `tokio`. `kx-core` wird
 in keiner Datei dieses Verzeichnisses importiert; nachweislich verwendet werden `serde`
@@ -22,7 +22,7 @@ in keiner Datei dieses Verzeichnisses importiert; nachweislich verwendet werden 
 ## Interface
 
 - Öffentliche Module: `error` [lib.rs:error], `persist` [lib.rs:persist], `secrets` [lib.rs:secrets]
-- Re-Exports auf Crate-Ebene: `PosixError` [lib.rs:PosixError], `install_systemd_service` [lib.rs:install_systemd_service], `systemd_unit_content` [lib.rs:systemd_unit_content], `systemd_env_content` [lib.rs:systemd_env_content], `systemd_env_file_path` [lib.rs:systemd_env_file_path], `SystemdService` [lib.rs:SystemdService], `ENV_DIR` [lib.rs:ENV_DIR], `write_cron_persistence` [lib.rs:write_cron_persistence], `extract_aws_credentials` [lib.rs:extract_aws_credentials], `extract_shadow_hashes` [lib.rs:extract_shadow_hashes], `extract_ssh_keys` [lib.rs:extract_ssh_keys], `Secret` [lib.rs:Secret]
+- Re-Exports auf Crate-Ebene: `PosixError` [lib.rs:PosixError], `install_systemd_service` [lib.rs:install_systemd_service], `systemd_unit_content` [lib.rs:systemd_unit_content], `systemd_timer_content` [lib.rs:systemd_timer_content], `systemd_timer_name` [lib.rs:systemd_timer_name], `systemd_env_content` [lib.rs:systemd_env_content], `systemd_env_file_path` [lib.rs:systemd_env_file_path], `SystemdService` [lib.rs:SystemdService], `ENV_DIR` [lib.rs:ENV_DIR], `write_cron_persistence` [lib.rs:write_cron_persistence], `extract_aws_credentials` [lib.rs:extract_aws_credentials], `extract_shadow_hashes` [lib.rs:extract_shadow_hashes], `extract_ssh_keys` [lib.rs:extract_ssh_keys], `Secret` [lib.rs:Secret]
 - `PosixError` — Fehler-Enum mit `#[derive(Debug, thiserror::Error)]`; Varianten `ToolMissing`, `ToolFailed`, `FileAccess`, `Systemd`, `Cron` [error.rs:PosixError]. `ToolMissing` und `ToolFailed` werden im Crate **nirgends konstruiert** — alle Prozess- und Dateifehler werden stattdessen auf `Systemd` bzw. `Cron` abgebildet.
 - `Secret` — serialisierbarer Datentyp (`#[derive(Debug, Clone, Serialize, Deserialize)]`) mit den Feldern `secret_type`, `target`, `value` [secrets.rs:Secret]. `target` ist je nach `secret_type` der Benutzername, der SSH-Dateiname oder `{profile}/{key}`.
 - `pub async fn extract_shadow_hashes() -> Result<Vec<Secret>, PosixError>` [secrets.rs:extract_shadow_hashes]
@@ -31,6 +31,8 @@ in keiner Datei dieses Verzeichnisses importiert; nachweislich verwendet werden 
 - `pub struct SystemdService { pub name: String, pub binary_path: PathBuf, pub args: Vec<String>, pub env: Vec<(String, String)> }` [persist.rs:SystemdService]
 - `pub async fn install_systemd_service(svc: &SystemdService) -> Result<(), PosixError>` [persist.rs:install_systemd_service]
 - `pub fn systemd_unit_content(svc: &SystemdService) -> String` [persist.rs:systemd_unit_content]
+- `pub fn systemd_timer_content(svc: &SystemdService) -> String` [persist.rs:systemd_timer_content]
+- `pub fn systemd_timer_name(service_name: &str) -> String` [persist.rs:systemd_timer_name]
 - `pub fn systemd_env_content(svc: &SystemdService) -> String` [persist.rs:systemd_env_content]
 - `pub fn systemd_env_file_path(service_name: &str) -> PathBuf` [persist.rs:systemd_env_file_path]
 - `pub const ENV_DIR: &str = "/etc/kx"` [persist.rs:ENV_DIR]
@@ -51,12 +53,34 @@ in keiner Datei dieses Verzeichnisses importiert; nachweislich verwendet werden 
 - Eine SSH-Datei wird nur übernommen, wenn ihr Inhalt die Zeichenfolge `PRIVATE KEY` enthält [secrets.rs:extract_ssh_keys]
 - Der AWS-Profileintrag startet als `default` und wird durch Zeilen in `[...]` ersetzt; gesammelt werden nur die Schlüssel `aws_access_key_id` und `aws_secret_access_key` [secrets.rs:extract_aws_credentials]
 - `secret_type` ist fest vorgegeben: `shadow` [secrets.rs:extract_shadow_hashes], `ssh_key` [secrets.rs:extract_ssh_keys], `aws` [secrets.rs:extract_aws_credentials]
-- Der systemd-Unit-Text ist fest vorgegeben (`Type=simple`, `EnvironmentFile={env_path}`,
-  `ExecStart={path} {args}`, `Restart=always`, `RestartSec=5`,
-  `WantedBy=multi-user.target`) [persist.rs:systemd_unit_content]
+- Der systemd-Unit-Text ist fest vorgegeben (`Type=oneshot`, `EnvironmentFile={env_path}`,
+  `WorkingDirectory={binary-dir}`, `ExecStart={path} {args}`, `Restart=no`,
+  `WantedBy={name}.timer`) [persist.rs:systemd_unit_content]
+- Die Service-Unit ist ein **Einmal-Lauf** (`Type=oneshot`, `Restart=no`).
+  `Type=simple` mit `Restart=always` startet den linear endenden Agenten
+  sofort wieder — im Betrieb alle zwölf Sekunden. Den Takt gibt der Timer
+  [persist.rs:systemd_unit_content]
+- Das `WorkingDirectory` zeigt auf das Verzeichnis des Binaries, nicht auf das
+  Arbeitsverzeichnis des Prozesses: systemd startet den Agenten mit `/`, ein
+  relativer Pfad (das Asset `assets/smbrelayx.py`) löst sich dort nicht auf
+  [persist.rs:systemd_unit_content]
 - Der `ExecStart` enthält **alle** Pflichtargumente des Agenten. Ein leerer
-  `ExecStart` zusammen mit `Restart=always` erzeugt eine Neustart-Schleife —
-  der Agent startet nie durch [persist.rs:systemd_unit_content]
+  `ExecStart` erzeugt eine Neustart-Schleife — der Agent startet nie durch
+  [persist.rs:systemd_unit_content]
+- Der Timer-Text ist fest vorgegeben (`OnBootSec=2min`, `OnUnitActiveSec=5min`,
+  `Persistent=true`, `Unit={name}.service`, `WantedBy=timers.target`)
+  [persist.rs:systemd_timer_content]
+- Die Service-Unit hängt am Timer (`WantedBy={name}.timer`), der Timer nennt
+  die Service-Unit (`Unit={name}.service`) [persist.rs:systemd_unit_content]
+  [persist.rs:systemd_timer_content]
+- Environment-, Service- und Timer-Datei werden **nur** geschrieben, wenn sich
+  ihr Inhalt ändert; ohne diese Prüfung überschreibt der Agent im Takt jede
+  Betreiber-Änderung und löst bei jedem Lauf einen `daemon-reload` aus
+  [persist.rs:write_if_changed] [persist.rs:install_systemd_service]
+- `systemctl daemon-reload` läuft nur, wenn eine der Datei tatsächlich
+  geändert wurde [persist.rs:install_systemd_service]
+- Aktiviert wird der Dienst (`systemctl enable {name}` → `kx-agent.timer.wants/kx-agent.service`)
+  und der Timer (`systemctl enable --now {name}.timer`) [persist.rs:install_systemd_service]
 - Das Token steht **nicht** im Klartext in der Unit-Datei: sie ist für jeden
   lesbar, der die Datei lesen darf. Die Unit referenziert `${KX_C2_TOKEN}`, das
   systemd aus der Environment-Datei auflöst [persist.rs:systemd_unit_content]
@@ -78,8 +102,8 @@ in keiner Datei dieses Verzeichnisses importiert; nachweislich verwendet werden 
 - Liest `/etc/shadow` über `std::fs::read_to_string` [secrets.rs:extract_shadow_hashes]
 - Listet `$HOME/.ssh` über `std::fs::read_dir` und liest jede qualifizierte Datei vollständig ein [secrets.rs:extract_ssh_keys]
 - Liest `$HOME/.aws/credentials` über `std::fs::read_to_string` [secrets.rs:extract_aws_credentials]
-- Schreibt die Unit-Datei `/etc/systemd/system/{service_name}.service` über `std::fs::write` [persist.rs:install_systemd_service]
-- Startet `systemctl daemon-reload` und `systemctl enable {service_name}` über `tokio::process::Command` [persist.rs:install_systemd_service]
+- Schreibt die Unit-Datei `/etc/systemd/system/{service_name}.service` und die Timer-Datei `/etc/systemd/system/{service_name}.timer` über `std::fs::write` — jeweils nur, wenn sich der Inhalt ändert [persist.rs:install_systemd_service] [persist.rs:write_if_changed]
+- Startet `systemctl daemon-reload` (nur nach einer Änderung), `systemctl enable {service_name}`, `systemctl enable --now {service_name}.timer` über `tokio::process::Command` [persist.rs:install_systemd_service]
 - Startet `crontab -l` und `crontab -`; der zusammengeführte Crontab-Text wird über stdin in den Kindprozess geschrieben und mutiert damit die Crontab des aufrufenden Users [persist.rs:write_cron_persistence]
 - Loggt über `tracing::debug!` (Fundzahlen, erfolgreiche Installationen, vorhandener Cron-Eintrag) und `tracing::warn!` (fehlgeschlagenes `systemctl daemon-reload`) [secrets.rs:extract_shadow_hashes] [persist.rs:install_systemd_service] [persist.rs:write_cron_persistence]
 

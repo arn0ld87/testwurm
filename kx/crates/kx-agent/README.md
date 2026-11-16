@@ -55,7 +55,9 @@ Rollup aus [`src/`](./src/README.md):
   Ausgabe über `POST /api/tasks/result` zurück [src/tasks.rs:run_pending_tasks]
   [src/c2.rs:C2Client::fetch_tasks] [src/c2.rs:C2Client::report_task_result].
 - Die für den ARP-Sweep verwendete MAC-Adresse ist der Platzhalter `[0x00; 6]` [src/main.rs:main].
-- Der systemd-Unit wird unter unix mit allen Pflichtargumenten geschrieben (`--server`, `--token`, `--server-cert`, `--iface`, `--start`, `--end`, `--own-ip`), während `Args` `--server` und `--token` zwingend verlangt [src/main.rs:install_persistence] [../kx-posix/src/persist.rs:systemd_unit_content].
+- Der systemd-Unit wird unter unix mit allen Pflichtargumenten geschrieben (`--server`, `--token`, `--server-cert`, `--iface`, `--start`, `--end`, `--own-ip`, `--relay-script`), während `Args` `--server` und `--token` zwingend verlangt [src/main.rs:install_persistence] [../kx-posix/src/persist.rs:systemd_unit_content].
+- Die Unit ist ein Einmal-Lauf (`Type=oneshot`, `Restart=no`) mit `WorkingDirectory` auf dem Verzeichnis des Binaries; den Takt gibt der Timer `kx-agent.timer` [../kx-posix/src/persist.rs:systemd_unit_content] [../kx-posix/src/persist.rs:systemd_timer_content].
+- Der Pfad des Relay-Skripts wird neben dem Binary gesucht (`<binary-dir>/assets/smbrelayx.py`), sonst bleibt der relative Pfad stehen; der persistierte Agent bekommt den aufgelösten Pfad eingetragen [src/main.rs:resolve_relay_script].
 - Das Token steht nicht im Klartext in der Unit-Datei, sondern in der Environment-Datei `/etc/kx/kx-agent.env` (0600); die Unit referenziert `${KX_C2_TOKEN}` [src/main.rs:install_persistence] [../kx-posix/src/persist.rs:install_systemd_service].
 - Ungültige IPs führen über `expect` zum Panic, nicht zu einem Fehlerpfad; Fehler der Secret-Extraktion werden per `unwrap_or_default()` verschluckt [src/main.rs:main] [src/main.rs:collect_local_secrets].
 
@@ -71,7 +73,7 @@ Rollup aus [`src/`](./src/README.md):
   `Authorization: Bearer {token}` [src/c2.rs:C2Client::register_host]
   [src/c2.rs:C2Client::upload_secret] [src/c2.rs:C2Client::fetch_tasks]
   [src/c2.rs:C2Client::report_task_result].
-- Dateisystem: Lesen des Server-Zertifikats per `std::fs::read`, Auslesen des eigenen Executable-Pfads per `std::env::current_exe()`, Schreiben der Unit-Datei `/etc/systemd/system/kx-agent.service` unter unix [src/c2.rs:C2Client::new] [src/main.rs:install_persistence] [../kx-posix/src/persist.rs:install_systemd_service].
+- Dateisystem: Lesen des Server-Zertifikats per `std::fs::read`, Auslesen des eigenen Executable-Pfads per `std::env::current_exe()`, Schreiben der Unit-Datei `/etc/systemd/system/kx-agent.service` und der Timer-Datei `/etc/systemd/system/kx-agent.timer` unter unix — jede nur, wenn sich ihr Inhalt ändert [src/c2.rs:C2Client::new] [src/main.rs:install_persistence] [../kx-posix/src/persist.rs:install_systemd_service].
 - Prozessstart: `mimikatz.exe` und `powershell.exe` unter Windows, `systemctl` unter unix, `python3 <relay_script>` im SMB-Relay-Zweig [src/main.rs:collect_local_secrets] [src/main.rs:install_persistence] [src/propagate.rs:run_propagation].
 - Liest unter unix `/etc/shadow` und `$HOME/.aws/credentials` [src/main.rs:collect_local_secrets].
 

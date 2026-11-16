@@ -265,10 +265,10 @@ Der Agent durchläuft folgende Schritte — die lokale Phase läuft **vor** der 
 6. SSH-Systeme mit Default-Credentials testen (erfordert `sshpass` auf dem Agentenhost)
 7. Alle Ergebnisse an den C2-Server melden
 
-> **Bekannte Funktionsdefekte:** Schritt 5 ist derzeit wirkungslos, und die
-> unter Linux installierte systemd-Unit startet das Binary **ohne Argumente**, obwohl
-> `--server` und `--token` Pflicht sind — mit `Restart=always` entsteht eine
-> Neustart-Schleife. Dreizehn solcher Defekte sind als Issues unter
+> **Bekannte Funktionsdefekte:** Schritt 5 ist derzeit wirkungslos. Die unter
+> Linux installierte systemd-Unit ist ein Einmal-Lauf (`Type=oneshot`,
+> `Restart=no`) — den Takt gibt der Timer `kx-agent.timer` (alle fünf
+> Minuten). Dreizehn solcher Defekte sind als Issues unter
 > `.scratch/c2-operability/issues/` erfasst, der Ablaufplan in
 > `.scratch/c2-operability/EPIC.md`, der Design-Entwurf zur Behebung in
 > `.scratch/c2-operability/design_draft.md`.
