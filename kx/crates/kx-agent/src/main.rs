@@ -231,8 +231,8 @@ async fn main() {
     // oder Beute ging verloren, die der Agent erfolgreich erbeutet hatte. Ein
     // gescheiterter Exploit ist keiner — nichts gefunden ist ein Ergebnis.
     if ergebnis.fehlgeschlagen() {
-        let grund = if ergebnis.c2_nicht_erreichbar() {
-            "Der Lauf hat den C2-Server nicht erreicht"
+        let grund = if ergebnis.kein_host_angekommen() {
+            "Der Lauf hat keinen Host angemeldet bekommen"
         } else {
             "Der Lauf hat nicht alles erreicht"
         };

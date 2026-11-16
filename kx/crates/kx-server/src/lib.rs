@@ -142,6 +142,13 @@ async fn create_task(
         // Der angelegte Task wird zurückgeliefert: der Operator braucht die
         // ID, um das Ergebnis später zuzuordnen.
         Ok(task) => (StatusCode::CREATED, Json(task)).into_response(),
+        // Ein Task auf einen unbekannten Host waere nie abgearbeitet worden —
+        // das muss der Operator jetzt erfahren, nicht spaeter.
+        Err(DbError::UnbekannterHost(id)) => (
+            StatusCode::BAD_REQUEST,
+            format!("unbekannter Host {id} — der Host muss vor dem Task registriert sein"),
+        )
+            .into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -253,6 +260,32 @@ fn authorization(zugang: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Meldet einen Host an — ein Task braucht einen bekannten Host
+    /// (ADR-0004), sonst bliebe er dauerhaft `pending`.
+    async fn host_anmelden(app: &axum::Router, host_id: &str) {
+        let anfrage = kx_core::c2::transport::post_json_request(
+            PATH_REGISTER,
+            TEST_ZUGANG,
+            &kx_core::c2::RegisterRequest {
+                host_id: host_id.to_string(),
+                ip: host_id.to_string(),
+                hostname: None,
+                os: None,
+                status: None,
+                sealed_master: None,
+                master_key: None,
+            },
+        )
+        .expect("Request");
+        let (teile, body) = anfrage.into_parts();
+        let antwort = app
+            .clone()
+            .oneshot(Request::from_parts(teile, Body::from(body)))
+            .await
+            .unwrap();
+        assert_eq!(antwort.status(), StatusCode::CREATED);
+    }
     #[tokio::test]
     async fn router_registers_the_contract_paths() {
         let path = std::env::temp_dir().join(format!("kx-routes-{}.db", uuid::Uuid::new_v4()));
@@ -458,6 +491,7 @@ mod tests {
             token: Arc::new(TEST_ZUGANG.to_string()),
         };
         let app = app(state);
+        host_anmelden(&app, "10.0.0.5").await;
 
         let res = app
             .clone()
@@ -525,6 +559,7 @@ mod tests {
             token: Arc::new(TEST_ZUGANG.to_string()),
         };
         let app = app(state);
+        host_anmelden(&app, "10.0.0.5").await;
 
         // 1. Der Operator legt den Task an.
         let res = app

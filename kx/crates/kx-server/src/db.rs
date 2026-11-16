@@ -204,15 +204,25 @@ impl Db {
     }
 
     fn upsert_host_row(&self, h: &HostRow) -> Result<(), DbError> {
-        // Der Status `agent` wird nicht herabgestuft: ein Agent, der sich
-        // selbst im Scanbereich findet, ist im Dashboard sonst kein Agent
-        // mehr, sondern ein Opfer. Die Rolle des Hosts geht sonst verloren.
+        // Drei Regeln fuer das erneute Schreiben:
+        //
+        // - Das OS bleibt stehen, wenn die neue Registrierung keins nennt.
+        //   `NULLIF` ist wichtig: der gebundene Wert ist ein String, und der
+        //   leere String ist kein SQL-NULL — `COALESCE(?4, os)` wuerde das
+        //   bekannte OS mit dem leeren String ueberschreiben.
+        // - Der Status wird nie herabgestuft: `discovered` ist die schwaechste
+        //   Aussage und ueberschreibt nichts. Ein Agent, der sich selbst im
+        //   Scanbereich findet, ist im Dashboard sonst kein Agent mehr,
+        //   sondern ein Opfer; ein Host, der im Vorlauf kompromittiert wurde,
+        //   darf nicht wieder zum blassen Fund werden.
+        // - Das Siegel bleibt stehen, wenn die neue Registrierung keins
+        //   mitbringt.
         self.conn.lock().unwrap().execute(
             "INSERT INTO hosts (id, ip, hostname, os, status, first_seen, last_seen, sealed_master)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET
-               last_seen=?7, os=COALESCE(?4, os),
-               status=CASE WHEN status=?9 THEN status ELSE ?5 END,
+               last_seen=?7, os=COALESCE(NULLIF(?4, ''), os),
+               status=CASE WHEN ?5=?9 THEN status ELSE ?5 END,
                sealed_master=COALESCE(NULLIF(?8, ''), sealed_master)",
             params![
                 h.id,
@@ -223,7 +233,7 @@ impl Db {
                 h.first_seen,
                 h.last_seen,
                 h.sealed_master,
-                c2::STATUS_AGENT
+                c2::STATUS_DISCOVERED
             ],
         )?;
         Ok(())
@@ -386,6 +396,13 @@ impl Db {
     /// erzeugt der Server. Der angelegte Task wird zurückgeliefert — der
     /// Operator braucht seine ID, um das Ergebnis später zuzuordnen.
     pub fn insert_task(&self, req: &c2::CreateTaskRequest) -> Result<c2::Task, DbError> {
+        // Ein Task gehoert zu einem bekannten Host: ein Task, dessen `host_id`
+        // auf keinen Host zeigt, wuerde nie abgearbeitet — der Agent nimmt nur
+        // Tasks fuer seinen eigenen Host an — und bliebe dauerhaft `pending`.
+        // Dieselbe Regel wie bei der Beute (ADR-0004).
+        if !self.host_existiert(&req.host_id)? {
+            return Err(DbError::UnbekannterHost(req.host_id.clone()));
+        }
         let row = TaskRow {
             id: uuid::Uuid::new_v4().to_string(),
             host_id: req.host_id.clone(),
@@ -573,6 +590,8 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("kx-task-result-{}.db", uuid::Uuid::new_v4()));
         let db = Db::open(&path).expect("db");
+        // Ein Task braucht einen bekannten Host (ADR-0004).
+        registriere(&db, "10.0.0.5");
         let task = db
             .insert_task(&c2::CreateTaskRequest {
                 host_id: "10.0.0.5".into(),
@@ -738,6 +757,77 @@ mod tests {
         assert_eq!(
             secrets[0].password, "hash",
             "der Klartext ging beim Auslesen verloren"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Das bekannte OS und der bekannte Status ueberleben eine erneute
+    /// Registrierung, die nichts davon mitbringt.
+    ///
+    /// `discovered` ist die schwaechste Aussage: der Fund eines Hosts im
+    /// Netz darf einen kompromittierten Host nicht zurueckstufen. Und das OS
+    /// wird nur dann ueberschrieben, wenn die neue Registrierung eines
+    /// mitbringt — der leere String ist kein SQL-NULL.
+    #[test]
+    fn eine_erneute_registrierung_loescht_weder_os_noch_status() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-host-stand-{}.db", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+
+        db.upsert_host(&c2::RegisterRequest {
+            host_id: "10.0.0.5".into(),
+            ip: "10.0.0.5".into(),
+            hostname: None,
+            os: Some("Windows".into()),
+            status: Some(c2::STATUS_COMPROMISED.into()),
+            sealed_master: Some("kx1:siegel".into()),
+            master_key: None,
+        })
+        .expect("Host");
+
+        // Die naechste Registrierung bringt weder OS noch Status mit.
+        registriere(&db, "10.0.0.5");
+
+        let hosts = db.list_hosts().expect("hosts");
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(
+            hosts[0].os.as_str(),
+            "Windows",
+            "das bekannte OS ging verloren"
+        );
+        assert_eq!(
+            hosts[0].status,
+            c2::STATUS_COMPROMISED,
+            "der Status wurde herabgestuft"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Ein Task auf einen unbekannten Host wird abgewiesen.
+    ///
+    /// Ein solcher Task wuerde nie abgearbeitet — der Agent nimmt nur Tasks
+    /// fuer seinen eigenen Host an — und bliebe dauerhaft `pending`.
+    #[test]
+    fn ein_task_auf_einen_unbekannten_host_wird_abgewiesen() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-task-waise-{}.db", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+
+        let fehler = db
+            .insert_task(&c2::CreateTaskRequest {
+                host_id: "10.0.0.5".into(),
+                command: "whoami".into(),
+            })
+            .expect_err("der Task muss abgewiesen werden");
+        assert!(
+            matches!(fehler, DbError::UnbekannterHost(ref id) if id == "10.0.0.5"),
+            "unerwarteter Fehler: {fehler}"
+        );
+        assert!(
+            db.list_tasks().expect("tasks").is_empty(),
+            "der Task liegt trotzdem in der Datenbank"
         );
 
         std::fs::remove_file(&path).ok();

