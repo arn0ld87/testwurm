@@ -1,12 +1,23 @@
 ---
 id: ISSUE-3
 title: Default-Credential-Angriff ist toter Code — try_default_credentials liefert stets Ok(None)
-status: done
+status: open
 category: bug
-triage_state: erledigt
+triage_state: wiedereroeffnet
 agent_brief: briefs/ISSUE-3-credential-test-dienstfilter.md
 priority: high
 ---
+
+## Befund (2026-11-16, Betrieb auf rocky)
+
+`try_default_credentials` prüft SSH-Dienste (`UNTERSTUETZTE_DIENSTE`). Gegen
+das Windows-Ziel (192.168.191.143, offene Ports 135/139/445/3389/5985) war der
+Pfad nie aktiv — dort laeuft kein SSH-Dienst. Der Pfad ist damit nicht
+"erledigt", sondern ungeprueft: er wurde gegen ein Ziel geprueft, das er
+nicht erreicht.
+
+Zusaetzlich ungeklaert: der Credential-Test nutzt eine Dienste-Liste, die
+SSH-only ist. Ob der Pfad gegen ein Active-Domain taugt, ist offen.
 
 ## Description
 

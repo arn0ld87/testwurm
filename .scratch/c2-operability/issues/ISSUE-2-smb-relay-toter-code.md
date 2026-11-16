@@ -1,12 +1,25 @@
 ---
 id: ISSUE-2
 title: SMB-Relay ist toter Code — Port 445 fehlt in COMMON_PORTS
-status: done
+status: in-progress
 category: bug
-triage_state: erledigt
+triage_state: wiedereroeffnet
 agent_brief: briefs/ISSUE-2-smb-relay-betriebsfaehig.md
 priority: high
 ---
+
+## Befund (2026-11-16, Betrieb auf rocky)
+
+Der Relay lief nie — und **nicht** mangels Active-Domain, wie angenommen
+wurde. `smb_relay.rs` übergab `-domain` unbedingt (Default `WORKGROUP`),
+setzte aber nie `-machine-account` oder `-machine-hashes`. `smbrelayx.py`
+verlangt alle drei Argumente zusammen oder gar nicht und bricht mit
+`exit(1)` ab — **bevor** der Listener startet. Im Betrieb auf `rocky` endete
+jeder Versuch deshalb mit Exit-Code 1 ohne Meldung, weil der eigentliche
+Fehler nur in `smb.log` stand.
+
+Behoben in ISSUE-19. Das Issue bleibt offen: es ist bisher kein erfolgreicher
+Relay nachgewiesen.
 
 ## Description
 

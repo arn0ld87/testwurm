@@ -93,6 +93,8 @@ pub async fn run_propagation(
                     target: host_id.clone(),
                     script_path: relay_script.to_string(),
                     domain: None,
+                    machine_account: None,
+                    machine_hashes: None,
                 };
                 match smb_relay_dcsync(&relay_cfg).await {
                     Ok(creds) => {
