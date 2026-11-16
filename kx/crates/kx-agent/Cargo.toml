@@ -23,3 +23,6 @@ tokio = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }
 clap = { workspace = true }
+
+[dev-dependencies]
+rand_core.workspace = true

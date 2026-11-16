@@ -8,15 +8,21 @@
 //! Je Host ein eigener Master-Key — die Beute eines Hosts laesst sich nur mit
 //! dem Schluessel dieses Hosts lesen.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use kx_core::hostkey::{DecodedServerKey, ServerPublicKey};
 
 /// Material, mit dem der Agent Host-Master-Keys versiegelt.
 pub struct KeySealer {
     server: DecodedServerKey,
+    /// Die Master-Keys je Host — je Host einer, fuer die ganze Laufzeit.
+    keys: Mutex<HashMap<String, SealedHostKey>>,
 }
 
 /// Das Ergebnis einer Kapselung: Master-Key und versiegeltes Material, beide
 /// base64-kodiert — so, wie die Wire-Felder es verlangen.
+#[derive(Clone)]
 pub struct SealedHostKey {
     /// Das versiegelte Material (base64) — das geht an den C2-Server.
     pub sealed_master: String,
@@ -38,19 +44,77 @@ impl KeySealer {
         let server = public
             .decode()
             .map_err(|e| format!("Server-Schluessel ungueltig: {e}"))?;
-        Ok(KeySealer { server })
+        Ok(KeySealer {
+            server,
+            keys: Mutex::new(HashMap::new()),
+        })
     }
 
-    /// Kapselt einen neuen Master-Key fuer einen Host.
+    /// Der Master-Key eines Hosts — je Host einer, fuer die ganze Laufzeit.
+    ///
+    /// Der Key entsteht beim ersten Aufruf und bleibt danach derselbe. Ohne
+    /// dieses Memo entstuenden bei zwei Aufrufen fuer denselben Host zwei
+    /// Keys: der zweite ueberschriebe beim Registrieren den `sealed_master`
+    /// des ersten, und die bereits damit versiegelte Beute liesse sich mit dem
+    /// neuen Key nicht mehr oeffnen.
     ///
     /// Ohne gueltigen Server-Schluessel gibt es kein Schluesselmaterial — der
     /// Aufrufer meldet die Beute dann ohne Verschluesselung, wie es ein
     /// aelterer Agent auch tut.
-    pub fn seal_for_host(&self) -> Option<SealedHostKey> {
+    pub fn schluessel_fuer(&self, host_id: &str) -> Option<SealedHostKey> {
+        let mut keys = self.keys.lock().unwrap();
+        if let Some(key) = keys.get(host_id) {
+            return Some(key.clone());
+        }
+        let key = self.kapsel_neu()?;
+        keys.insert(host_id.to_string(), key.clone());
+        Some(key)
+    }
+
+    /// Kapselt einen neuen Master-Key fuer einen Host.
+    fn kapsel_neu(&self) -> Option<SealedHostKey> {
         let kapselung = kx_core::hostkey::encapsulate_host_master_key_os(&self.server).ok()?;
         Some(SealedHostKey {
             sealed_master: kx_core::util::b64_encode(&kapselung.sealed_master),
             roh: kapselung.master_key,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Der Key muss zu einer Seriennummer passen — sonst ist die Beute eines
+    /// Hosts nicht mehr zu lesen.
+    fn sealer() -> KeySealer {
+        let mut rng = rand_core::OsRng;
+        let bundle = kx_core::hostkey::ServerKeyBundle::generate(
+            kx_core::format::KexId::HybridX25519MlKem768,
+            &mut rng,
+        );
+        let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");
+        let dekodiert = oeffentlich.decode().expect("dekodierter Schluessel");
+        KeySealer {
+            server: dekodiert,
+            keys: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn derselbe_host_bekommt_denselben_schluessel() {
+        let sealer = sealer();
+        let erster = sealer.schluessel_fuer("192.168.1.5").expect("Schluessel");
+        let zweiter = sealer.schluessel_fuer("192.168.1.5").expect("Schluessel");
+        assert_eq!(erster.roh, zweiter.roh, "der Key wurde neu erzeugt");
+        assert_eq!(erster.sealed_master, zweiter.sealed_master);
+    }
+
+    #[test]
+    fn verschiedene_hosts_bekommen_verschiedene_schluessel() {
+        let sealer = sealer();
+        let a = sealer.schluessel_fuer("192.168.1.5").expect("Schluessel");
+        let b = sealer.schluessel_fuer("192.168.1.6").expect("Schluessel");
+        assert_ne!(a.roh, b.roh, "zwei Hosts teilen sich den Key");
     }
 }
