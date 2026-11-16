@@ -68,27 +68,61 @@ impl Client {
     }
 }
 
+/// Quotiert ein CSV-Feld nach RFC 4180.
+///
+/// Ein Komma, ein Anführungszeichen oder ein Zeilenumbruch im Wert würde die
+/// Spalten verschieben — ein Benutzername wie `a,b` erzeugt sonst eine
+/// kaputte Datei, in der jede Zeile eine andere Spaltenzahl hat.
+fn csv_feld(wert: &str) -> String {
+    if wert.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", wert.replace('"', "\"\""))
+    } else {
+        wert.to_string()
+    }
+}
+
 /// Exportiert Secrets als JSON oder CSV.
+///
+/// Die Datei entsteht mit Mode 0600: sie kann versiegelte Beute enthalten,
+/// und die gehört nicht in eine weltlesbare Datei.
 pub fn export(secrets: &[ExfiltratedSecret], path: &Path, format: &str) -> Result<(), ApiError> {
-    let mut file = std::fs::File::create(path).map_err(|e| ApiError::Io(e.to_string()))?;
+    let mut datei = {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        opts.open(path).map_err(|e| ApiError::Io(e.to_string()))?
+    };
     match format {
         "csv" => {
+            // `sealed_password` gehoert in die Liste: bei versiegelter Beute
+            // ist `password` leer, und ohne die Chiffretext-Spalte wirft der
+            // CSV-Export die Beute weg.
             writeln!(
-                file,
-                "host_id,cred_type,username,password,source,collected_at"
+                datei,
+                "host_id,cred_type,username,password,sealed_password,source,collected_at"
             )
             .map_err(|e| ApiError::Io(e.to_string()))?;
             for s in secrets {
                 writeln!(
-                    file,
-                    "{},{},{},{},{},{}",
-                    s.host_id, s.cred_type, s.username, s.password, s.source, s.collected_at
+                    datei,
+                    "{},{},{},{},{},{},{}",
+                    csv_feld(&s.host_id),
+                    csv_feld(&s.cred_type),
+                    csv_feld(&s.username),
+                    csv_feld(&s.password),
+                    csv_feld(&s.sealed_password),
+                    csv_feld(&s.source),
+                    csv_feld(&s.collected_at),
                 )
                 .map_err(|e| ApiError::Io(e.to_string()))?;
             }
         }
         _ => {
-            serde_json::to_writer_pretty(&mut file, secrets)
+            serde_json::to_writer_pretty(&mut datei, secrets)
                 .map_err(|e| ApiError::Io(e.to_string()))?;
         }
     }
@@ -116,6 +150,62 @@ mod tests {
         export(&secrets, &path, "csv").unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("admin"));
+        std::fs::remove_file(path).ok();
+    }
+
+    /// Der Regressionstest fuer den ausgelieferten Defekt: bei versiegelter
+    /// Beute ist `password` leer, und ohne die Chiffretext-Spalte wirft der
+    /// CSV-Export die Beute weg.
+    #[test]
+    fn csv_enthaelt_den_versiegelten_chiffretext() {
+        let secrets = vec![ExfiltratedSecret {
+            id: "1".into(),
+            host_id: "h1".into(),
+            cred_type: "shadow".into(),
+            username: "root".into(),
+            password: String::new(),
+            source: "/etc/shadow".into(),
+            collected_at: "2026-11-16T00:00:00Z".into(),
+            sealed_password: "kx1:AAAABBBB".into(),
+        }];
+        let dir = std::env::temp_dir();
+        let path = dir.join("kx-cli-test-versiegelt.csv");
+        export(&secrets, &path, "csv").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let kopf = content.lines().next().unwrap_or_default();
+        assert!(
+            kopf.contains("sealed_password"),
+            "die Chiffretext-Spalte fehlt im Kopf: {kopf}"
+        );
+        assert!(
+            content.contains("kx1:AAAABBBB"),
+            "der versiegelte Chiffretext fehlt im Export"
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    /// Ein Komma im Benutzernamen darf die Spalten nicht verschieben.
+    #[test]
+    fn csv_quotiert_felder_mit_komma() {
+        let secrets = vec![ExfiltratedSecret {
+            id: "1".into(),
+            host_id: "h1".into(),
+            cred_type: "password".into(),
+            username: "a,b\"c".into(),
+            password: "p".into(),
+            source: "test".into(),
+            collected_at: "2026-11-16T00:00:00Z".into(),
+            sealed_password: String::new(),
+        }];
+        let dir = std::env::temp_dir();
+        let path = dir.join("kx-cli-test-komma.csv");
+        export(&secrets, &path, "csv").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let zeile = content.lines().nth(1).unwrap_or_default();
+        assert!(
+            zeile.contains("\"a,b\"\"c\""),
+            "das Feld ist nicht quotiert: {zeile}"
+        );
         std::fs::remove_file(path).ok();
     }
 
