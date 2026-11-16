@@ -75,6 +75,12 @@ Rollup aus [`src/`](./src/README.md):
 - Der Host-Handler setzt `id: req.host_id` und lehnt ein leeres `host_id` mit
   `StatusCode::BAD_REQUEST` ab; die Host-ID wird nicht aus der IP abgeleitet
   [src/main.rs:register] [src/main.rs:upload_secret].
+- Ein Secret wird nur angenommen, wenn der Server seinen Host kennt: ein Upload
+  mit unbekanntem `host_id` ergibt `400 Bad Request` und legt keine Zeile an.
+  Der Agent muss den Host vor seiner Beute registrieren — sonst entstünde eine
+  Waisenzeile, die der Operator keinem Zielhost zuordnen kann. Die Regel steht
+  in der Datenbank, neben der Zeile, die sie betrifft (ADR-0004)
+  [src/db.rs:Db::upsert_secret] [src/main.rs:upload_secret].
 - `upsert_host` nutzt `ON CONFLICT(id) DO UPDATE SET last_seen, os, status` — bei Konflikt
   bleiben `ip`, `hostname` und `first_seen` unverändert [src/db.rs:Db::upsert_host].
 - `upsert_secret` nutzt `ON CONFLICT(host_id, cred_type, username, source) DO UPDATE SET

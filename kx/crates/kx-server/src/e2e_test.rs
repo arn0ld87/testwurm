@@ -159,6 +159,26 @@ async fn ein_wiederholter_upload_verdoppelt_die_secrets_nicht() {
         token: Arc::new(TEST_ZUGANG.to_string()),
     });
 
+    // Der Host muss vor seiner Beute registriert sein — eine Beutezeile ohne
+    // bekannten Host waere eine Waisenzeile.
+    let registrierung = RegisterRequest {
+        host_id: "10.0.0.5".into(),
+        ip: "10.0.0.5".into(),
+        hostname: Some("ziel".into()),
+        os: Some("Linux".into()),
+        status: Some(kx_core::c2::STATUS_COMPROMISED.into()),
+        sealed_master: None,
+        master_key: None,
+    };
+    let antwort = app
+        .clone()
+        .oneshot(in_den_router(
+            post_json_request(PATH_REGISTER, TEST_ZUGANG, &registrierung).expect("Request"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(antwort.status(), StatusCode::CREATED);
+
     let upload = SecretUpload {
         host_id: "10.0.0.5".into(),
         cred_type: "password".into(),
@@ -196,6 +216,61 @@ async fn ein_wiederholter_upload_verdoppelt_die_secrets_nicht() {
         secrets.len(),
         1,
         "der wiederholte Upload hat eine zweite Zeile angelegt"
+    );
+
+    let _ = std::fs::remove_file(&db_pfad);
+}
+
+/// Beute ohne bekannten Host wird abgewiesen.
+///
+/// Eine Zeile, deren `host_id` der Server nie gesehen hat, kann der Operator
+/// keinem Zielhost zuordnen. Der Agent muss den Host zuerst registrieren.
+#[tokio::test]
+async fn eine_beute_ohne_bekannten_host_wird_abgewiesen() {
+    let db_pfad =
+        std::env::temp_dir().join(format!("kx-e2e-waisenzeile-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&db_pfad);
+    let db = Arc::new(Db::open(&db_pfad).expect("Datenbank"));
+    let app = app(AppState {
+        db,
+        token: Arc::new(TEST_ZUGANG.to_string()),
+    });
+
+    let upload = SecretUpload {
+        host_id: "10.0.0.99".into(),
+        cred_type: "password".into(),
+        username: "root".into(),
+        password: String::new(),
+        source: Some("default_creds".into()),
+        master_key: None,
+        sealed_password: Some("kx1:siegel".into()),
+    };
+    let antwort = app
+        .clone()
+        .oneshot(in_den_router(
+            post_json_request(PATH_SECRETS, TEST_ZUGANG, &upload).expect("Request"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        antwort.status(),
+        StatusCode::BAD_REQUEST,
+        "die Beute wurde ohne bekannten Host angenommen"
+    );
+
+    // Und es ist auch keine Zeile in der Ablage gelandet.
+    let antwort = app
+        .clone()
+        .oneshot(in_den_router(get_request(PATH_SECRETS, TEST_ZUGANG)))
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(antwort.into_body(), 64 * 1024)
+        .await
+        .expect("Body");
+    let secrets: Vec<ExfiltratedSecret> = parse_json(&body).expect("JSON");
+    assert!(
+        secrets.is_empty(),
+        "die Waisenzeile liegt trotzdem in der Datenbank"
     );
 
     let _ = std::fs::remove_file(&db_pfad);
