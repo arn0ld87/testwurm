@@ -1110,7 +1110,10 @@ if __name__ == '__main__':
 
     RELAY_SERVERS = ( SMBRelayServer, HTTPRelayServer )
     print(version.BANNER)
-    print(version.WARNING_BANNER)
+    # Manche impacket-Versionen kennen WARNING_BANNER nicht - dann gibt es
+    # nichts zu warnen. Ohne diesen getattr bricht das Skript beim Start ab
+    # und der Relay versucht gar nichts.
+    print(getattr(version, 'WARNING_BANNER', ''))
     parser = argparse.ArgumentParser(add_help=False,
                                      description="For every connection received, this module will try to SMB relay that "
                                                  " connection to the target system or the original client")

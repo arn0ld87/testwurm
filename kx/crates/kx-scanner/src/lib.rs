@@ -11,7 +11,7 @@ pub mod fingerprint;
 pub mod range;
 pub mod tcp_scan;
 
-pub use arp::{arp_sweep, DiscoveredHost};
+pub use arp::{arp_sweep, read_mac, DiscoveredHost};
 pub use error::ScanError;
 pub use fingerprint::{fingerprint, ServiceInfo};
 pub use range::{bereich_ist_zu_gross, ip_range};

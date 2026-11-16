@@ -224,7 +224,6 @@ async fn main() {
     // 3. Netzwerk-Phase: Entdeckung → Scan → Exploit.
     let range_start: Ipv4Addr = args.start.parse().expect("Ungültige Start-IP");
     let range_end: Ipv4Addr = args.end.parse().expect("Ungültige End-IP");
-    let own_mac = [0x00; 6]; // Platzhalter — in der Praxis vom System lesen.
 
     let discovered = if let Some(hosts) = &args.hosts {
         info!("Nutze vorgegebene Host-Liste");
@@ -237,13 +236,22 @@ async fn main() {
             })
             .collect()
     } else {
-        match kx_scanner::arp_sweep(&args.iface, &range_start, &range_end, &own_ip, &own_mac) {
+        // Die eigene MAC kommt vom Interface: der ARP-Sweep nennt sie als
+        // Absender. Eine Anfrage von 00:00:00:00:00:00 beantwortet keine
+        // Gegenstelle - sie kennt die Absender-IP schon und wartet auf die
+        // MAC, die sie im Cache hat.
+        match kx_scanner::read_mac(&args.iface)
+            .ok_or_else(|| "MAC des Interfaces nicht lesbar".to_string())
+            .and_then(|own_mac| {
+                kx_scanner::arp_sweep(&args.iface, &range_start, &range_end, &own_ip, &own_mac)
+                    .map_err(|e| e.to_string())
+            }) {
             Ok(h) => h,
-            Err(e) => {
+            Err(grund) => {
                 // Ohne ARP (Windows, macOS ohne CAP_NET_RAW) fragt der Agent
                 // das Netz nicht ab, sondern klopft den Bereich ab: der
                 // TCP-Scan in der Propagation entscheidet, wer antwortet.
-                info!("ARP-Sweep nicht verfuegbar ({e}) — Bereich wird abgeklopft");
+                info!("ARP-Sweep nicht verfuegbar ({grund}) — Bereich wird abgeklopft");
                 if kx_scanner::bereich_ist_zu_gross(range_start, range_end) {
                     warn!(
                         "Bereich {range_start} bis {range_end} ist zu gross — \
