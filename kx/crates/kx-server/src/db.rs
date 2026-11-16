@@ -204,11 +204,15 @@ impl Db {
     }
 
     fn upsert_host_row(&self, h: &HostRow) -> Result<(), DbError> {
+        // Der Status `agent` wird nicht herabgestuft: ein Agent, der sich
+        // selbst im Scanbereich findet, ist im Dashboard sonst kein Agent
+        // mehr, sondern ein Opfer. Die Rolle des Hosts geht sonst verloren.
         self.conn.lock().unwrap().execute(
             "INSERT INTO hosts (id, ip, hostname, os, status, first_seen, last_seen, sealed_master)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET
-               last_seen=?7, os=?4, status=?5,
+               last_seen=?7, os=?4,
+               status=CASE WHEN status=?9 THEN status ELSE ?5 END,
                sealed_master=COALESCE(NULLIF(?8, ''), sealed_master)",
             params![
                 h.id,
@@ -218,7 +222,8 @@ impl Db {
                 h.status,
                 h.first_seen,
                 h.last_seen,
-                h.sealed_master
+                h.sealed_master,
+                c2::STATUS_AGENT
             ],
         )?;
         Ok(())
@@ -620,6 +625,45 @@ mod tests {
             master_key: None,
         })
         .expect("Host registrieren");
+    }
+
+    /// Der Status `agent` wird nicht herabgestuft.
+    ///
+    /// Ein Agent, der seine eigene IP im Scanbereich findet, meldet sich mit
+    /// `discovered` — ohne diese Regel wäre er im Dashboard kein Agent mehr,
+    /// sondern ein Opfer. Die Rolle des Hosts geht sonst verloren.
+    #[test]
+    fn der_status_agent_wird_nicht_herabgestuft() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("kx-host-agent-{}", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+
+        let anmeldung = |status: &str| c2::RegisterRequest {
+            host_id: "192.168.1.100".into(),
+            ip: "192.168.1.100".into(),
+            hostname: None,
+            os: Some("Linux".into()),
+            status: Some(status.into()),
+            sealed_master: None,
+            master_key: None,
+        };
+
+        db.upsert_host(&anmeldung(c2::STATUS_AGENT))
+            .expect("Agent-Host");
+
+        // Jetzt findet der Agent seine eigene IP im Scanbereich.
+        db.upsert_host(&anmeldung(c2::STATUS_DISCOVERED))
+            .expect("erneute Registrierung");
+
+        let hosts = db.list_hosts().expect("hosts");
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(
+            hosts[0].status,
+            c2::STATUS_AGENT,
+            "der Status des Agenten wurde herabgestuft"
+        );
+
+        std::fs::remove_file(&path).ok();
     }
 
     /// Beute ohne bekannten Host wird abgewiesen.

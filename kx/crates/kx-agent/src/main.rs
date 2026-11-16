@@ -214,8 +214,13 @@ async fn main() {
     // oder Beute ging verloren, die der Agent erfolgreich erbeutet hatte. Ein
     // gescheiterter Exploit ist keiner — nichts gefunden ist ein Ergebnis.
     if ergebnis.fehlgeschlagen() {
+        let grund = if ergebnis.c2_nicht_erreichbar() {
+            "Der Lauf hat den C2-Server nicht erreicht"
+        } else {
+            "Der Lauf hat nicht alles erreicht"
+        };
         error!(
-            "Der Lauf hat nicht alles erreicht — der Agent meldet Fehlschlag \
+            "{grund} — der Agent meldet Fehlschlag \
              ({} Hosts verloren, {} Beute verloren)",
             ergebnis.hosts_verloren, ergebnis.beute_verloren
         );
