@@ -128,7 +128,8 @@ erzeugt die Beute nicht — es meldet sie.
   `hosts_registriert`, `hosts_verloren`, `beute_gemeldet`, `beute_verloren`.
 - `[meldung.rs:Ergebnis::c2_nicht_erreichbar]` — `pub fn c2_nicht_erreichbar(&self) -> bool`;
   kein Host kam an.
-- `[meldung.rs:Ergebnis::fehlgeschlagen]` — `pub fn fehlgeschlagen(&self) -> bool`;
+- `[meldung.rs:Ergebnis::fehlgeschlagen]` — `pub fn fehlgeschlagen(&self) -> bool`; jede verlorene
+  Host-Anmeldung und jede verlorene Beute ist ein Fehlschlag.
   der C2 war nicht erreichbar, oder Beute ging verloren, die erbeutet war.
 - `[meldung.rs:Ergebnis::zusammenfuehren]` — `pub fn zusammenfuehren(self, andere: Ergebnis) -> Ergebnis`;
   die Agent meldet in zwei Phasen, beide zählen in dieselbe Bilanz.
@@ -225,8 +226,9 @@ erzeugt die Beute nicht — es meldet sie.
 - Die MAC-Adresse für den ARP-Sweep kommt vom Interface (`kx_scanner::read_mac`), nicht aus einem Platzhalter — der Sweep antwortet sonst nicht [lauf.rs:Lauf::entdecken].
 - Der Logfilter stammt aus `tracing_subscriber::EnvFilter::try_from_default_env()` (liest `RUST_LOG`) und fällt bei Fehlschlag auf `"info"` zurück [main.rs:main].
 - `std::process::exit(1)` wird bei fehlgeschlagener C2-Client-Initialisierung und bei fehlgeschlagenem ARP-Sweep ausgelöst [main.rs:main].
-- `std::process::exit(1)` wird am Ende des Laufs ausgelöst, wenn der C2-Server nicht erreichbar war (kein Host kam an) **oder** wenn Beute verloren ging, die der Agent erfolgreich erbeutet hatte. Ein Host ohne jeden Fund ist kein Fehlschlag — der Lauf hat den C2 erreicht. Ein gescheiterter Exploit ist ebenfalls kein Fehlschlag: nichts gefunden ist ein Ergebnis [meldung.rs:Ergebnis::fehlgeschlagen] [main.rs:main].
+- `std::process::exit(1)` wird am Ende des Laufs ausgelöst, wenn **eine** Host-Anmeldung oder **eine** Beute verloren ging. Das umfasst die eigene Anmeldung des Agenten: der C2-Server kennt den Agenten sonst nicht. Ein gescheiterter Exploit ist **kein** Fehlschlag — nichts gefunden ist ein Ergebnis [meldung.rs:Ergebnis::fehlgeschlagen] [main.rs:main].
 - Fehler beim Melden werden **nicht** verworfen: jeder fehlgeschlagene Upload und jede fehlgeschlagene Registrierung wird geloggt und gezählt. Der Zähler entscheidet über den Exit-Code [meldung.rs:melde].
+- Ist ein Server-Schlüssel konfiguriert und schlägt die Kapselung für einen Host fehl, geht die Beute **nicht** im Klartext hinaus — sie bleibt beim Agenten und zählt als verloren. Ohne Server-Schlüssel geht die Beute im Klartext; das ist der dokumentierte Normalfall [meldung.rs:melde] [kx-core/src/exfil.rs:upload].
 - Feste `cred_type`/`source`-Paare: Windows-LSASS nutzt `secret_type` mit Quelle `"lsass"`, Credential Manager nutzt `"credential_manager"` mit Quelle `"cmdkey"`; unix nutzt `"shadow"` mit Quelle `"/etc/shadow"` und `"aws"` mit Quelle `"~/.aws/credentials"` [lauf.rs:sammle_lokale_beute].
 - Erbeutete Credentials werden mit festen Werten erfasst: SMB-Relay als `cred_type` `"nt_hash"` mit Quelle `"smb_relay"`, SSH-Default-Credentials als `cred_type` `"password"` mit Quelle `"default_creds"` [lauf.rs:sammle_lokale_beute] [propagate.rs:run_propagation].
 - Der Servicename ist auf beiden Plattformen `"kx-agent"`; der Windows-Anzeigename ist `"Kx Agent"`, unix übergibt eine leere Beschreibung [lauf.rs:Lauf::install_persistenz].

@@ -176,8 +176,10 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   aktuellen Host-Schluessel entschluesselbar — ein stehengebliebener Chiffretext macht
   die Zeile kryptografisch tot [db.rs:Db::upsert_secret]
 - Konflikt-Semantik von `upsert_host`: `ON CONFLICT(id) DO UPDATE SET last_seen=?7, os=?4,
-  status=?5` — bei Konflikt bleiben `ip`, `hostname` und `first_seen` unverändert
-  [db.rs:Db::upsert_host]
+  status=CASE WHEN status=?9 THEN status ELSE ?5 END` — bei Konflikt bleiben `ip`,
+  `hostname` und `first_seen` unverändert. Der Status `agent` wird **nicht**
+  herabgestuft: ein Agent, der seine eigene IP im Scanbereich findet, ist im
+  Dashboard sonst kein Agent mehr, sondern ein Opfer [db.rs:Db::upsert_host]
 - Das Schema wird idempotent über `CREATE TABLE IF NOT EXISTS` angelegt; alle drei Tabellen
   deklarieren `id TEXT PRIMARY KEY` [db.rs:Db::open]
 - Die einzelne rusqlite-Connection ist durch `std::sync::Mutex` geschützt; jeder Zugriff

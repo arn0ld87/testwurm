@@ -44,10 +44,18 @@ impl KeySealer {
         let server = public
             .decode()
             .map_err(|e| format!("Server-Schluessel ungueltig: {e}"))?;
-        Ok(KeySealer {
+        Ok(KeySealer::from_server_key(server))
+    }
+
+    /// Ein Versiegler aus einem bereits entschlüsselten Server-Schlüssel.
+    ///
+    /// Der Normalfall ist [`KeySealer::load`] — die Schlüsseldatei. Diese
+    /// Form ist fuer Aufrufer, die den Schlüssel schon im Speicher haben.
+    pub fn from_server_key(server: DecodedServerKey) -> Self {
+        KeySealer {
             server,
             keys: Mutex::new(HashMap::new()),
-        })
+        }
     }
 
     /// Der Master-Key eines Hosts — je Host einer, fuer die ganze Laufzeit.
@@ -95,10 +103,7 @@ mod tests {
         );
         let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");
         let dekodiert = oeffentlich.decode().expect("dekodierter Schluessel");
-        KeySealer {
-            server: dekodiert,
-            keys: Mutex::new(HashMap::new()),
-        }
+        KeySealer::from_server_key(dekodiert)
     }
 
     #[test]
