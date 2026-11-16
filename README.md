@@ -959,7 +959,8 @@ Der Arbeitsvorrat liegt als Markdown-Issues unter
 [`.scratch/c2-operability/issues/`](./.scratch/c2-operability/issues/), der
 Ablaufplan in [`EPIC.md`](./.scratch/c2-operability/EPIC.md).
 
-**Beide Wellen sind abgeschlossen — alle 14 erfassten Issues sind erledigt**,
+**Beide Wellen sind abgeschlossen — die 14 Issues der Wellen 1 und 2 sind
+erledigt**,
 die zugehörigen GitHub-Issues sind geschlossen und die Issue-Dateien stehen auf
 `status: done`. Sie bleiben als Historie im Verzeichnis liegen.
 
@@ -976,7 +977,8 @@ wenn der Agent mit `--server-key` den öffentlichen Server-Schlüssel bekommt
 `kx/crates/kx-core/src/format.rs` beschreibt Header, Footer, Chunk-Nummerierung,
 AAD und Noncen — aber es verschlüsselt nichts. Der Wurm transportiert Passwörter
 und NT-Hashes, keine Dateien. Erfasst als ISSUE-15 in
-[`.scratch/c2-operability/issues/`](./.scratch/c2-operability/issues/).
+[`.scratch/c2-operability/issues/`](./.scratch/c2-operability/issues/) — das ist
+das **einzige** noch offene Issue, die Datei steht auf `status: open`.
 
 Die Felder `sealed_master` und `master_key` gehören zum Wire-Vertrag. Der Agent
 füllt sie, wenn er mit `--server-key` den öffentlichen Server-Schlüssel bekommt.
@@ -989,7 +991,7 @@ nicht.
 
 ```bash
 cd kx
-cargo test --workspace                     # 108 Tests, 0 Fehler
+cargo test --workspace                     # 143 Tests, 0 Fehler
 cargo test -p kx-core c2::tests::host_deserializes_from_server_json
 cargo build --release -p kx-server
 ```
@@ -1016,7 +1018,7 @@ ausgeführt — nicht nur beschrieben:
 
 | Prüfung | Ergebnis |
 |---|---|
-| `cargo test --workspace` | **108 Tests grün, 0 Fehler** (Stand 2026-11-15, `main`) |
+| `cargo test --workspace` | **143 Tests grün, 0 Fehler** (Stand 2026-11-16, `main`) |
 | `kx-server` starten | `Kx-Server lauscht auf https://127.0.0.1:84444 (API: …)` |
 | `GET /api/hosts` ohne Token | `401` |
 | `GET /api/hosts` mit falschem Token | `401` |
@@ -1031,9 +1033,15 @@ ausgeführt — nicht nur beschrieben:
 | `kx-agent` Persistenz-Installation ohne Root | `Permission denied (os error 13)` — erwartet, nicht fatal |
 | `kx-agent` im SSH-Zweig | **Hänger reproduziert** → ISSUE-14 |
 
-Nicht geprüft (bleibt offen): Verhalten gegen echte Windows-Ziele, der
-SMB-Relay-DCSync-Pfad mit echtem Impacket und der Task-Ausführungskreis
-(Agent holt Task → führt aus → meldet Ergebnis) auf einem echten Zielsystem.
+Zusätzlich geprüft am 2026-11-15 an einem **echten Windows-Ziel** (QEMU-VM):
+Registrierung am C2, Extraktion und versiegelter Upload von
+Credential-Manager-Secrets, Persistenz per Run-Key. Die Bilder des Laufs liegen
+in [`docs/reviews/windows-vm/`](./docs/reviews/windows-vm/), der Ablauf ist in
+[`docs/runbooks/windows-test.md`](./docs/runbooks/windows-test.md) beschrieben.
+
+Nicht geprüft (bleibt offen): der SMB-Relay-DCSync-Pfad mit echtem Impacket
+und der Task-Ausführungskreis (Agent holt Task → führt aus → meldet Ergebnis)
+auf einem echten Zielsystem.
 
 ---
 

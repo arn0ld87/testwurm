@@ -36,7 +36,7 @@ Das Repository-Root enthält keinen Code; die Architektur beginnt unter `kx/`.
   (`rustc 1.99.1` verifiziert auf dem macOS-Host). Cargo-Arbeitsverzeichnis ist
   ausschließlich `kx/` — der Workspace-Root ist `kx/`, nicht das Repo-Root.
 - **PATH:** `export PATH="$HOME/.cargo/bin:$PATH"`, falls rustup pro Shell frisch.
-- **Tests:** `cargo test --workspace` — 108 Tests grün, 0 Fehler.
+- **Tests:** `cargo test --workspace` — 143 Tests grün, 0 Fehler (Stand 2026-11-16).
 - **Qualität:** `cargo fmt --check` ist grün und wird in der CI **erzwungen**
   (seit Commit 825511b ist der Workspace formatiert). `cargo clippy
   --workspace --all-targets` meldet noch einige Warnungen — clippy ist bewusst
@@ -53,7 +53,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # Bauen (CI-Matrix: Ubuntu und macOS)
 cargo build --workspace --all-targets
 
-# Tests (108 grün); gezielt ein Crate:
+# Tests (143 grün); gezielt ein Crate:
 cargo test --workspace
 cargo test -p kx-core
 
@@ -267,7 +267,8 @@ liegt in `EPIC.md`, der Designentwurf (Wellenplan, Entscheidungen D1–D7) in
 ISSUE-8 (`ml-kem`-Pin), ISSUE-10 (systemd-Unit), ISSUE-12 (API-Authentifizierung),
 ISSUE-13 (Dashboard-Escaping, Token im Query-String).
 
-**Welle 2 (C2 betriebsfähig) ist abgeschlossen** — alle 14 Issues sind erledigt.
+**Welle 2 (C2 betriebsfähig) ist abgeschlossen** — die 14 Issues der Wellen 1
+und 2 sind erledigt.
 
 **Erledigt:** ISSUE-2 (SMB-Relay: Relay-Skript liegt als Asset im Repository,
 der Aufruf nutzt die reale CLI, es gibt einen Port-445-Test), ISSUE-3 und
