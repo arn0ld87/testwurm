@@ -84,6 +84,20 @@ diese Ausuebung zweimal im Baum, mit je einem eigenen Fehler-Enum.
 - `pub fn Transport::post_json_response<B: Serialize, T: DeserializeOwned>(&self, path: &str, body: &B) -> Result<T, TransportError>` [c2/transport.rs:Transport::post_json_response]
 - `pub fn Transport::get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, TransportError>` [c2/transport.rs:Transport::get_json]
 
+### exfil.rs — die Versiegelung der Beute
+
+Das Modul entscheidet, wie ein Stück Beute den Agenten verlässt. Es kann
+nicht beide Passwortfelder fuellen, und ein Fehler bei der Versiegelung ist
+ein Fehler — der Klartext geht nicht als Ersatz raus.
+
+Es war einmal ein Typ mit demselben Namen wie der Wire-Typ
+`c2::ExfiltratedSecret`. Im Glossar bezeichnet „Exfiltrated Secret" aber das
+**uebertragene** Stueck; der Typ hier war ein Erzeuger des Uploads und
+behauptete damit einen Zustand, den er nicht hatte. Jetzt ist es eine
+Funktion.
+
+- `pub fn upload(secret: &Secret, master_key: Option<&[u8]>, host_id: &str) -> Result<c2::SecretUpload, String>` — erzeugt den Upload fuer ein Stueck; mit Master-Key steht das versiegelte Passwort im Feld `sealed_password` und `password` bleibt leer, ohne Master-Key umgekehrt. Ein Master-Key falscher Laenge ist ein Fehler, kein Panic [exfil.rs:upload]
+
 ### error.rs — Fehlertaxonomie
 
 - `pub enum ErrorClass` mit den Varianten `NotFound`, `Access`, `Sharing`,
