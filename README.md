@@ -1033,9 +1033,15 @@ ausgeführt — nicht nur beschrieben:
 | `kx-agent` Persistenz-Installation ohne Root | `Permission denied (os error 13)` — erwartet, nicht fatal |
 | `kx-agent` im SSH-Zweig | **Hänger reproduziert** → ISSUE-14 |
 
-Nicht geprüft (bleibt offen): Verhalten gegen echte Windows-Ziele, der
-SMB-Relay-DCSync-Pfad mit echtem Impacket und der Task-Ausführungskreis
-(Agent holt Task → führt aus → meldet Ergebnis) auf einem echten Zielsystem.
+Zusätzlich geprüft am 2026-11-15 an einem **echten Windows-Ziel** (QEMU-VM):
+Registrierung am C2, Extraktion und versiegelter Upload von
+Credential-Manager-Secrets, Persistenz per Run-Key. Die Bilder des Laufs liegen
+in [`docs/reviews/windows-vm/`](./docs/reviews/windows-vm/), der Ablauf ist in
+[`docs/runbooks/windows-test.md`](./docs/runbooks/windows-test.md) beschrieben.
+
+Nicht geprüft (bleibt offen): der SMB-Relay-DCSync-Pfad mit echtem Impacket
+und der Task-Ausführungskreis (Agent holt Task → führt aus → meldet Ergebnis)
+auf einem echten Zielsystem.
 
 ---
 
