@@ -75,7 +75,7 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   - `Db::open(path: &Path) -> Result<Self, DbError>` [db.rs:Db::open]
   - `Db::upsert_host(&self, h: &HostRow) -> Result<(), DbError>` [db.rs:Db::upsert_host]
   - `Db::list_hosts(&self) -> Result<Vec<HostRow>, DbError>` [db.rs:Db::list_hosts]
-  - `Db::insert_secret(&self, s: &SecretRow) -> Result<(), DbError>` [db.rs:Db::insert_secret]
+  - `Db::upsert_secret(&self, upload: &c2::SecretUpload) -> Result<(), DbError>` [db.rs:Db::upsert_secret]
   - `Db::list_secrets(&self) -> Result<Vec<SecretRow>, DbError>` [db.rs:Db::list_secrets]
   - `Db::insert_task(&self, t: &TaskRow) -> Result<(), DbError>` [db.rs:Db::insert_task]
   - `Db::update_task_result(&self, task_id, status, result) -> Result<bool, DbError>`
@@ -85,7 +85,8 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   [db.rs:From<SecretRow> for c2::ExfiltratedSecret] [db.rs:From<TaskRow> for c2::Task]
 - SQL-Tabellen (DDL in [db.rs:Db::open]): `hosts` (`id TEXT PRIMARY KEY`, `ip`, `hostname`,
   `os`, `status`, `first_seen`, `last_seen`), `secrets` (`id TEXT PRIMARY KEY`, `host_id`,
-  `cred_type`, `username`, `password`, `source`, `collected_at`), `tasks`
+  `cred_type`, `username`, `password`, `source`, `collected_at`) mit dem UNIQUE-Index
+  `idx_secrets_identitaet` auf `(host_id, cred_type, username, source)`, `tasks`
   (`id TEXT PRIMARY KEY`, `host_id`, `command`, `status`, `result`, `created_at`)
 - Authentifizierung: `verify(parts: &Parts, expected: &str) -> bool` [auth.rs:verify],
   `verify_token(candidate: &str, expected: &str) -> bool` [auth.rs:verify_token] und
@@ -98,6 +99,8 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   (`post_json_request`, `get_request`) und ruft den Router direkt auf;
   `in_den_router` wandelt den C2-Request in einen Axum-Request
   [e2e_test.rs:in_den_router]
+- Ende-zu-Ende-Test der Deduplizierung [e2e_test.rs:ein_wiederholter_upload_verdoppelt_die_secrets_nicht] —
+  zwei POSTs mit demselben Upload, danach liefert `GET /api/secrets` genau ein Objekt
 
 ## Invariants
 
@@ -153,8 +156,18 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   `StatusCode::INTERNAL_SERVER_ERROR` ohne Body zurück [main.rs:heartbeat]
 - `upload_secret` lehnt ein leeres `host_id` mit `StatusCode::BAD_REQUEST` und dem Body
   "host_id darf nicht leer sein" ab [main.rs:upload_secret]
-- Jedes Secret erhält eine frische `Uuid::new_v4()` als ID; ein fehlendes `source` wird `""`,
-  `collected_at` ist `kx_core::util::now_rfc3339()` [main.rs:upload_secret]
+- Ein neu angelegtes Secret erhält eine frische `Uuid::new_v4()` als ID; ein fehlendes
+  `source` wird `""`, `collected_at` ist `kx_core::util::now_rfc3339()` [main.rs:upload_secret]
+- Die fachliche Identitaet eines Secrets ist `(host_id, cred_type, username, source)`;
+  ein wiederholter Upload derselben Identitaet aktualisiert die bekannte Zeile und legt
+  keine zweite an — der Agent meldet dieselben Secrets bei jedem Lauf erneut
+  [db.rs:Db::upsert_secret]
+- Der Upsert laesst die `id` der Zeile unveraendert; bei einem Konflikt werden nur
+  `collected_at`, `password` und `sealed_password` ueberschrieben [db.rs:Db::upsert_secret]
+- `sealed_password` wird bei jedem Upload ueberschrieben: der Agent kapselt pro Lauf
+  einen neuen Master-Key, deshalb ist nur der Chiffretext des juengsten Laufs mit dem
+  aktuellen Host-Schluessel entschluesselbar — ein stehengebliebener Chiffretext macht
+  die Zeile kryptografisch tot [db.rs:Db::upsert_secret]
 - Konflikt-Semantik von `upsert_host`: `ON CONFLICT(id) DO UPDATE SET last_seen=?7, os=?4,
   status=?5` — bei Konflikt bleiben `ip`, `hostname` und `first_seen` unverändert
   [db.rs:Db::upsert_host]
@@ -165,8 +178,9 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
 - `list_hosts`, `list_secrets` und `list_tasks` verwenden `SELECT` ohne `ORDER BY`, die
   Zeilenreihenfolge ist daher nicht spezifiziert [db.rs:Db::list_hosts]
   [db.rs:Db::list_secrets] [db.rs:Db::list_tasks]
-- `insert_secret` und `insert_task` sind reine `INSERT`s ohne `ON CONFLICT`; eine doppelte
-  Primärschlüssel-ID erzeugt `DbError::Sqlite` [db.rs:Db::insert_secret]
+- `upsert_secret` ist ein `INSERT ... ON CONFLICT(host_id, cred_type, username, source)
+  DO UPDATE`; `insert_task` ist ein reiner `INSERT` ohne `ON CONFLICT` — eine doppelte
+  Primärschlüssel-ID erzeugt `DbError::Sqlite` [db.rs:Db::upsert_secret]
   [db.rs:Db::insert_task]
 - `create_task` schreibt über `Db::insert_task` in die Tabelle `tasks` — vorher hatte
   diese Tabelle keinen Schreibpfad, `GET /api/tasks` lieferte deshalb immer `[]`
@@ -180,6 +194,11 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
 - Die Zeilentypen tragen keine serde-Derives und werden per Positionsindex gelesen
   (`r.get(0)?` … `r.get(6)?`), nicht über Spaltennamen [db.rs:HostRow]
   [db.rs:Db::list_hosts]
+- Die beiden nachgezogenen Spalten (`sealed_master`, `sealed_password`) werden als
+  `Option<String>` gelesen und fallen auf `""` zurück: `ALTER TABLE ADD COLUMN` trägt in
+  den Zeilen, die schon davor da waren, NULL nach — ein Leser, der einen String erwartet,
+  würde die Liste mit einem 500 beenden [db.rs:Db::list_host_rows]
+  [db.rs:Db::list_secret_rows]
 - Bei der Umwandlung Zeile → Wire-Typ wird nur das Feld `id` umbenannt, nämlich zu
   `host_id`; alle übrigen Felder behalten ihren Namen [db.rs:From<HostRow> for c2::Host]
 - Das Task-Feld auf dem Draht heißt `result` — es existiert kein `output` in der
@@ -206,7 +225,8 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   `CREATE TABLE IF NOT EXISTS secrets (...)`, `CREATE TABLE IF NOT EXISTS tasks (...)`
   [db.rs:Db::open]
 - SQL-Schreibzugriffe: `INSERT INTO hosts (...) ... ON CONFLICT(id) DO UPDATE SET ...`
-  [db.rs:Db::upsert_host], `INSERT INTO secrets (...)` [db.rs:Db::insert_secret],
+  [db.rs:Db::upsert_host], `INSERT INTO secrets (...) ... ON CONFLICT(host_id, cred_type,
+  username, source) DO UPDATE SET ...` [db.rs:Db::upsert_secret],
   `INSERT INTO tasks (...)` [db.rs:Db::insert_task] und `UPDATE tasks SET status, result
   WHERE id` [db.rs:Db::update_task_result]
 - SQL-Lesezugriffe: `SELECT id, ip, hostname, os, status, first_seen, last_seen,
@@ -217,6 +237,14 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
 - Schema-Migration: fehlende Spalten (`sealed_master`, `sealed_password`) werden per
   `ALTER TABLE` nachgezogen — `CREATE TABLE IF NOT EXISTS` fasst eine bestehende
   Tabelle nicht an [db.rs:Db::ergaenze_spalten]
+- Schema-Migration der `secrets`-Tabelle, in zwingender Reihenfolge und idempotent:
+  erst `DELETE FROM secrets WHERE rowid NOT IN (SELECT MAX(rowid) FROM secrets GROUP BY
+  host_id, cred_type, username, source)` — das laesst je Gruppe nur die juengste Zeile
+  stehen, weil nur deren Chiffretext zum aktuellen Master-Key des Hosts passt —, dann
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_secrets_identitaet ON secrets(host_id,
+  cred_type, username, source)`. Der Index muss nach der Bereinigung kommen: auf der
+  gefuellten Tabelle schlaegt ein `CREATE UNIQUE INDEX` sonst mit "UNIQUE constraint
+  failed" fehl [db.rs:Db::migriere_secrets]
 - Schreibt die Umgebungsvariable `KX_SERVER_TOKEN` prozessweit [main.rs:main]
 - Initialisiert den globalen tracing-Subscriber; ohne `RUST_LOG` filtert er auf `kx_server=info`
   [main.rs:main]

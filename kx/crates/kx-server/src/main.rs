@@ -131,7 +131,7 @@ async fn upload_secret(
     // ohne Server-Schluessel) bleibt der Klartext, sonst gaebe es nichts zu
     // entschluesseln. Diese Regel steht in der Datenbank, neben der Zeile,
     // die sie betrifft.
-    match st.db.insert_secret(&req) {
+    match st.db.upsert_secret(&req) {
         Ok(()) => StatusCode::CREATED.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

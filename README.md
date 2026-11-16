@@ -189,7 +189,7 @@ sequenceDiagram
     end
     A->>S: POST /api/register (je neuer Host)
     A->>S: POST /api/secrets (je erbeutetes Secret)
-    S->>S: INSERT in hosts / secrets
+    S->>S: UPSERT in hosts / secrets
     S->>A: GET /api/tasks (offene Tasks für diesen Host)
     A->>A: Kommando per Shell ausführen (sh -c / cmd /C)
     A->>S: POST /api/tasks/result (Status + Ausgabe, max. 8 KiB)
@@ -603,6 +603,13 @@ Prozess im System lesbar, ein Environment-File mit 0600 ist es nicht.
 | `tasks` | `id, host_id, command, status, result, created_at` |
 
 `status` bei Hosts: `discovered`, `compromised`, `agent`.
+
+Die Tabelle `secrets` hält die Beute ohne Duplikate: die Identität eines
+Secrets ist `(host_id, cred_type, username, source)`. Der Agent meldet dieselben
+Secrets bei jedem Lauf erneut — der Server aktualisiert damit die bekannte
+Zeile, statt eine zweite anzulegen. Dabei wird auch der versiegelte Wert
+überschrieben: nur der Chiffretext des jüngsten Laufs passt zum aktuellen
+Master-Key des Hosts.
 
 ### 6.2 Agent (`kx-agent`)
 
