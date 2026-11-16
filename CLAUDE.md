@@ -201,9 +201,11 @@ Operator entschlüsselt mit `kx-cli secrets --decrypt --server-key <bundle>`.
 ### Binaries und API
 
 - `kx-server`: `--host` (`127.0.0.1`), `--port` (`8443`), `--db` (`kx.db`), `--token`
-  (Env `KX_SERVER_TOKEN`), `--cn` (`kx.local`). Das Token steht im `AppState`, nicht
-  in einer Environment-Variable — eine Variable ist prozessweit und wirkt auf alle
-  Tests. Zertifikat und Schlüssel bleiben im
+  (Env `KX_SERVER_TOKEN`), `--cn` (`kx.local`). Das Token ist **Pflicht** — fehlt es
+  oder ist es leer, startet der Server nicht (Exit 1): ein leerer Erwartungswert
+  passt zu jedem leeren `Bearer`-Header und würde die API öffnen. Das Token steht
+  im `AppState`, nicht in einer Environment-Variable — eine Variable ist prozessweit
+  und wirkt auf alle Tests. Zertifikat und Schlüssel bleiben im
   Speicher; es wird keine `kx-server.crt`/`.key` geschrieben.
 - `kx-agent`: `--server`/`--token` (Env `KX_C2_URL`/`KX_C2_TOKEN`), `--server-cert`,
   `--iface` (`eth0`), `--start`/`--end` (Pflichtargumente), `--own-ip`, `--hosts`,

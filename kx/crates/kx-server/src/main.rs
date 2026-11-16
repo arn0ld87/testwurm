@@ -30,7 +30,6 @@ use kx_core::c2::{
     TaskResultRequest, PATH_HEARTBEAT, PATH_HOSTS, PATH_LOGIN, PATH_REGISTER, PATH_SECRETS,
     PATH_TASKS, PATH_TASKS_CREATE, PATH_TASKS_RESULT,
 };
-use uuid::Uuid;
 
 /// Zeigt die API-Endpunkte an.
 const HELP: &str = "POST /api/register   Host registrieren\n\
@@ -228,6 +227,19 @@ async fn login(State(st): State<AppState>, Json(req): Json<LoginRequest>) -> imp
     }
 }
 
+/// Bestimmt das Token des Servers: CLI-Argument vor Environment-Variable.
+///
+/// Liefert `None`, wenn kein Token gesetzt ist oder wenn es leer ist. Ein
+/// leeres Token waere kein "kein Token": die Authentifizierung vergleicht
+/// konstant-zeitlich gegen den Erwartungswert, und ein leerer Erwartungswert
+/// passt zu jedem leeren Bearer-Header - die API waere dann offen.
+fn resolve_token(cli_token: Option<String>, env_token: Option<String>) -> Option<String> {
+    cli_token
+        .or(env_token)
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -239,22 +251,24 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    // Token bestimmen: CLI > Env > zufällig.
-    let cli_token_provided = cli.token.is_some();
-    let token = cli
-        .token
-        .or_else(|| std::env::var("KX_SERVER_TOKEN").ok())
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-    if !cli_token_provided {
-        // Der Tokenwert wird NICHT ausgegeben. Die API ist ab jetzt
-        // authentifiziert, ein Token im stderr landet in Logs und im
-        // Terminal-Scrollback — dort gehört er nicht hin. Der Wert bleibt
-        // über KX_SERVER_TOKEN abrufbar.
-        eprintln!(
-            "Kx-Server: kein Token gesetzt, generiertes Token wird in KX_SERVER_TOKEN gesetzt"
-        );
-    }
-    // auth.rs liest das Token aus der Environment-Variable.
+    // Token bestimmen: CLI > Environment. Es MUSS eines gesetzt sein.
+    //
+    // Ein leeres Token ist nicht dasselbe wie kein Token: mit einem leeren
+    // Erwartungswert passt jeder leere Bearer-Header, und die API antwortet
+    // dann mit Volldaten. Der Server startet in dem Fall nicht.
+    let token = match resolve_token(cli.token, std::env::var("KX_SERVER_TOKEN").ok()) {
+        Some(t) => t,
+        None => {
+            eprintln!(
+                "Kx-Server: kein Token gesetzt - mit --token oder KX_SERVER_TOKEN. \
+                 Ein leeres Token wuerde die API ohne Authentifizierung oeffnen."
+            );
+            std::process::exit(1);
+        }
+    };
+    // auth.rs liest das Token aus dem AppState; die Variable wird fuer
+    // Kindprozesse gesetzt. Der Tokenwert wird nicht ausgegeben - er landet
+    // sonst in Logs und im Terminal-Scrollback.
     std::env::set_var("KX_SERVER_TOKEN", &token);
 
     let db = Db::open(&cli.db).expect("Datenbank nicht erreichbar");
@@ -347,6 +361,43 @@ fn authorization(zugang: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// Ein leeres Token wird abgewiesen - mit einem leeren Erwartungswert
+    /// waere die API ohne Authentifizierung offen.
+    #[test]
+    fn leeres_token_wird_abgewiesen() {
+        assert!(resolve_token(Some(String::new()), None).is_none());
+        assert!(resolve_token(None, Some(String::new())).is_none());
+        assert!(resolve_token(Some("   ".to_string()), None).is_none());
+        assert!(resolve_token(None, None).is_none());
+    }
+
+    /// Das CLI-Argument hat Vorrang vor der Environment-Variable.
+    #[test]
+    fn token_kommt_aus_cli_vor_environment() {
+        assert_eq!(
+            resolve_token(Some("cli".to_string()), Some("env".to_string())).as_deref(),
+            Some("cli")
+        );
+        assert_eq!(
+            resolve_token(None, Some("env".to_string())).as_deref(),
+            Some("env")
+        );
+        assert_eq!(
+            resolve_token(Some("cli".to_string()), None).as_deref(),
+            Some("cli")
+        );
+    }
+
+    /// Ein Token aus der Environment-Variable wird benutzt, wenn die CLI
+    /// schweigt - so laesst sich der Server per systemd starten, ohne das
+    /// Token in der Prozessliste zu zeigen.
+    #[test]
+    fn environment_token_wird_genutzt() {
+        assert_eq!(
+            resolve_token(None, Some("aus-der-environment".to_string())).as_deref(),
+            Some("aus-der-environment")
+        );
+    }
     use super::*;
 
     /// Die Hilfetext-Auflistung nennt jeden Endpunkt, den der Router registriert.

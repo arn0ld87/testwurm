@@ -355,9 +355,12 @@ export KX_TOKEN="$(openssl rand -hex 32)"
 # → jetzt in Vaultwarden ablegen, dann im Terminal NICHT mehr exportieren
 ```
 
-Ohne gesetztes Token erzeugt der Server zwar ein zufälliges UUID, gibt es aber
-**nicht** aus (`KX_SERVER_TOKEN` wird nur in der Prozess-Umgebung gesetzt) —
-man käme nie an die API. Setze das Token deshalb immer explizit.
+Ohne gesetztes Token startet der Server nicht mehr. Ein zufällig erzeugtes Token
+wäre nutzlos, weil es nirgends ausgeschrieben wird — und ein *leeres* Token wäre
+gefährlich: die Authentifizierung vergleicht gegen den Erwartungswert, und ein
+leerer Erwartungswert passt zu jedem leeren `Bearer`-Header. Die API würde dann
+mit Volldaten antworten. Deshalb bricht der Server bei fehlendem oder leerem
+Token mit Exit-Code 1 ab.
 
 ### Schritt 2 — C2-Server starten
 
@@ -554,13 +557,13 @@ rm -f /tmp/beute.csv /tmp/kx-demo.db
 | `--host` | – | `127.0.0.1` | Bind-Adresse |
 | `--port` | – | `8443` | TCP-Port |
 | `--db` | – | `kx.db` | SQLite-Datei |
-| `--token` | `KX_SERVER_TOKEN` | zufällig (nicht ausgegeben) | Bearer-Token |
+| `--token` | `KX_SERVER_TOKEN` | **Pflicht** | Bearer-Token — ein leerer Wert startet den Server nicht |
 | `--cn` | – | `kx.local` | Name im SubjectAlternativeName des Zertifikats — **muss zum Host in `--server`/`KX_C2_URL` passen** |
 
-**Token-Auflösungsreihenfolge:** `--token` → `KX_SERVER_TOKEN` → zufällige UUID.
-Der zufällige Wert wird **nicht** ausgegeben, sondern nur in die
-Prozessumgebung geschrieben — für einen Betrieb ohne explizites Token gibt es
-damit keinen Weg an das Token. Also: immer setzen.
+**Token-Auflösungsreihenfolge:** `--token` → `KX_SERVER_TOKEN`. Ist keines
+gesetzt oder ist der Wert leer, startet der Server nicht (Exit-Code 1) — ein
+leerer Erwartungswert würde der API jeden leeren `Bearer`-Header passen lassen
+und sie damit öffnen.
 
 **systemd-Unit für den C2-Server** (Beispiel, Token via Environment-Datei):
 
