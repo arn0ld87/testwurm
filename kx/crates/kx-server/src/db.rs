@@ -211,7 +211,7 @@ impl Db {
             "INSERT INTO hosts (id, ip, hostname, os, status, first_seen, last_seen, sealed_master)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET
-               last_seen=?7, os=?4,
+               last_seen=?7, os=COALESCE(?4, os),
                status=CASE WHEN status=?9 THEN status ELSE ?5 END,
                sealed_master=COALESCE(NULLIF(?8, ''), sealed_master)",
             params![

