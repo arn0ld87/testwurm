@@ -184,6 +184,35 @@ mod tests {
         std::fs::remove_file(path).ok();
     }
 
+    /// Der Erfassungszeitpunkt gehört in den Export.
+    ///
+    /// Der entschlüsselte Export hat ihn früher verloren: die CLI baute das
+    /// Secret in einen zweiten Typ zurück, und der hatte kein `collected_at`.
+    /// Die Spalte existierte, der Wert war leer.
+    #[test]
+    fn csv_traegt_den_erfassungszeitpunkt() {
+        let secrets = vec![ExfiltratedSecret {
+            id: "1".into(),
+            host_id: "h1".into(),
+            cred_type: "shadow".into(),
+            username: "root".into(),
+            password: "hash".into(),
+            source: "/etc/shadow".into(),
+            collected_at: "2026-11-16T09:30:00Z".into(),
+            sealed_password: String::new(),
+        }];
+        let dir = std::env::temp_dir();
+        let path = dir.join("kx-cli-test-zeitpunkt.csv");
+        export(&secrets, &path, "csv").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let zeile = content.lines().nth(1).unwrap_or_default();
+        assert!(
+            zeile.contains("2026-11-16T09:30:00Z"),
+            "der Erfassungszeitpunkt fehlt im Export: {zeile}"
+        );
+        std::fs::remove_file(path).ok();
+    }
+
     /// Ein Komma im Benutzernamen darf die Spalten nicht verschieben.
     #[test]
     fn csv_quotiert_felder_mit_komma() {

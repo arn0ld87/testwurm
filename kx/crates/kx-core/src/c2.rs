@@ -121,14 +121,23 @@ pub struct ExfiltratedSecret {
 
 impl ExfiltratedSecret {
     /// Setzt das Klartext-Passwort.
+    ///
+    /// Das versiegelte Feld wird dabei geleert: **nie beide Passwortfelder
+    /// gefüllt.** Die Regel hängt am Typ, nicht am Aufrufer — sonst baut
+    /// irgendein Aufrufer beide Felder und der Server sieht einen Chiffretext
+    /// *und* seinen Klartext.
     pub fn mit_passwort(mut self, wert: &str) -> Self {
         self.password = wert.to_string();
+        self.sealed_password = String::new();
         self
     }
 
     /// Setzt das versiegelte Passwort.
+    ///
+    /// Das Klartext-Feld wird dabei geleert — siehe [`Self::mit_passwort`].
     pub fn mit_versiegeltem_passwort(mut self, wert: String) -> Self {
         self.sealed_password = wert;
+        self.password = String::new();
         self
     }
 }
@@ -217,8 +226,12 @@ impl SecretUpload {
     /// Das Passwort steht damit nicht als Literal im Quelltext — der
     /// Secret-Scan haelt jede hart kodierte Passwortzuweisung fuer ein
     /// eingebettetes Zugangsdaten.
+    ///
+    /// Das versiegelte Feld wird dabei geleert: **nie beide Passwortfelder
+    /// gefüllt.** Die Regel haengt am Typ, nicht am Aufrufer.
     pub fn mit_passwort(mut self, wert: &str) -> Self {
         self.password = wert.to_string();
+        self.sealed_password = None;
         self
     }
 
@@ -227,8 +240,11 @@ impl SecretUpload {
     /// Aus demselben Grund wie [`SecretUpload::mit_passwort`]: ein hart
     /// gesetzter Wert in einem Feld mit "password" im Namen sieht fuer den
     /// Secret-Scan wie ein eingebettetes Zugangsdaten aus.
+    ///
+    /// Das Klartext-Feld wird dabei geleert — siehe [`Self::mit_passwort`].
     pub fn mit_versiegeltem_passwort(mut self, wert: Option<String>) -> Self {
         self.sealed_password = wert;
+        self.password = String::new();
         self
     }
 }
@@ -262,6 +278,53 @@ pub struct TaskResultRequest {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    /// Nie beide Passwortfelder gefüllt — die Regel hängt am Typ, nicht am
+    /// Aufrufer. Ein Typ, der beides erlaubt, lädt zum Fehler ein.
+    #[test]
+    fn die_passwortfelder_schliessen_einander_aus() {
+        let beute = ExfiltratedSecret {
+            id: "s-1".into(),
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: String::new(),
+            source: "smb_relay".into(),
+            collected_at: "2026-11-16T00:00:00Z".into(),
+            sealed_password: String::new(),
+        };
+
+        let im_klartext = beute.clone().mit_passwort("hash");
+        assert_eq!(im_klartext.password, "hash");
+        assert!(im_klartext.sealed_password.is_empty());
+
+        let versiegelt = beute.clone().mit_versiegeltem_passwort("kx1:siegel".into());
+        assert_eq!(versiegelt.sealed_password, "kx1:siegel");
+        assert!(versiegelt.password.is_empty());
+    }
+
+    /// Dasselbe für den Upload-Typ: der Agent darf nie Chiffretext *und*
+    /// Klartext senden.
+    #[test]
+    fn der_upload_kan_nie_beide_passwoerter_tragen() {
+        let upload = SecretUpload {
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: String::new(),
+            source: Some("smb_relay".into()),
+            master_key: None,
+            sealed_password: None,
+        };
+
+        let im_klartext = upload.clone().mit_passwort("hash");
+        assert_eq!(im_klartext.password, "hash");
+        assert!(im_klartext.sealed_password.is_none());
+
+        let versiegelt = upload.mit_versiegeltem_passwort(Some("kx1:siegel".into()));
+        assert_eq!(versiegelt.sealed_password.as_deref(), Some("kx1:siegel"));
+        assert!(versiegelt.password.is_empty());
+    }
 
     /// Golden-JSON: die exakte Form, die der C2-Server für einen Host ausliefert.
     const HOST_JSON: &str = r#"{

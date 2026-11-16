@@ -58,8 +58,8 @@ Agent und CLI sprechen dieselben Typen und dieselben Endpunktpfade.
 - `pub struct RegisterRequest` (`host_id`, `ip` als `String`; `hostname`, `os`, `status`, `sealed_master`, `master_key` als `Option<String>`), ohne `deny_unknown_fields` [c2.rs:RegisterRequest]
 - `pub struct HeartbeatRequest` (`host_id: String`), ohne `deny_unknown_fields` [c2.rs:HeartbeatRequest]
 - `pub struct SecretUpload` (`host_id`, `cred_type`, `username`, `password` als `String`; `source`, `master_key`, `sealed_password` als `Option<String>`), ohne `deny_unknown_fields` [c2.rs:SecretUpload]
-- `impl SecretUpload` mit `mit_passwort(wert: &str)` und `mit_versiegeltem_passwort(wert: Option<String>)` — die Felder werden ueber die Helfer gesetzt, damit kein hart kodiertes Passwort im Quelltext steht [c2.rs:SecretUpload]
-- `impl ExfiltratedSecret` mit `mit_passwort(wert: &str)` und `mit_versiegeltem_passwort(wert: String)` [c2.rs:ExfiltratedSecret]
+- `impl SecretUpload` mit `mit_passwort(wert: &str)` und `mit_versiegeltem_passwort(wert: Option<String>)` — die Felder werden ueber die Helfer gesetzt, damit kein hart kodiertes Passwort im Quelltext steht. Die beiden Helfer leeren sich gegenseitig: **nie beide Passwortfelder gefuellt** [c2.rs:SecretUpload]
+- `impl ExfiltratedSecret` mit `mit_passwort(wert: &str)` und `mit_versiegeltem_passwort(wert: String)` — dieselbe Regel: die Helfer leeren sich gegenseitig [c2.rs:ExfiltratedSecret]
 - `pub struct CreateTaskRequest` (`host_id`, `command` als `String`), ohne `deny_unknown_fields` [c2.rs:CreateTaskRequest]
 - `pub struct TaskResultRequest` (`task_id`, `status`, `result` als `String`), ohne `deny_unknown_fields` [c2.rs:TaskResultRequest]
 

