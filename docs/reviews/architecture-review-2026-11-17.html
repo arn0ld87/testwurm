@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architekturbericht testwurm — 17. November 2026</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
+  .badge-strong { background:#0f766e; color:#fff; }
+  .badge-worth { background:#b45309; color:#fff; }
+  .badge-spec { background:#6b7280; color:#fff; }
+  .shallow { background:#fef3c7; border:1px solid #f59e0b; }
+  .deep { background:#ecfdf5; border:1px solid #10b981; }
+  .dead { background:#fee2e2; border:1px solid #ef4444; }
+  .mermaid { display:flex; justify-content:center; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+<header class="bg-slate-900 text-slate-100 px-8 py-10">
+  <div class="max-w-5xl mx-auto">
+    <p class="text-xs uppercase tracking-widest text-teal-300">Architekturbericht · zweite Runde</p>
+    <h1 class="text-3xl font-bold mt-2">testwurm — nach dem Umbau</h1>
+    <p class="mt-3 text-slate-300 max-w-3xl">
+      Die sieben Kandidaten der Runde vom 16. November sind umgesetzt. Dieser Bericht sucht die
+      Reibung in der <em>jetzigen</em> Struktur: Was ist nach dem Umbau tief geworden, was ist
+      flach geblieben, und wo steht eine Regel an zwei Orten?
+    </p>
+    <p class="mt-4 text-sm text-slate-400 mono">Basis: b747888..c4ccd65 · 191 Tests · 16 PRs · alle mit grüner CI</p>
+  </div>
+</header>
+
+<main class="max-w-5xl mx-auto px-8 py-10 space-y-10">
+
+  <!-- Legende -->
+  <section class="bg-white rounded-lg shadow-sm p-6">
+    <h2 class="text-lg font-semibold mb-4">Wie zu lesen ist</h2>
+    <div class="grid md:grid-cols-3 gap-4 text-sm">
+      <div><span class="badge-strong text-xs px-2 py-1 rounded">Strong</span><p class="mt-2 text-slate-600">Die Reibung ist belegt und der Schaden ist konkret.</p></div>
+      <div><span class="badge-worth text-xs px-2 py-1 rounded">Worth exploring</span><p class="mt-2 text-slate-600">Der Ort stimmt, die Richtung ist offen.</p></div>
+      <div><span class="badge-spec text-xs px-2 py-1 rounded">Speculative</span><p class="mt-2 text-slate-600">Denkbar, aber der Befund trägt die Änderung noch nicht.</p></div>
+    </div>
+  </section>
+
+  <!-- Was schon erledigt ist -->
+  <section class="bg-white rounded-lg shadow-sm p-6 border-l-4 border-teal-600">
+    <h2 class="text-lg font-semibold mb-1">Was die erste Runde hinterlassen hat</h2>
+    <p class="text-sm text-slate-600 mb-4">Diese sieben Stellen sind erledigt — sie kommen in diesem Bericht nicht vor.</p>
+    <div class="grid sm:grid-cols-2 gap-2 text-sm">
+      <div class="rounded bg-slate-50 px-3 py-2"><span class="mono text-teal-700">meldung.rs</span> — ein Meldeweg, ein Zähler, die Reihenfolge „erst Host, dann Beute" liegt im Modul</div>
+      <div class="rounded bg-slate-50 px-3 py-2"><span class="mono text-teal-700">lauf.rs</span> — der Ablauf ist ein Modul mit einem Seam (<span class="mono">Umgebung</span>)</div>
+      <div class="rounded bg-slate-50 px-3 py-2"><span class="mono text-teal-700">smbrelayx.rs</span> — der Vertrag mit dem fremden Werkzeug liegt an einer Stelle</div>
+      <div class="rounded bg-slate-50 px-3 py-2"><span class="mono text-teal-700">c2.rs</span> — die Feldmenge eines Wire-Typs ist eine Funktion des Typs</div>
+      <div class="rounded bg-slate-50 px-3 py-2"><span class="mono text-teal-700">util.rs / error.rs</span> — weg; die toten Helfer sind gelöscht, nicht versteckt</div>
+      <div class="rounded bg-slate-50 px-3 py-2"><span class="mono text-teal-700">decrypt.rs</span> — eine Secret-Form, der Export ist ein Feld-Transfer</div>
+      <div class="rounded bg-slate-50 px-3 py-2"><span class="mono text-teal-700">kx-server</span> — Bibliothek <em>und</em> Binary; ein Test benutzt nur das öffentliche Interface</div>
+      <div class="rounded bg-slate-50 px-3 py-2"><span class="mono text-teal-700">ADR-0004</span> — ein Secret gehört zu einem bekannten Host</div>
+    </div>
+  </section>
+
+  <!-- Kandidat 1 -->
+  <section class="bg-white rounded-lg shadow-sm p-6">
+    <div class="flex items-start justify-between gap-4 mb-3">
+      <h2 class="text-xl font-bold">1 · Das KXENC-Containerformat hat 66 Interface-Items und null Aufrufer</h2>
+      <span class="badge-strong text-xs px-2 py-1 rounded shrink-0">Strong</span>
+    </div>
+    <p class="text-sm text-slate-700"><span class="font-semibold">Dateien:</span> <span class="mono">kx/crates/kx-core/src/format.rs</span> (602 Zeilen Implementierung, 241 Zeilen Test), <span class="mono">kx/crates/kx-core/src/kex.rs</span></p>
+
+    <div class="grid md:grid-cols-2 gap-3 my-4">
+      <div class="dead rounded p-4 text-sm">
+        <p class="font-semibold text-red-800 mb-2">Heute</p>
+        <p class="mono text-xs text-slate-700">pub const FOOTER_MAGIC, FOOTER_LEN, TAG_LEN, NONCE_LEN,<br/>&nbsp;&nbsp;DEK_LEN, HOST_ID_LEN, BUILD_ID_LEN, FILE_ID_LEN,<br/>&nbsp;&nbsp;WRAPPED_DEK_LEN, AAD_LABEL<br/>pub enum CipherId · pub enum KexId · pub struct FooterFlags<br/>pub struct Range · pub struct Footer · pub struct ChunkRef<br/>pub struct ChunkContext<br/>pub fn plan_ranges · chunks_for_ranges · chunk_iter<br/>pub fn nonce_for · aad_for · crc32</p>
+        <p class="mt-3 text-red-900"><strong>66 öffentliche Items.</strong> Nach dem KexId-Lift ruft <strong>nichts</strong> mehr in das Modul.</p>
+      </div>
+      <div class="deep rounded p-4 text-sm">
+        <p class="font-semibold text-emerald-800 mb-2">Ziel</p>
+        <p>Ein Aufrufer, der eine Datei versiegeln will, muss <strong>eine</strong> Funktion kennen — nicht 66 Items, die zusammen das halbe Wire-Format beschreiben. Das Interface schrumpft auf das, was ein Aufrufer wirklich braucht; das Layout, die AAD und die Noncen liegen dahinter.</p>
+        <p class="mt-2 text-slate-600">Der <span class="mono">Löschtest</span>: Nimmt man das Modul weg, verschwindet eine Spezifikation — es verteilt sich nicht auf Aufrufer. Es ist kein Durchreicherer, sondern eine <strong>Implementierung ohne Aufrufer</strong>.</p>
+      </div>
+    </div>
+
+    <p class="text-sm text-slate-700"><span class="font-semibold">Problem:</span> Das größte flache Modul des Baums. Sein Interface beschreibt ein Containerformat vollständig — und die Chiffre, die hineingehört, fehlt (ISSUE-15, <a class="underline" href="https://github.com/arn0ld87/testwurm/issues/31">#31</a>). 241 Zeilen Test prüfen Code, den niemand benutzt.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Der zweite Fund im selben Modul:</span> <span class="mono">format.rs:89</span> definiert eine <strong>eigene</strong> <span class="mono">KexId</span> — Werten 0 und 1, mit derselben Serde-Form wie <span class="mono">kex.rs:15</span>. Wer <span class="mono">kex::KexId</span> benutzt, benutzt eine andere Definition als das Format. Eine Änderung an einer bleibt an der anderen unbemerkt.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Lokalität:</span> Der Wert <span class="mono">KexId</span> ist eine Wire-Kennung. Er steht jetzt an zwei Orten, und nur einer davon ist der benutzte. Das ist genau die Art Drift, die ADR-0001 für die Feldmengen verhindert — nur für die Kex-Art nicht.</p>
+
+    <div class="mermaid my-4">
+flowchart LR
+  subgraph heute["Heute — ohne Aufrufer"]
+    F["format.rs<br/>66 public Items<br/>602 Zeilen"]
+    K1["KexId (Eigendefinition)"]
+    K2["kex.rs<br/>KexId (benutzt)"]
+    F --- K1
+  end
+  subgraph morgen["Mit einem Aufrufer (ISSUE-15)"]
+    E["kxenc::seal(datei)<br/>ein Interface"]
+    C["ChaCha20-Poly1305<br/>DEK je Datei"]
+    K3["kex::KexId<br/>eine Definition"]
+    E --> C
+    E --> K3
+  end
+  heute -.->|"ISSUE-15 gibt ihm<br/>den Aufrufer"| morgen
+    </div>
+
+    <p class="text-sm text-slate-700"><span class="font-semibold">Was tiefer ginge:</span> ISSUE-15 umsetzen — dann bekommt das Modul seinen Aufrufer und sein Interface schrumpft auf das, was ein Aufrufer braucht. Vorher: die zweite <span class="mono">KexId</span>-Definition entfernen, damit der Wert wieder an einer Stelle steht. Das Modul selbst zu löschen wäre der falsche Weg: die Spezifikation ist die Grundlage von ISSUE-15.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Tests:</span> Die 241 Testzeilen prüfen Formatlogik. Mit einem Aufrufer wandern sie hinter das Interface: ein Test über <span class="mono">seal()</span> prüft die Verschlüsselung, nicht die Noncen-Herleitung.</p>
+  </section>
+
+  <!-- Kandidat 2 -->
+  <section class="bg-white rounded-lg shadow-sm p-6">
+    <div class="flex items-start justify-between gap-4 mb-3">
+      <h2 class="text-xl font-bold">2 · Der Master-Key lebt kürzer als die Beute</h2>
+      <span class="badge-strong text-xs px-2 py-1 rounded shrink-0">Strong</span>
+    </div>
+    <p class="text-sm text-slate-700"><span class="font-semibold">Dateien:</span> <span class="mono">kx/crates/kx-agent/src/hostkey.rs</span>, <span class="mono">kx/crates/kx-agent/src/meldung.rs</span>, <span class="mono">kx/crates/kx-server/src/db.rs</span></p>
+
+    <div class="grid md:grid-cols-2 gap-3 my-4">
+      <div class="dead rounded p-4 text-sm">
+        <p class="font-semibold text-red-800 mb-2">Heute</p>
+        <p class="mono text-xs">KeySealer { server, keys: Mutex&lt;HashMap&gt; }</p>
+        <p class="mt-2">Der Memo lebt so lange wie der <strong>Prozess</strong>. Der Server überschreibt <span class="mono">sealed_master</span> bei jeder Registrierung.</p>
+        <p class="mt-2 text-red-900">Lauf 1 kapselt Key A → Beute mit A<br/>Lauf 2 kapselt Key B → <span class="mono">sealed_master</span> = B<br/><strong>Die Beute aus Lauf 1 ist mit B nicht zu öffnen.</strong></p>
+      </div>
+      <div class="deep rounded p-4 text-sm">
+        <p class="font-semibold text-emerald-800 mb-2">Ziel</p>
+        <p>Der Master-Key ist eine Eigenschaft des <strong>Hosts</strong>, nicht des Laufs. Er muss so lange leben wie die Beute, die er öffnet — sonst ist das, was der Server hält, teilweise tot.</p>
+        <p class="mt-2 text-slate-600">Lokalität: „der Schlüssel dieses Hosts" ist eine Aussage über den Host. Heute steht sie an zwei Stellen mit zwei Lebensdauern: der Memo (Prozess) und die Datenbank (dauerhaft).</p>
+      </div>
+    </div>
+
+    <p class="text-sm text-slate-700"><span class="font-semibold">Beleg:</span> <span class="mono">kx-agent/src/hostkey.rs</span> — der Memo sitzt im <span class="mono">KeySealer</span>, und der <span class="mono">KeySealer</span> wird einmal pro Prozess gebaut. <span class="mono">kx-server/src/db.rs</span> — <span class="mono">sealed_master=COALESCE(NULLIF(?8,''), sealed_master)</span>: jede Registrierung mit neuem Siegel ersetzt das alte.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Fehlerpfad:</span> Der Agent läuft im Fünf-Minuten-Takt. Der Operator holt die Beute von heute — der Chiffretext des Vorlaufs lässt sich mit dem heutigen <span class="mono">sealed_master</span> nicht öffnen. Kein Fehler, keine Warnung: die Zeile steht da und ist unlesbar.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Das ist eine Betreiberfrage</strong>, keine reine Codefrage: entweder der Key lebt so lange wie die Beute (deterministisch je Host abgeleitet, oder der Server behält die alten Schlüssel), oder der Operator akzeptiert, dass nur die letzte Runde lesbar ist. Erfasst als <a class="underline" href="https://github.com/arn0ld87/testwurm/issues/70">#70</a>.</p>
+  </section>
+
+  <!-- Kandidat 3 -->
+  <section class="bg-white rounded-lg shadow-sm p-6">
+    <div class="flex items-start justify-between gap-4 mb-3">
+      <h2 class="text-xl font-bold">3 · Die Test-Adapter stehen im öffentlichen Interface</h2>
+      <span class="badge-worth text-xs px-2 py-1 rounded shrink-0">Worth exploring</span>
+    </div>
+    <p class="text-sm text-slate-700"><span class="font-semibold">Dateien:</span> <span class="mono">kx/crates/kx-exploit/src/smbrelayx.rs</span> (Zeilen 138–168), <span class="mono">kx/crates/kx-exploit/src/lib.rs:15</span></p>
+
+    <div class="grid md:grid-cols-2 gap-3 my-4">
+      <div class="shallow rounded p-4 text-sm">
+        <p class="font-semibold text-amber-800 mb-2">Heute</p>
+        <p class="mono text-xs">pub struct Aufzeichnung { … }<br/>pub fn neu(ergebnis) -> Self<br/>pub fn aufrufe(&self) -> Vec&lt;Aufruf&gt;</p>
+        <p class="mt-2">Das Modul ist <span class="mono">pub mod smbrelayx</span> — der Adapter ist Teil des öffentlichen Interface. Benutzt wird er <strong>nur</strong> von den eigenen Tests des Crates (Zeilen 510, 539).</p>
+      </div>
+      <div class="deep rounded p-4 text-sm">
+        <p class="font-semibold text-emerald-800 mb-2">Ziel</p>
+        <p>Der Seam ist das Trait <span class="mono">Werkzeug</span> — das bleibt öffentlich, weil es der Ort des Vertrags ist. Der zweite Adapter (die Aufzeichnung) gehört hinter den Seam: er ist ein <strong>internes</strong> Werkzeug der Prüfung.</p>
+        <p class="mt-2 text-slate-600">Der Agent macht es längst vor: die Attrappe in <span class="mono">meldung.rs:217</span> ist ein <span class="mono">struct</span> im Testmodul, nicht <span class="mono">pub</span>.</p>
+      </div>
+    </div>
+
+    <p class="text-sm text-slate-700"><span class="font-semibold">Problem:</span> Das Interface trägt einen Gegenstand, den kein Aufrufer braucht. Wer <span class="mono">kx_exploit::smbrelayx</span> benutzt, lernt eine Klasse kennen, die nur für die eigenen Tests da ist. Das ist die Kehrseite von „zwei Adapter = echter Seam": der zweite Adapter macht den Seam real, muss aber nicht **öffentlich** sein.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Löschtest:</span> Löscht man <span class="mono">Aufzeichnung</span> aus dem öffentlichen Interface, verschwindet kein Verständnis für Aufrufer — die Tests bleiben, sie finden die Attrappe nur im Testmodul statt im Interface.</p>
+  </section>
+
+  <!-- Kandidat 4 -->
+  <section class="bg-white rounded-lg shadow-sm p-6">
+    <div class="flex items-start justify-between gap-4 mb-3">
+      <h2 class="text-xl font-bold">4 · Ein Fehler der Beute-Extraktion erreicht die Zählung nicht</h2>
+      <span class="badge-worth text-xs px-2 py-1 rounded shrink-0">Worth exploring</span>
+    </div>
+    <p class="text-sm text-slate-700"><span class="font-semibold">Dateien:</span> <span class="mono">kx/crates/kx-agent/src/lauf.rs</span> (die Sammlung der lokalen Beute)</p>
+
+    <p class="text-sm text-slate-700"><span class="font-semibold">Problem:</span> Die Extraktoren des Systems (LSASS, Credential Manager, <span class="mono">/etc/shadow</span>, SSH, AWS) liefern ein Ergebnis pro Quelle. Schlägt eine Quelle fehl, wird das Ergebnis verworfen — der Lauf meldet „0 Beute" so, als wäre nichts dagewesen. Der Fehler erscheint nirgends: weder in der Zählung noch in der Zusammenfassung noch im Exit-Code.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Fehlerpfad:</span> Auf einem Windows-Ziel ist LSASS geschützt, der Extraktor scheitert. Der Agent meldet „19 Beute gemeldet, 0 verloren" — und der Operator hält die Zielhost für vollständig ausgelesen. Die Information, <em>was</em> fehlt, geht verloren.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Lokalität:</span> Die Aussage „das ist alles, was auf diesem Host lag" gehört an eine Stelle. Heute liegt sie verstreut: die Extraktoren in <span class="mono">kx-win</span>/<span class="mono">kx-posix</span>, das Wegwerfen in <span class="mono">lauf.rs</span>, das Zählen in <span class="mono">meldung.rs</span>. Erfasst als <a class="underline" href="https://github.com/arn0ld87/testwurm/issues/71">#71</a>.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Was tiefer ginge:</span> Die Sammlung liefert ein Ergebnis mit Zählern <em>und</em> den Fehlern. Der Lauf meldet beides — die Zahl und die Lücke. Der Extraktionsfehler wird dann eine eigene Größe neben „verloren", nicht ein stilles Verschwinden.</p>
+  </section>
+
+  <!-- Kandidat 5 -->
+  <section class="bg-white rounded-lg shadow-sm p-6">
+    <div class="flex items-start justify-between gap-4 mb-3">
+      <h2 class="text-xl font-bold">5 · Das Port-Interface trägt vier Aufrufe; der Meldeweg braucht zwei</h2>
+      <span class="badge-worth text-xs px-2 py-1 rounded shrink-0">Worth exploring</span>
+    </div>
+    <p class="text-sm text-slate-700"><span class="font-semibold">Dateien:</span> <span class="mono">kx/crates/kx-agent/src/c2.rs</span> (das Trait <span class="mono">C2Port</span>), <span class="mono">kx/crates/kx-agent/src/meldung.rs</span>, <span class="mono">kx/crates/kx-agent/src/tasks.rs</span></p>
+
+    <div class="mermaid my-4">
+flowchart LR
+  subgraph P["C2Port — heute"]
+    M1["registriere_host"]:::m
+    M2["melde_beute"]:::m
+    M3["hole_tasks"]:::t
+    M4["melde_task_ergebnis"]:::t
+  end
+  subgraph V["Wer braucht was"]
+    L["meldung.rs<br/>nutzt M1, M2"]:::u
+    T["tasks.rs<br/>nutzt M3, M4"]:::u
+  end
+  M1 --> L
+  M2 --> L
+  M3 --> T
+  M4 --> T
+  classDef m fill:#dbeafe,stroke:#3b82f6
+  classDef t fill:#fef3c7,stroke:#f59e0b
+  classDef u fill:#f1f5f9,stroke:#94a3b8
+    </div>
+
+    <p class="text-sm text-slate-700"><span class="font-semibold">Problem:</span> <span class="mono">melde(port: &dyn C2Port, …)</span> verlangt einen Port, der vier Methoden hat — genutzt werden zwei. Wer <span class="mono">meldung.rs</span> aufruft, muss trotzdem das ganze Interface kennen, weil der Parameter typisiert ist. Das Interface des Meldewegs ist damit breiter als sein Bedarf.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Das Gegenargument (ernst zu nehmen):</span> Der Port <em>ist</em> der C2-Zugriff des Agenten. Zwei Traits an einer Stelle („Meldung" und „Tasks") zerlegen den Seam in zwei — und die Regel „ein Adapter = hypothetisch, zwei = echt" würde für beide gelten, aber die Fragmentierung kostet mehr, als sie gewinnt. Diese Karte ist deshalb <em>Worth exploring</em> und nicht <em>Strong</em>: die Richtung muss erst gegen den Zugewinn an Übersichtlichkeit abgewogen werden.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Alternative Richtung:</span> Nicht das Trait schmaler machen, sondern die <em>Frage</em> enger stellen: <span class="mono">melde</span> könnte die Registrierung und den Upload als <strong>eine</strong> Operation anbieten („melde diesen Fund"), statt zwei Aufrufe zu koordinieren. Dann bräuchte der Aufrufer nur <em>eine</em> Methode, und die Reihenfolge läge tiefer im Modul.</p>
+  </section>
+
+  <!-- Kandidat 6 -->
+  <section class="bg-white rounded-lg shadow-sm p-6">
+    <div class="flex items-start justify-between gap-4 mb-3">
+      <h2 class="text-xl font-bold">6 · Die Zählung beschreibt den Transport, nicht den Serverzustand</h2>
+      <span class="badge-worth text-xs px-2 py-1 rounded shrink-0">Worth exploring</span>
+    </div>
+    <p class="text-sm text-slate-700"><span class="font-semibold">Dateien:</span> <span class="mono">kx/crates/kx-agent/src/meldung.rs</span> (die Zähler), <span class="mono">kx/crates/kx-agent/src/main.rs</span> (die Zusammenfassung)</p>
+
+    <p class="text-sm text-slate-700"><span class="font-semibold">Problem:</span> „Beute gemeldet" heißt: der Upload-Aufruf wurde mit Erfolg beantwortet. „Beute verloren" heißt: der Aufruf wurde mit einem Fehler beantwortet. Beides ist eine Aussage über die <em>Verbindung</em>. Was der Server daraus gemacht hat, sagt keiner.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Fehlerpfad:</span> Der Server schreibt die Zeile, die Antwort geht auf dem Rückweg verloren (Timeout nach dem Schreiben). Der Agent zählt „1 Beute verloren", der Server hat sie. Oder umgekehrt: der Server lehnt ab, der Agent hat ein anderes Fehlerbild — der Zähler kann es nicht unterscheiden.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Warum das zählt:</span> Der Zähler entscheidet über den Exit-Code, und der Exit-Code ist die Meldung an den Betreiber: „der Wurm lebt und hat geliefert" oder „hier ist etwas schiefgegangen". Wenn die Zahl nicht sagt, was beim Server angekommen ist, sagt sie auch nicht, was der Betreiber tun muss.</p>
+    <p class="text-sm text-slate-700 mt-2"><span class="font-semibold">Zwei Wege:</strong></span> (a) Der Zähler bleibt Transportgröße, wird aber <em>so benannt</em>, dass niemand mehr „gemeldet" mit „angekommen" verwechselt. (b) Der Agent prüft nach dem Upload nach — beim Host-Nachschub steht, ob der Server die Zeile hat. (b) kostet einen zusätzlichen Aufruf je Fund; (a) kostet nichts und benennt die Wahrheit. Erfasst als Teil von <a class="underline" href="https://github.com/arn0ld87/testwurm/issues/69">#69</a>.</p>
+  </section>
+
+  <!-- Geprüft und in Ordnung -->
+  <section class="bg-white rounded-lg shadow-sm p-6">
+    <h2 class="text-lg font-semibold mb-3">Geprüft und <em>in Ordnung</em> befunden</h2>
+    <p class="text-sm text-slate-600 mb-4">Damit die nächste Runde diese Stellen nicht erneut vorschlägt:</p>
+    <ul class="text-sm space-y-2 text-slate-700">
+      <li><span class="mono text-slate-600">meldung.rs</span> — die Reihenfolge „erst Host, dann Beute" liegt im Modul und ist getestet; das Interface ist sechs Items. <strong>Tief.</strong></li>
+      <li><span class="mono text-slate-600">lauf.rs</span> — <span class="mono">Umgebung</span> hat zwei Adapter (System, Attrappe), der Seam ist echt. Das Interface ist klein; 312 Zeilen Implementierung dahinter. <strong>Tief.</strong></li>
+      <li><span class="mono text-slate-600">c2.rs</span> (Server) — der Router steht in der Bibliothek, das Binary startet ihn; das öffentliche Interface ist <span class="mono">app()</span> und <span class="mono">AppState</span>, die Handler sind privat. <strong>Tief.</strong></li>
+      <li><span class="mono text-slate-600">dashboard.rs</span> — die Feldlisten werden aus den <span class="mono">FIELDS</span> der Typen gebaut, das HTML entsteht daraus. Die Kopie ist weg. <strong>Richtig.</strong></li>
+      <li><span class="mono text-slate-600">client.rs</span> — die CSV-Spalten stehen in einer Konstante und werden gegen <span class="mono">FIELDS</span> <em>geprüft</em>; die Rechte der Exportdatei werden auch bei einer vorhandenen Datei auf 0600 gesetzt. <strong>Richtig.</strong> (Ein Schönheitsfehler bleibt: der Rechte-Block steht zweimal hintereinander — aus einer Skript-Editur. Wird mitbehoben.)</li>
+      <li><span class="mono text-slate-600">c2.rs</span> (Kern) — die Feldmenge eines Wire-Typs ist eine Konstante am Typ; die Golden-JSON-Fixtures und das Key-Set-Pinning halten sie fest. <strong>Richtig.</strong></li>
+      <li><span class="mono text-slate-600">hostkey.rs</span> (Kern) — das Memo je Host ist richtig und verhindert die Doppel-Kapselung. <strong>Richtig.</strong> (Nur die <em>Lebensdauer</em> des Keys ist offen — Kandidat 2.)</li>
+    </ul>
+  </section>
+
+  <!-- Top-Empfehlung -->
+  <section class="bg-slate-900 text-slate-100 rounded-lg shadow-lg p-8">
+    <p class="text-xs uppercase tracking-widest text-teal-300">Top-Empfehlung</p>
+    <h2 class="text-2xl font-bold mt-2">Erst der Master-Key (Kandidat 2), dann das KXENC-Format (Kandidat 1)</h2>
+    <p class="mt-4 text-slate-300 max-w-3xl">
+      <strong>Kandidat 2</strong> ist die einzige Stelle, an der der Umbau dem Betreiber etwas
+      <em>verspricht</em>, das er nicht halten kann: Der Server hält Beute, die sich nicht öffnen
+      lässt. Das ist kein Architektur-Geschmack, sondern eine Aussage über die Operierbarkeit —
+      und die Entscheidung, wie es gelöst wird (Key lebt so lange wie die Beute, oder der Operator
+      akzeptiert nur die letzte Runde), gehört dem Betreiber, nicht dem Refactoring.
+    </p>
+    <p class="mt-3 text-slate-300 max-w-3xl">
+      <strong>Kandidat 1</strong> ist die größte Einzelposition im Baum und über ISSUE-15
+      vorbereitet: Das Format hat keinen Aufrufer und keine Chiffre — beides ist dieselbe
+      Arbeit. Diese beiden Kandidaten hängen an derselben Frage: <em>welche Aussagen über
+      verschlüsselte Beute macht das System, und wo stehen sie?</em>
+    </p>
+    <p class="mt-3 text-slate-300 max-w-3xl">
+      Kandidaten 3 bis 6 sind Haltungsfragen: die Adapter im Interface, die verschluckten
+      Extraktionsfehler, die Breite des Ports und die Bedeutung der Zähler. Sie lohnen sich,
+      aber sie warten auf eine Entscheidung, die nichts blockiert.
+    </p>
+  </section>
+
+  <footer class="text-center text-xs text-slate-400 py-8">
+    testwurm · Architekturbericht vom 17. November 2026 · Basis b747888..c4ccd65 · 191 Tests grün
+  </footer>
+</main>
+
+<script>
+mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'loose' });
+</script>
+</body>
+</html>

@@ -16,7 +16,7 @@ _Avoid_: C2 client (the client is an adapter over the transport), HTTP layer
 
 **Exfiltration**: The process of extracting sensitive data (credentials, keys, configurations) from compromised systems and transmitting it to an external location.
 
-**Exfiltrated Secret**: A credential that has been extracted from a compromised host and transferred to the operator. It carries the identity of the host it was taken from, so that every exfiltrated secret points back to a known host.
+**Exfiltrated Secret**: A credential that has been extracted from a compromised host and transferred to the operator. It carries the identity of the host it was taken from, so that every exfiltrated secret points back to a known host. It carries the key it was sealed with, so that every exfiltrated secret opens on its own — even when the host entry has since moved on to another key.
 _Avoid_: Secret (an extracted secret still lives on the compromised host and has not been transferred)
 
 **Meldung**: What the agent reports to the C2 — the hosts it knows and the loot it found on them, in the order the contract requires: first the host, then its loot. A Meldung carries its own outcome: what was delivered and what was lost. Loot whose host could not be announced stays with the agent; it is lost, not transferred.

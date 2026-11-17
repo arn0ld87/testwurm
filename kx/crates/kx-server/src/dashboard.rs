@@ -238,6 +238,7 @@ mod tests {
             source: "smb_relay".into(),
             collected_at: "2026-11-11T00:05:00Z".into(),
             sealed_password: String::new(),
+            sealed_master: String::new(),
         }
     }
 

