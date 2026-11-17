@@ -348,6 +348,7 @@ wo sie benutzt wird.
 - `seal` legt je Container einen frischen DEK (32 Byte) an und umschliesst ihn mit dem Master-Key des Hosts; es gibt keinen zweiten Schluesselkanal [kxenc.rs:seal]
 - Der umschlossene DEK hat die Form `Nonce (12) || Chiffriertext (DEK 32 || Nonce-Basis 12) || Tag (16)` — genau `WRAPPED_DEK_LEN` Byte [kxenc.rs:seal] [format.rs:WRAPPED_DEK_LEN]
 - Die AAD des DEK-Wrappings bindet die Datei-Kennung, die Reichweiten sowie Klartext- und Chunk-Groesse; ein umgebauter Fuss scheitert am AEAD, nicht erst an der CRC [kxenc.rs:dek_aad]
+- Sie bindet zusaetzlich `kex`, `build_id` und `created_unix` — die drei Felder lagen nur in der unkeyed CRC und waren damit faelschbar [kxenc.rs:dek_aad]
 - Die Nonce-Basis steht im Fuss und wird beim Oeffnen gegen die Basis aus dem umschlossenen DEK geprueft [kxenc.rs:open]
 - Der Container hat die Laenge `plain_size + tags_len + FOOTER_LEN`; der Chiffriertext ersetzt den Klartext an seiner Stelle, die Tags stehen im Anhang [kxenc.rs:seal] [kxenc.rs:open]
 - `seal` verschluesselt den ganzen Puffer als **eine** Reichweite; die Kopf-/Fussteil-Planung mit zwei Reichweiten ist der dateiweisen Engine vorbehalten [kxenc.rs:seal]
