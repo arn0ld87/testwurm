@@ -128,6 +128,26 @@ pub fn export(secrets: &[ExfiltratedSecret], path: &Path, format: &str) -> Resul
         }
         opts.open(path).map_err(|e| ApiError::Io(e.to_string()))?
     };
+    // `mode` wirkt nur beim **Anlegen**. Eine schon vorhandene Datei behielte
+    // ihre alten Rechte — und der Export schreibt Klartext hinein. Die
+    // Rechte werden deshalb nach dem Oeffnen gesetzt: die Datei ist da
+    // bereits leer (truncate), ein offenes Fenster gibt es nicht.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| ApiError::Io(e.to_string()))?;
+    }
+    // `mode` wirkt nur beim **Anlegen**. Eine schon vorhandene Datei behielte
+    // ihre alten Rechte — und der Export schreibt Klartext hinein. Die
+    // Rechte werden deshalb nach dem Oeffnen gesetzt: die Datei ist da
+    // bereits leer (truncate), ein offenes Fenster gibt es nicht.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| ApiError::Io(e.to_string()))?;
+    }
     match format {
         "csv" => {
             writeln!(datei, "{}", CSV_SPALTEN.join(","))
@@ -151,6 +171,34 @@ pub fn export(secrets: &[ExfiltratedSecret], path: &Path, format: &str) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Der Export gehoert nur dem Betreiber.
+    ///
+    /// `mode` wirkt nur beim Anlegen — eine schon vorhandene Datei behaelt
+    /// ihre alten Rechte. Der Export schreibt aber Klartext hinein.
+    #[cfg(unix)]
+    #[test]
+    fn der_export_der_keinem_gehoert_wird_nicht_weltlesbar() {
+        use std::os::unix::fs::PermissionsExt;
+        // Der Name ist einmalig: zwei Laeufe duerfen sich nicht dieselbe
+        // Datei streitig machen.
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Uhr")
+            .as_nanos();
+        let pfad = std::env::temp_dir().join(format!("kx-export-{stamp}.json"));
+        std::fs::write(&pfad, b"[]").expect("Datei");
+        std::fs::set_permissions(&pfad, std::fs::Permissions::from_mode(0o644)).expect("Rechte");
+
+        export(&[], &pfad, "json").expect("Export");
+
+        let rechte = std::fs::metadata(&pfad)
+            .expect("Metadaten")
+            .permissions()
+            .mode();
+        assert_eq!(rechte & 0o777, 0o600, "der Export ist weltlesbar");
+        std::fs::remove_file(&pfad).ok();
+    }
 
     #[test]
     fn export_writes_csv() {
