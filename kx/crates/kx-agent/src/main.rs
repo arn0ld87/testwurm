@@ -217,8 +217,12 @@ async fn main() {
 
     // Die Zusammenfassung nennt die zugestellte Beute, nicht die vorbereitete.
     info!(
-        "Agent-Lauf abgeschlossen: {} Hosts registriert, {} Beute gemeldet, {} Beute verloren",
-        ergebnis.hosts_registriert, ergebnis.beute_gemeldet, ergebnis.beute_verloren
+        "Agent-Lauf abgeschlossen: {} Hosts registriert, {} Beute uebertragen, \
+         {} Beute verloren, {} nicht extrahierbar",
+        ergebnis.hosts_registriert,
+        ergebnis.beute_uebertragen,
+        ergebnis.beute_verloren,
+        ergebnis.beute_nicht_extrahiert
     );
 
     // Ein Lauf, der nichts erreicht, darf nicht als Erfolg melden. Der

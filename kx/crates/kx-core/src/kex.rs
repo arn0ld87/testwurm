@@ -28,3 +28,26 @@ impl KexId {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Die Kennung hat einen festen Wert im Wire-Format — der Footer traegt
+    /// sie als Byte. Ein Verschieben der Werte wuerde die gespeicherten
+    /// Container unlesbar machen.
+    #[test]
+    fn die_kennung_hat_feste_werte() {
+        assert_eq!(KexId::X25519 as u8, 0);
+        assert_eq!(KexId::HybridX25519MlKem768 as u8, 1);
+        assert_eq!(KexId::from_u8(0).expect("X25519"), KexId::X25519);
+        assert_eq!(
+            KexId::from_u8(1).expect("Hybrid"),
+            KexId::HybridX25519MlKem768
+        );
+        assert!(
+            KexId::from_u8(2).is_err(),
+            "eine unbekannte Kennung muss scheitern"
+        );
+    }
+}
