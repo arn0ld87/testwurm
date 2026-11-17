@@ -138,16 +138,6 @@ pub fn export(secrets: &[ExfiltratedSecret], path: &Path, format: &str) -> Resul
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| ApiError::Io(e.to_string()))?;
     }
-    // `mode` wirkt nur beim **Anlegen**. Eine schon vorhandene Datei behielte
-    // ihre alten Rechte — und der Export schreibt Klartext hinein. Die
-    // Rechte werden deshalb nach dem Oeffnen gesetzt: die Datei ist da
-    // bereits leer (truncate), ein offenes Fenster gibt es nicht.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| ApiError::Io(e.to_string()))?;
-    }
     match format {
         "csv" => {
             writeln!(datei, "{}", CSV_SPALTEN.join(","))
