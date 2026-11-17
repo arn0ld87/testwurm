@@ -84,25 +84,6 @@ impl CipherId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[repr(u8)]
-pub enum KexId {
-    /// Nur X25519, fallback fuer Umgebungen ohne ML-KEM (Entscheidung E3).
-    X25519 = 0,
-    /// Hybride KEM X25519 + ML-KEM-768, Shared Secret ueber HKDF kombiniert.
-    HybridX25519MlKem768 = 1,
-}
-
-impl KexId {
-    pub fn from_u8(v: u8) -> Result<Self> {
-        match v {
-            0 => Ok(KexId::X25519),
-            1 => Ok(KexId::HybridX25519MlKem768),
-            other => Err(Error::Format(format!("KEX-Kennung {other} unbekannt"))),
-        }
-    }
-}
-
 /// Footer-Flags. Bewusst 8 Bit, damit spaetere Versionen Platz haben.
 /// Handgeschrieben statt `bitflags`-Crate: der Core soll ohne Makro-Crate
 /// kompilieren, und die Bitwerte sind fester Bestandteil des Formats.
@@ -180,7 +161,7 @@ impl Range {
 pub struct Footer {
     pub format_version: u8,
     pub cipher: CipherId,
-    pub kex: KexId,
+    pub kex: crate::kex::KexId,
     pub flags: FooterFlags,
     pub chunk_size: u32,
     pub n_chunks: u32,
@@ -380,7 +361,7 @@ impl Footer {
         let footer = Footer {
             format_version,
             cipher: CipherId::from_u8(bytes[off::CIPHER])?,
-            kex: KexId::from_u8(bytes[off::KEX])?,
+            kex: crate::kex::KexId::from_u8(bytes[off::KEX])?,
             flags: FooterFlags::from(bytes[off::FLAGS]),
             chunk_size: read_u32(bytes, off::CHUNK_SIZE),
             n_chunks: read_u32(bytes, off::N_CHUNKS),
@@ -612,7 +593,7 @@ mod tests {
         Footer {
             format_version: FORMAT_VERSION,
             cipher: CipherId::ChaCha20Poly1305Detached,
-            kex: KexId::HybridX25519MlKem768,
+            kex: crate::kex::KexId::HybridX25519MlKem768,
             flags: FooterFlags::empty(),
             chunk_size: chunk as u32,
             n_chunks: n as u32,

