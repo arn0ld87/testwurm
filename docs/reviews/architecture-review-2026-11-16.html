@@ -783,6 +783,14 @@ flowchart TB
               Beute im Klartext das Passwort verloren: <strong>ohne Fehler und ohne
               Spur</strong>. Behoben, mit zwei Regressionstests, die den Fehler nachweislich
               fangen.</li>
+            <li>Eine dritte Runde — neun Leser über den ganzen Diff, je drei Verifier je
+              Befund — fand <strong>sechs weitere Fehler</strong>
+              (<a class="underline" href="https://github.com/arn0ld87/testwurm/pull/66">#66</a>),
+              darunter zwei aus diesem Diff selbst: das bekannte Betriebssystem eines Hosts
+              wurde mit dem leeren String überschrieben (<code>COALESCE(?4, os)</code> greift
+              nie, der leere String ist kein SQL-<code>NULL</code>), und das Relay-Skript war
+              nicht mehr auffindbar, weil der Kindprozess in einem eigenen Arbeitsverzeichnis
+              läuft. Behoben, mit fünf Regressionstests.</li>
           </ul>
         </div>
 
@@ -790,7 +798,20 @@ flowchart TB
           <strong>Betriebsnachweis:</strong> der C2-Server läuft auf <span class="mono">rocky</span>
           mit dem neuen Stand (Smoke-Test: 401 / 401 / <strong>200</strong> / 404, Datenbestand
           unversehrt), der Agent läuft in der Kali-VM im Fünf-Minuten-Takt gegen den
-          Server. <strong>186 Tests</strong> grün.
+          Server — Zyklus für Zyklus <em>„2 Hosts registriert, 19 Beute gemeldet, 0 Beute
+          verloren"</em>, Exit-Code 0, keine Fehler im Journal. <strong>191 Tests</strong> grün.
+        </div>
+
+        <div class="bg-slate-50 border-l-4 border-slate-400 rounded-r p-4 max-w-3xl text-sm">
+          <strong>Was offen bleibt — als Issues erfasst, nicht vergessen:</strong>
+          <ul class="mt-2 space-y-1 list-disc list-inside">
+            <li><a class="underline" href="https://github.com/arn0ld87/testwurm/issues/67">#67</a> — die Doku beschreibt an acht Stellen einen anderen Stand als der Code.</li>
+            <li><a class="underline" href="https://github.com/arn0ld87/testwurm/issues/69">#69</a> — die Testlücken, die der Umbau mitgebracht hat.</li>
+            <li><a class="underline" href="https://github.com/arn0ld87/testwurm/issues/70">#70</a> — der Master-Key entsteht je Lauf: die Beute des Vorlaufs wird unlesbar. Eine Betreiberfrage.</li>
+            <li><a class="underline" href="https://github.com/arn0ld87/testwurm/issues/71">#71</a> — ein Fehler der Beute-Extraktion erreicht die Zählung nicht.</li>
+            <li><a class="underline" href="https://github.com/arn0ld87/testwurm/issues/65">#65</a> — der C2 erzeugt bei jedem Start ein neues Zertifikat; jeder Neustart trennt alle Agenten.</li>
+            <li><a class="underline" href="https://github.com/arn0ld87/testwurm/issues/31">#31</a> — ISSUE-15: das KXENC-Containerformat hat keine Chiffre.</li>
+          </ul>
         </div>
       </section>
 
