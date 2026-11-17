@@ -1,5 +1,13 @@
 //! Dateiformat `KXENC` v1 — Layout, Reichweitenplanung, Nonce- und AAD-Regeln.
 //!
+//! **Hier wird nichts verschluesselt.** Dieses Modul ist der Formatvertrag:
+//! Wo die Bytes liegen, wie die Chunks nummeriert sind, wie die Nonce und die
+//! AAD entstehen. Die Chiffre sitzt in [`crate::kxenc`] — sie dockt genau hier
+//! an (`nonce_for`, `aad_for`) und benutzt diese Funktionen, statt sie zu
+//! duplizieren. Die Chunk-Maschinerie (`chunk_iter`, `aad_for`, `nonce_for`,
+//! `ChunkRef`, `ChunkContext`) ist deshalb crate-intern; oeffentlich bleibt der
+//! Vertrag: Fusszeile, Reichweite, Flags und die Planung.
+//!
 //! Layout nach dem Verschlüsseln (alles in Byte, LE-Zahlen im Footer):
 //!
 //! ```text
@@ -21,6 +29,7 @@
 //! - **Detached-Tags statt Attached.** Ein Chunk-Ciphertext hat damit exakt die
 //!   Laenge des Klartexts; die Reichweitenplanung bleibt eindeutig (Risiko R2).
 use crate::codec::hex;
+use crate::kex::KexId;
 use crate::{Error, Result, FORMAT_VERSION, MAX_RANGES};
 
 pub const FOOTER_MAGIC: [u8; 4] = *b"KXNF";
@@ -84,24 +93,13 @@ impl CipherId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[repr(u8)]
-pub enum KexId {
-    /// Nur X25519, fallback fuer Umgebungen ohne ML-KEM (Entscheidung E3).
-    X25519 = 0,
-    /// Hybride KEM X25519 + ML-KEM-768, Shared Secret ueber HKDF kombiniert.
-    HybridX25519MlKem768 = 1,
-}
-
-impl KexId {
-    pub fn from_u8(v: u8) -> Result<Self> {
-        match v {
-            0 => Ok(KexId::X25519),
-            1 => Ok(KexId::HybridX25519MlKem768),
-            other => Err(Error::Format(format!("KEX-Kennung {other} unbekannt"))),
-        }
-    }
-}
+// `KexId` stand hier ein zweites Mal — obwohl der Schluesselaustausch nichts
+// mit einem Container zu tun hat. Der Bericht vom 2026-11-15 hat das als
+// Fussnote festgehalten: wer das Containerformat entfernt, bricht damit die
+// Kryptografie. `kex.rs` traegt das Enum seit dem Umbau; die Dublette hier
+// war tote Kopie (niemand ausserhalb dieses Moduls hat sie benutzt) und ist
+// weg. Die Fusszeile verweist jetzt auf `crate::kex::KexId` — die Kennung im
+// Byte bleibt dieselbe.
 
 /// Footer-Flags. Bewusst 8 Bit, damit spaetere Versionen Platz haben.
 /// Handgeschrieben statt `bitflags`-Crate: der Core soll ohne Makro-Crate
@@ -251,7 +249,12 @@ impl Footer {
         let mut plain_covered = 0u64;
         let mut expect_ct = 0u64;
         for r in &active {
-            if r.plain_off + r.plain_len > self.plain_size {
+            // Geprueft, nicht gerechnet — der Fuss ist nicht geschuetzt.
+            let reichweite = r
+                .plain_off
+                .checked_add(r.plain_len)
+                .ok_or_else(|| Error::Format("Reichweite hat eine unmoegliche Laenge".into()))?;
+            if reichweite > self.plain_size {
                 return Err(Error::Format(format!(
                     "Reichweite {}+{} ueberschreitet Klartextgroesse {}",
                     r.plain_off, r.plain_len, self.plain_size
@@ -481,7 +484,7 @@ pub fn plan_ranges(plain_size: u64, head_len: u64, tail_len: u64, min_size: u64)
 
 /// Anzahl Chunks ueber alle Reichweiten. Deterministisch, well Resume und
 /// Decryptor dieselbe Nummerierung brauchen (B004).
-pub fn chunks_for_ranges(ranges: &[Range], chunk_size: u64) -> u64 {
+pub(crate) fn chunks_for_ranges(ranges: &[Range], chunk_size: u64) -> u64 {
     if chunk_size == 0 {
         return 0;
     }
@@ -494,8 +497,11 @@ pub fn chunks_for_ranges(ranges: &[Range], chunk_size: u64) -> u64 {
 
 /// Nummerierung eines Chunks: globaler Index ueber alle Reichweiten in
 /// Reichweitenreihenfolge, dazu der Index innerhalb der Reichweite.
+///
+/// Die Chunk-Maschinerie ist Maschinbau der Chiffre (`kxenc`) und nicht Teil
+/// des oeffentlichen Formatvertrags — sie ist deshalb crate-intern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChunkRef {
+pub(crate) struct ChunkRef {
     pub range_index: u8,
     pub index_in_range: u64,
     pub global_index: u64,
@@ -505,7 +511,7 @@ pub struct ChunkRef {
     pub is_final_global: bool,
 }
 
-pub fn chunk_iter(ranges: &[Range], chunk_size: u64) -> Vec<ChunkRef> {
+pub(crate) fn chunk_iter(ranges: &[Range], chunk_size: u64) -> Vec<ChunkRef> {
     let mut out = Vec::new();
     if chunk_size == 0 {
         return out;
@@ -543,7 +549,17 @@ pub fn chunk_iter(ranges: &[Range], chunk_size: u64) -> Vec<ChunkRef> {
 /// Folge, weil Reichweiten und Chunkgroessen im Footer stehen. Die Nonce ist
 /// ausserdem an die Per-File-DEK gebunden, eine Wiederverwendung ueber Dateien
 /// hinweg ist damit wirkungslos.
-pub fn nonce_for(base: &[u8; NONCE_LEN], range_index: u8, index_in_range: u64) -> [u8; NONCE_LEN] {
+///
+/// **Grenze:** der Index in der Range braucht 32 Bit. Ab `index_in_range >=
+/// 2^32` laeuft er in das Bitfeld des Range-Index, und Range 1 ist dann nicht
+/// mehr von Range 0 zu unterscheiden. `kxenc::seal` weist solche Reichweiten
+/// ab; fuer eine Datei ist die Grenze bei 64-KiB-Chunks erst bei 256 TiB
+/// erreicht.
+pub(crate) fn nonce_for(
+    base: &[u8; NONCE_LEN],
+    range_index: u8,
+    index_in_range: u64,
+) -> [u8; NONCE_LEN] {
     let mut n = [0u8; NONCE_LEN];
     n[0..4].copy_from_slice(&base[0..4]);
     let packed: u64 = ((range_index as u64) << 32) | index_in_range;
@@ -560,13 +576,19 @@ pub const AAD_LABEL: &[u8] = b"KXENC-AAD1";
 /// einer Struktur statt in acht Einzelargumenten — die Aufrufstellen
 /// bleiben dadurch lesbar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ChunkContext<'a> {
+pub(crate) struct ChunkContext<'a> {
     /// Die Formatversion des Containers.
     pub format_version: u8,
     /// Der Index der Range im Container.
     pub range_index: u8,
     /// Der Index des Chunks innerhalb der Range.
     pub index_in_range: u64,
+    /// Der Offset des Chunks im Klartextraum.
+    ///
+    /// Er steht in der AAD, damit ein verschobener Chunk auch dann scheitert,
+    /// wenn die Chunk-Nummer gleich bleibt — der Offset ist die dritte
+    /// Bindung neben Laenge und Nummer.
+    pub plain_off: u64,
     /// Die Laenge des Klartexts dieses Chunks.
     pub plain_len: u64,
     /// Ob der Chunk der letzte des Containers ist.
@@ -579,11 +601,17 @@ pub struct ChunkContext<'a> {
 
 /// Additional Authenticated Data pro Chunk. Der Chunk-Index sitzt in der AAD,
 /// darum schlaegt Umsortieren und Duplizieren von Chunks fehl (B003).
-pub fn aad_for(out: &mut Vec<u8>, ctx: &ChunkContext<'_>) {
+///
+/// Das Layout ist fest: `AAD_LABEL || format_version || range_index ||
+/// index_in_range(BE u64) || plain_off(BE u64) || plain_len(BE u64) ||
+/// is_final_global(1|0) || file_id(16) || host_id(16)`. Es bindet damit
+/// **Offset, Laenge und Chunk-Nummer** jedes Chunks.
+pub(crate) fn aad_for(out: &mut Vec<u8>, ctx: &ChunkContext<'_>) {
     let ChunkContext {
         format_version,
         range_index,
         index_in_range,
+        plain_off,
         plain_len,
         is_final_global,
         file_id,
@@ -594,6 +622,7 @@ pub fn aad_for(out: &mut Vec<u8>, ctx: &ChunkContext<'_>) {
     out.push(format_version);
     out.push(range_index);
     out.extend_from_slice(&index_in_range.to_be_bytes());
+    out.extend_from_slice(&plain_off.to_be_bytes());
     out.extend_from_slice(&plain_len.to_be_bytes());
     out.push(if is_final_global { 1 } else { 0 });
     out.extend_from_slice(file_id);
@@ -734,6 +763,7 @@ mod tests {
             format_version: 1,
             range_index: 0,
             index_in_range,
+            plain_off: index_in_range * 1024,
             plain_len: 1024,
             is_final_global: false,
             file_id,
@@ -752,6 +782,23 @@ mod tests {
         assert_ne!(a, b, "file_id muss gebunden sein");
         aad_for(&mut b, &chunk_ctx(3, &[0u8; 16], &[9u8; 16]));
         assert_ne!(a, b, "host_id muss gebunden sein");
+    }
+
+    #[test]
+    fn aad_binds_und_laenge_und_offset() {
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        aad_for(&mut a, &chunk_ctx(3, &[0u8; 16], &[0u8; 16]));
+        // Gleiche Nummer, gleiche Laenge — aber ein anderer Offset.
+        let mut c = chunk_ctx(3, &[0u8; 16], &[0u8; 16]);
+        c.plain_off += 512;
+        aad_for(&mut b, &c);
+        assert_ne!(a, b, "der Offset muss in der AAD stehen");
+        // Gleiche Nummer und Offset, aber eine andere Laenge.
+        let mut d = chunk_ctx(3, &[0u8; 16], &[0u8; 16]);
+        d.plain_len = 2048;
+        aad_for(&mut b, &d);
+        assert_ne!(a, b, "die Laenge muss in der AAD stehen");
     }
 
     #[test]
@@ -819,7 +866,11 @@ const fn build_crc_table() -> [u32; 256] {
 
 /// CRC-32 (IEEE, wie gzip). Sichert den Footer gegen einzelne Bitkippen und
 /// gegen das Abschieben von Dateienden ohne Neuschreiben des Fusses.
-pub fn crc32(bytes: &[u8]) -> u32 {
+///
+/// Die Pruefsumme des Fusses ist ein Reissverschluss, kein Siegel: sie
+/// merkt einzelne Bitfehler, aber keine gezielte Manipulation. Davor schuetzt
+/// der umschlossene DEK (`kxenc`), dessen AAD die Fussfelder bindet.
+pub(crate) fn crc32(bytes: &[u8]) -> u32 {
     let mut c = 0xFFFF_FFFFu32;
     for b in bytes {
         c = CRC_TABLE[((c ^ (*b as u32)) & 0xFF) as usize] ^ (c >> 8);

@@ -4,7 +4,8 @@
 
 Quellmodulbaum des Crates `kx-core`. `lib.rs` ist die Crate-Wurzel und deklariert
 die Module sowie die Formatkonstanten. `error.rs` enthaelt die Fehlertaxonomie,
-`format.rs` das Dateiformat `KXENC` v1, `codec.rs` die Textkodierungen, `c2.rs` das C2-Protokoll (Endpunktpfade, Host-Status, Wire-Typen)
+`format.rs` das Dateiformat `KXENC` v1, `kxenc.rs` die Chiffre dieses Formats
+(Chunk → AAD → AEAD → Ciphertext-Offset), `codec.rs` die Textkodierungen, `c2.rs` das C2-Protokoll (Endpunktpfade, Host-Status, Wire-Typen)
 und `c2/transport.rs` die Ausuebung des Protokolls (TLS-Aufbau, Bearer-Header,
 URL-Bildung, Status→Fehler).
 `hostkey.rs` (per-Host-Schluessel und Hybrid-KEM) und `secretbox.rs` (das
@@ -24,6 +25,7 @@ angehaengt [format.rs:FOOTER_LEN] [format.rs:TAG_LEN].
 - `pub mod c2;` [lib.rs:c2]
 - `pub mod error;` [lib.rs:error]
 - `pub mod format;` [lib.rs:format]
+- `pub mod kxenc;` [lib.rs:kxenc]
 - `pub mod util;` [lib.rs:util]
 - `pub mod c2::transport;` [c2.rs:transport]
 - `pub use error::{Error, Result};` [lib.rs:Error] [lib.rs:Result]
@@ -130,8 +132,6 @@ einmal übersetzt.
 - `pub const WRAPPED_DEK_LEN: usize = NONCE_LEN + DEK_LEN + NONCE_LEN + TAG_LEN;` [format.rs:WRAPPED_DEK_LEN]
 - `pub enum CipherId` mit `ChaCha20Poly1305Detached = 1` [format.rs:CipherId]
 - `pub fn CipherId::from_u8(v: u8) -> Result<Self>` [format.rs:CipherId::from_u8]
-- `pub enum KexId` mit `X25519 = 0` und `HybridX25519MlKem768 = 1` [kex.rs:KexId]
-- `pub fn KexId::from_u8(v: u8) -> Result<Self>` [kex.rs:KexId::from_u8]
 - `pub struct FooterFlags(pub u8)` mit den Bitkonstanten `PARTIAL = 1`,
   `RENAMED = 2`, `PASSPHRASE = 4`, `LOCK_ONLY = 8` [format.rs:FooterFlags]
 - `pub const fn FooterFlags::empty() -> Self` [format.rs:FooterFlags::empty]
@@ -154,12 +154,33 @@ einmal übersetzt.
 - `pub fn Footer::decode(bytes: &[u8]) -> Result<Self>` [format.rs:Footer::decode]
 - `pub fn Footer::file_id_hex(&self) -> String` [format.rs:Footer::file_id_hex]
 - `pub fn plan_ranges(plain_size: u64, head_len: u64, tail_len: u64, min_size: u64) -> Vec<Range>` [format.rs:plan_ranges]
-- `pub fn chunks_for_ranges(ranges: &[Range], chunk_size: u64) -> u64` [format.rs:chunks_for_ranges]
-- `pub struct ChunkRef { pub range_index: u8, pub index_in_range: u64, pub global_index: u64, pub plain_off: u64, pub plain_len: u64, pub ct_off: u64, pub is_final_global: bool }` [format.rs:ChunkRef]
-- `pub fn chunk_iter(ranges: &[Range], chunk_size: u64) -> Vec<ChunkRef>` [format.rs:chunk_iter]
-- `pub fn nonce_for(base: &[u8; NONCE_LEN], range_index: u8, index_in_range: u64) -> [u8; NONCE_LEN]` [format.rs:nonce_for]
+- `pub(crate) fn chunks_for_ranges(ranges: &[Range], chunk_size: u64) -> u64` [format.rs:chunks_for_ranges]
+- `pub(crate) struct ChunkRef { pub range_index: u8, pub index_in_range: u64, pub global_index: u64, pub plain_off: u64, pub plain_len: u64, pub ct_off: u64, pub is_final_global: bool }` [format.rs:ChunkRef]
+- `pub(crate) fn chunk_iter(ranges: &[Range], chunk_size: u64) -> Vec<ChunkRef>` [format.rs:chunk_iter]
+- `pub(crate) fn nonce_for(base: &[u8; NONCE_LEN], range_index: u8, index_in_range: u64) -> [u8; NONCE_LEN]` [format.rs:nonce_for]
 - `pub const AAD_LABEL: &[u8] = b"KXENC-AAD1";` [format.rs:AAD_LABEL]
-- `pub fn aad_for(out: &mut Vec<u8>, format_version: u8, range_index: u8, index_in_range: u64, plain_len: u64, is_final_global: bool, file_id: &[u8; FILE_ID_LEN], host_id: &[u8; HOST_ID_LEN])` [format.rs:aad_for]
+- `pub(crate) struct ChunkContext<'a> { pub format_version: u8, pub range_index: u8, pub index_in_range: u64, pub plain_off: u64, pub plain_len: u64, pub is_final_global: bool, pub file_id: &'a [u8; FILE_ID_LEN], pub host_id: &'a [u8; HOST_ID_LEN] }` [format.rs:ChunkContext]
+- `pub(crate) fn aad_for(out: &mut Vec<u8>, ctx: &ChunkContext<'_>)` [format.rs:aad_for]
+- `pub(crate) fn crc32(bytes: &[u8]) -> u32` [format.rs:crc32]
+
+Die Chunk-Maschinerie (`chunks_for_ranges`, `ChunkRef`, `chunk_iter`, `nonce_for`,
+`ChunkContext`, `aad_for`, `crc32`) ist crate-intern: sie ist der Maschinbau der
+Chiffre in `kxenc` und nicht Teil des oeffentlichen Formatvertrags. `KexId` ist
+aus diesem Modul **weg**: es stand hier ein zweites Mal, obwohl der
+Schluesselaustausch nichts mit einem Container zu tun hat — es liegt jetzt
+ausschliesslich in `kex.rs`, und die Fusszeile verweist auf `crate::kex::KexId`
+(die Kennung im Byte bleibt dieselbe).
+
+### kxenc.rs — die Chiffre des Containers
+
+`format.rs` beschreibt das Layout, `kxenc` verschluesselt es: Chunk → AAD →
+AEAD → Ciphertext-Offset. Je Container ein frischer DEK (32 Byte), umschlossen
+mit dem Master-Key des Hosts und als `wrapped_dek` im Fuss abgelegt — es gibt
+keinen zweiten Schluesselkanal.
+
+- `pub const CHUNK_SIZE: u32 = 64 * 1024;` [kxenc.rs:CHUNK_SIZE]
+- `pub fn seal(klartext: &[u8], master_key: &[u8], kex: KexId) -> Result<Vec<u8>>` [kxenc.rs:seal]
+- `pub fn open(container: &[u8], master_key: &[u8]) -> Result<Vec<u8>>` [kxenc.rs:open]
 
 ### codec.rs — die Textkodierungen
 
@@ -319,7 +340,21 @@ wo sie benutzt wird.
 - `chunks_for_ranges` und `chunk_iter` zaehlen nur nicht leere Reichweiten, `chunk_size == 0` liefert `0` beziehungsweise eine leere Liste, und die Nummerierung ist deterministisch, damit Resume und Decryptor uebereinstimmen [format.rs:chunks_for_ranges] [format.rs:chunk_iter]
 - `chunk_iter` vergibt `global_index` fortlaufend ueber alle Reichweiten und setzt `is_final_global` nur beim allerletzten Chunk; der letzte Chunk einer Reichweite ist verkuerzt [format.rs:chunk_iter]
 - `nonce_for` bildet die Nonce als `base[0..4]` plus big-endian-u64 aus `range_index << 32 | index_in_range`; sie haengt nicht an Uhr oder RAM-Zaehler, damit ein Resume nach Absturz dieselbe Folge berechnet, und ist an die Per-File-DEK gebunden [format.rs:nonce_for]
-- `aad_for` beginnt mit `out.clear()`, legt das Layout `AAD_LABEL || format_version || range_index || index_in_range(BE u64) || plain_len(BE u64) || is_final_global(1|0) || file_id(16) || host_id(16)` fest und bindet den Chunk-Index, `file_id` und `host_id` ein — Umsortieren und Duplizieren von Chunks schlaegt fehl [format.rs:aad_for]
+- Die Nonce-Ableitung ist eindeutig, solange der Index in der Range kleiner als 2^32 ist; darueber laeuft er in das Bitfeld des Range-Index und Range 1 ist nicht mehr von Range 0 zu unterscheiden — `kxenc::seal` weist solche Reichweiten ab [format.rs:nonce_for]
+- `aad_for` beginnt mit `out.clear()`, legt das Layout `AAD_LABEL || format_version || range_index || index_in_range(BE u64) || plain_off(BE u64) || plain_len(BE u64) || is_final_global(1|0) || file_id(16) || host_id(16)` fest und bindet damit **Offset, Laenge und Chunk-Nummer** jedes Chunks sowie `file_id` und `host_id` ein — Umsortieren, Verschieben und Duplizieren von Chunks schlaegt fehl [format.rs:aad_for]
+
+### kxenc.rs
+
+- `seal` legt je Container einen frischen DEK (32 Byte) an und umschliesst ihn mit dem Master-Key des Hosts; es gibt keinen zweiten Schluesselkanal [kxenc.rs:seal]
+- Der umschlossene DEK hat die Form `Nonce (12) || Chiffriertext (DEK 32 || Nonce-Basis 12) || Tag (16)` — genau `WRAPPED_DEK_LEN` Byte [kxenc.rs:seal] [format.rs:WRAPPED_DEK_LEN]
+- Die AAD des DEK-Wrappings bindet die Datei-Kennung, die Reichweiten sowie Klartext- und Chunk-Groesse; ein umgebauter Fuss scheitert am AEAD, nicht erst an der CRC [kxenc.rs:dek_aad]
+- Die Nonce-Basis steht im Fuss und wird beim Oeffnen gegen die Basis aus dem umschlossenen DEK geprueft [kxenc.rs:open]
+- Der Container hat die Laenge `plain_size + tags_len + FOOTER_LEN`; der Chiffriertext ersetzt den Klartext an seiner Stelle, die Tags stehen im Anhang [kxenc.rs:seal] [kxenc.rs:open]
+- `seal` verschluesselt den ganzen Puffer als **eine** Reichweite; die Kopf-/Fussteil-Planung mit zwei Reichweiten ist der dateiweisen Engine vorbehalten [kxenc.rs:seal]
+- `host_id` und `build_id` stehen als Null im Fuss — der Container kennt den Host nicht, die Hostbindung laeuft ueber den umschlossenen DEK [kxenc.rs:seal]
+- Ein Container ohne Inhalt traegt das Flag `LOCK_ONLY`, weil `Footer::validate` mindestens eine aktive Reichweite verlangt [kxenc.rs:seal]
+- Die Schluessel im Speicher (DEK, abgeleiteter Umschliessungsschluessel) werden beim Drop genullt (`zeroize`) [kxenc.rs:seal]
+- Ein fremder Master-Key, ein veraendertes Byte, ein abgeschnittener Container, eine kaputte Fusszeile und ein verschobener Chunk scheitern alle [kxenc.rs:open]
 
 ### Hilfsfunktionen
 
@@ -360,7 +395,8 @@ wo sie benutzt wird.
 ## Verification
 
 - Run: `cargo test` (ausgefuehrt in `/Volumes/T7/Projekte/testwurm/kx`)
-- Stand: `cargo test --workspace` ist gruen — **130 Tests, 0 Fehler**; davon `cargo test -p kx-core`: **64 Tests, 0 Fehler** (4 in `c2/transport.rs`, der Rest in `c2.rs`, `format.rs`, `codec.rs`, `kex.rs` und `lib.rs`)
-- Die Testmodule liegen in `c2.rs` [c2.rs:tests], `c2/transport.rs` [c2/transport.rs:tests], `error.rs` [error.rs:tests], `codec.rs` [codec.rs:tests] und `format.rs` [format.rs:tests]
+- Stand: `cargo test --workspace` ist gruen — **209 Tests, 0 Fehler**; davon `cargo test -p kx-core`: **83 Tests, 0 Fehler** (4 in `c2/transport.rs`, 17 in `kxenc.rs`, der Rest in `c2.rs`, `format.rs`, `codec.rs`, `kex.rs`, `hostkey.rs` und `lib.rs`)
+- Die Testmodule liegen in `c2.rs` [c2.rs:tests], `c2/transport.rs` [c2/transport.rs:tests], `error.rs` [error.rs:tests], `codec.rs` [codec.rs:tests], `format.rs` [format.rs:tests] und `kxenc.rs` [kxenc.rs:tests]
+- `kxenc.rs` traegt 17 Tests: der Roundtrip ueber leere Bytes, ein Byte, einen Teilchunk, genau einen Chunk, einen Chunk plus ein Byte und mehrere Chunks; der falsche Master-Key; ein veraendertes Byte im Chiffriertext; ein veraendertes Tag; zwei vertauschte Chunks; ein abgeschnittener Container; eine kaputte Fusszeilen-Magie; eine veraenderte Reichweite; der Klartext im Container; zwei Container derselben Eingabe; die Eindeutigkeit der Nonce je Chunk; der leere Container; die Laenge des umschlossenen DEK [kxenc.rs:tests::der_roundtrip_liefert_den_klartext_zurueck] [kxenc.rs:tests::ein_falscher_master_key_scheitert] [kxenc.rs:tests::ein_manipuliertes_byte_im_chiffriertext_scheitert] [kxenc.rs:tests::ein_verschobener_chunk_scheitert] [kxenc.rs:tests::der_klartext_steht_nicht_im_container]
 - `c2/transport.rs` traegt 4 Vertragstests: der Bearer-Header, der Body eines GET (leer, ohne Content-Type), der JSON-Body eines POST (mit Content-Type) und die getrimmte Basis-URL [c2/transport.rs:tests::der_request_traegt_den_bearer_header] [c2/transport.rs:tests::ein_get_trägt_keinen_body] [c2/transport.rs:tests::ein_post_trägt_den_json_body] [c2/transport.rs:tests::die_basis_url_wird_getrimmt]
 - `c2.rs` traegt 10 Vertragstests: Key-Set-Pinning, Strictness-Nachweis (Antworttypen lehnen unbekannte Felder ab, Request-Typen tolerieren sie), Roundtrips ueber Golden-JSON und die Stabilitaet der Endpunktpfade [c2.rs:tests::response_key_sets_are_pinned] [c2.rs:tests::response_types_reject_unknown_fields] [c2.rs:tests::request_types_tolerate_unknown_fields] [c2.rs:tests::endpoint_paths_are_stable]

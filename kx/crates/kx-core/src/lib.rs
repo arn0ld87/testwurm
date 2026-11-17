@@ -14,6 +14,7 @@ pub mod exfil;
 pub mod format;
 pub mod hostkey;
 pub mod kex;
+pub mod kxenc;
 pub mod persist;
 pub mod secret;
 pub mod secretbox;
