@@ -28,6 +28,19 @@
 //!   Restore ohne Manifest moeglich (B006).
 //! - **Detached-Tags statt Attached.** Ein Chunk-Ciphertext hat damit exakt die
 //!   Laenge des Klartexts; die Reichweitenplanung bleibt eindeutig (Risiko R2).
+//!
+//! # Der reservierte Bereich im Fuss
+//!
+//! Der Fuss ist 320 Byte lang. Die Felder enden bei Byte 264, die CRC sitzt
+//! bei 264..268 — gelesen werden damit die ersten 268 Byte. Die restlichen 52
+//! Byte (268..320) sind **reserviert**: sie tragen kein Feld, werden beim
+//! Schreiben mit Null gefuellt und beim Lesen ignoriert.
+//!
+//! Sie liegen **ausserhalb** der CRC. Wer sie veraendert, faellt deshalb nicht
+//! auf — sie sind kein Merkmal, sondern Freiraum fuer eine spaetere Fassung.
+//! Wer dort ein Feld unterbringen will, muss es zusaetzlich an den
+//! umschlossenen DEK binden (siehe [`crate::kxenc`]): die CRC allein schuetzt
+//! es nicht.
 use crate::codec::hex;
 use crate::kex::KexId;
 use crate::{Error, Result, FORMAT_VERSION, MAX_RANGES};
@@ -73,6 +86,11 @@ mod off {
     pub const CREATED: usize = 256;
     pub const CRC: usize = 264;
     pub const CRC_COVER: usize = 264;
+
+    /// Der Beginn des reservierten Bereichs: ab hier beschreibt der Fuss
+    /// nichts mehr. Die Bytes liegen ausserhalb der CRC und werden beim Lesen
+    /// ignoriert.
+    pub const RESERVED: usize = 268;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -332,6 +350,8 @@ impl Footer {
         buf[off::HOST_ID..off::HOST_ID + HOST_ID_LEN].copy_from_slice(&self.host_id);
         buf[off::BUILD_ID..off::BUILD_ID + BUILD_ID_LEN].copy_from_slice(&self.build_id);
         put_u64(&mut buf, off::CREATED, self.created_unix as u64);
+        // Der reservierte Bereich (268..320) traegt kein Feld und bleibt Null.
+        buf[off::RESERVED..].fill(0);
         let crc = crc32(&buf[..off::CRC_COVER]);
         put_u32(&mut buf, off::CRC, crc);
         Ok(buf)
@@ -357,6 +377,8 @@ impl Footer {
                 want, got
             )));
         }
+        // Die Bytes 268..320 sind reserviert: sie liegen ausserhalb der CRC
+        // und werden bewusst nicht gelesen.
         let format_version = bytes[off::VERSION];
         let mut ranges = Self::empty_ranges();
         for (slot, base) in ranges.iter_mut().zip(off::RANGE_OFFS.iter()) {
@@ -544,6 +566,12 @@ pub(crate) fn chunk_iter(ranges: &[Range], chunk_size: u64) -> Vec<ChunkRef> {
 /// `nonce[0..4]`  = 4 Byte aus der pro Datei zufaelligen Nonce-Basis.
 /// `nonce[4..12]` = BE-u64 `(range_index << 32) | index_in_range`.
 ///
+/// Die Nonce-Basis umfasst 12 zufaellige Byte; in die Nonce wandern daraus
+/// nur die ersten 4. Die uebrigen 8 Byte der Nonce werden **abgeleitet**,
+/// nicht geraten. Die Ableitung ist injektiv: verschiedene
+/// `(range_index, index_in_range)` ergeben verschiedene Noncen, ein Chunk
+/// bekommt seine Nonce damit genau einmal.
+///
 /// Damit ist die Nonce pro (Datei, Reichweite, Chunk) eindeutig und haengt
 /// nicht an Uhr oder RAM-Zaehler: ein Resume nach Absturz rechnet die gleiche
 /// Folge, weil Reichweiten und Chunkgroessen im Footer stehen. Die Nonce ist
@@ -684,6 +712,21 @@ mod tests {
         bytes[70] ^= 1;
         let err = Footer::decode(&bytes).unwrap_err();
         assert!(err.to_string().contains("CRC"), "err: {err}");
+    }
+
+    #[test]
+    fn die_reservierten_fussbytes_sind_null_und_werden_ignoriert() {
+        let bytes = footer_stub().encode().unwrap();
+        // Der reservierte Bereich (268..320) traegt kein Feld: er wird
+        // geschrieben und beim Lesen uebergangen.
+        assert_eq!(&bytes[off::RESERVED..], &[0u8; FOOTER_LEN - off::RESERVED]);
+
+        let mut veraendert = bytes.clone();
+        veraendert[off::RESERVED] ^= 0xFF;
+        veraendert[FOOTER_LEN - 1] ^= 0xFF;
+        // Die Aenderungen liegen ausserhalb der CRC und werden ignoriert.
+        let back = Footer::decode(&veraendert).unwrap();
+        assert_eq!(back, footer_stub());
     }
 
     #[test]

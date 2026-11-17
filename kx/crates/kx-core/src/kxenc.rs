@@ -44,6 +44,20 @@
 //! Flag „letzter Chunk". Ein verschobener, gekuerzter oder vertauschter Chunk
 //! scheitert deshalb am AEAD, nicht erst an einer Laengenpruefung.
 //!
+//! Die AAD des **DEK-Wrappings** bindet zusaetzlich die Datei-Kennung, die
+//! Reichweiten, die Groessen und die drei Fussfelder `kex`, `build_id` und
+//! `created_unix`. Die letzten drei liegen zwar innerhalb der CRC, die CRC ist
+//! aber unkeyed — ein Angreifer kann sie neu rechnen. Mit der Bindung an den
+//! umschlossenen DEK sind sie unveraenderlich: eine gefaelschte Altersangabe
+//! scheitert am AEAD, nicht erst an der Auswertung.
+//!
+//! # Die Nonce
+//!
+//! Die Nonce-Basis ist pro Container zufaellig (12 Byte). In die Nonce geht
+//! daraus nur ihr erster Teil: `nonce[0..4]` stammt aus der Basis, `nonce[4..12]`
+//! ist aus `range_index` und `index_in_range` abgeleitet. Die Ableitung ist
+//! injektiv — verschiedene Chunks erhalten verschiedene Noncen.
+//!
 //! # Annahmen, die der Maintainer pruefen sollte
 //!
 //! - `host_id` und `build_id` stehen als Null im Fuss. Der Container kennt den
@@ -82,9 +96,10 @@ const DEK_INFO: &[u8] = b"kx/kxenc/dek/v1";
 /// Formats.
 const DEK_SALT: &[u8] = b"kx-kxenc-dek-salt-v1";
 
-/// Die AAD des DEK-Wrappings. Sie bindet die Datei-Kennung, die Reichweiten
-/// und die Groessen des Containers an den umschlossenen DEK: ein umgebauter
-/// Fuss scheitert am AEAD, nicht erst an der CRC.
+/// Die AAD des DEK-Wrappings. Sie bindet die Datei-Kennung, die Reichweiten,
+/// die Groessen des Containers und die drei ungeschuetzten Fussfelder an den
+/// umschlossenen DEK: ein umgebauter Fuss scheitert am AEAD, nicht erst an
+/// der CRC.
 const DEK_AAD_LABEL: &[u8] = b"KXENC-DEK1";
 
 /// Die maximale Zahl Chunks je Reichweite. Die Nonce-Ableitung braucht 32 Bit
@@ -146,13 +161,25 @@ pub fn seal(klartext: &[u8], master_key: &[u8], kex: KexId) -> Result<Vec<u8>> {
     let host_id = [0u8; HOST_ID_LEN];
     let build_id = [0u8; BUILD_ID_LEN];
 
+    // Die Erstellungszeit steht vor dem Umschliessen fest: sie geht in die
+    // AAD des DEK-Wrappings ein und wird erst danach in den Fuss geschrieben.
+    let created_unix = now_unix();
+
     let range_bytes = range_table_bytes(&ranges);
     let range_sha256 = sha256_32(&range_bytes);
 
     // Der umschlossene DEK.
     let mut wrap_key = Zeroizing::new([0u8; 32]);
     crate::hostkey::hkdf_into(master_key, DEK_SALT, DEK_INFO, &mut wrap_key[..])?;
-    let dek_aad = dek_aad(&file_id, &range_bytes, plain_size, chunk_size);
+    let dek_aad = dek_aad(
+        &file_id,
+        &range_bytes,
+        plain_size,
+        chunk_size,
+        kex,
+        &build_id,
+        created_unix,
+    );
     let mut wrap_nonce = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut wrap_nonce);
     let wrap_cipher = ChaCha20Poly1305::new(Key::from_slice(&wrap_key[..]));
@@ -238,7 +265,7 @@ pub fn seal(klartext: &[u8], master_key: &[u8], kex: KexId) -> Result<Vec<u8>> {
         range_sha256,
         host_id,
         build_id,
-        created_unix: now_unix(),
+        created_unix,
     };
     let footer_bytes = footer.encode()?;
 
@@ -304,7 +331,15 @@ pub fn open(container: &[u8], master_key: &[u8]) -> Result<Vec<u8>> {
         ));
     }
     let chunk_size = u64::from(footer.chunk_size);
-    let dek_aad = dek_aad(&footer.file_id, &range_bytes, footer.plain_size, chunk_size);
+    let dek_aad = dek_aad(
+        &footer.file_id,
+        &range_bytes,
+        footer.plain_size,
+        chunk_size,
+        footer.kex,
+        &footer.build_id,
+        footer.created_unix,
+    );
     let mut wrap_key = Zeroizing::new([0u8; 32]);
     crate::hostkey::hkdf_into(master_key, DEK_SALT, DEK_INFO, &mut wrap_key[..])?;
     let wrap_cipher = ChaCha20Poly1305::new(Key::from_slice(&wrap_key[..]));
@@ -391,19 +426,39 @@ fn range_table_bytes(ranges: &[Range]) -> Vec<u8> {
     out
 }
 
-/// Die AAD des DEK-Wrappings: Datei-Kennung, Reichweiten und Groessen.
+/// Die AAD des DEK-Wrappings: Datei-Kennung, Reichweiten, Groessen und die
+/// drei ungeschuetzten Fussfelder.
+///
+/// Das Layout ist fest: `DEK_AAD_LABEL || file_id(16) || range_bytes ||
+/// plain_size(LE u64) || chunk_size(LE u64) || kex(1) || build_id(16) ||
+/// created_unix(LE i64)`.
+///
+/// `kex`, `build_id` und `created_unix` liegen zwar innerhalb der CRC, die
+/// CRC ist aber unkeyed — ein Angreifer kann sie neu rechnen. Erst die
+/// Bindung an den umschlossenen DEK macht diese Felder unveraenderlich: ein
+/// gefaelschtes Erstellungsdatum, eine fremde Build-Kennung oder ein
+/// ausgetauschter Schluesselaustausch scheitern am AEAD, nicht erst an einer
+/// spaeteren Auswertung.
 fn dek_aad(
     file_id: &[u8; FILE_ID_LEN],
     range_bytes: &[u8],
     plain_size: u64,
     chunk_size: u64,
+    kex: KexId,
+    build_id: &[u8; BUILD_ID_LEN],
+    created_unix: i64,
 ) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(DEK_AAD_LABEL.len() + FILE_ID_LEN + range_bytes.len() + 16);
+    let mut aad = Vec::with_capacity(
+        DEK_AAD_LABEL.len() + FILE_ID_LEN + range_bytes.len() + 16 + 1 + BUILD_ID_LEN + 8,
+    );
     aad.extend_from_slice(DEK_AAD_LABEL);
     aad.extend_from_slice(file_id);
     aad.extend_from_slice(range_bytes);
     aad.extend_from_slice(&plain_size.to_le_bytes());
     aad.extend_from_slice(&chunk_size.to_le_bytes());
+    aad.push(kex as u8);
+    aad.extend_from_slice(build_id);
+    aad.extend_from_slice(&created_unix.to_le_bytes());
     aad
 }
 
@@ -650,6 +705,400 @@ mod tests {
         assert_eq!(
             footer.wrapped_dek.len(),
             NONCE_LEN + DEK_LEN + NONCE_LEN + TAG_LEN
+        );
+    }
+}
+
+#[cfg(test)]
+mod sicherheit {
+    use super::*;
+    use crate::format::crc32;
+    use crate::format::FOOTER_LEN;
+
+    // Fuss-Offsets (Spiegel von format::off)
+    const O_KEX: usize = 6;
+    const O_FLAGS: usize = 7;
+    const O_CHUNK_SIZE: usize = 8;
+    const O_N_CHUNKS: usize = 16;
+    const O_PLAIN_SIZE: usize = 36;
+    const O_TAGS_LEN: usize = 44;
+    const O_CT_TOTAL: usize = 52;
+    const O_RANGE0: usize = 60;
+    const O_WRAPPED_DEK: usize = 108;
+    const O_NONCE_BASE: usize = 180;
+    const O_RANGE_SHA: usize = 192;
+    const O_HOST_ID: usize = 224;
+    const O_BUILD_ID: usize = 240;
+    const O_CREATED: usize = 256;
+    const O_CRC: usize = 264;
+
+    fn master() -> [u8; 32] {
+        [0x5au8; 32]
+    }
+
+    fn muster(n: usize) -> Vec<u8> {
+        let mut v = Vec::with_capacity(n);
+        while v.len() < n {
+            v.extend_from_slice(b"KXENC-KLAR-TEXT-0123456789-ABCDEF");
+        }
+        v.truncate(n);
+        v
+    }
+
+    /// Der CRC des Fusses ist unkeyed — ein Angreifer kann ihn neu rechnen.
+    fn crc_heile(c: &mut [u8]) {
+        if c.len() < FOOTER_LEN {
+            return;
+        }
+        let n = c.len();
+        let base = n - FOOTER_LEN;
+        let crc = crc32(&c[base..base + O_CRC]);
+        c[base + O_CRC..base + O_CRC + 4].copy_from_slice(&crc.to_le_bytes());
+    }
+
+    fn set_u64(c: &mut [u8], off: usize, v: u64) {
+        let base = c.len() - FOOTER_LEN;
+        c[base + off..base + off + 8].copy_from_slice(&v.to_le_bytes());
+    }
+
+    fn set_u8(c: &mut [u8], off: usize, v: u8) {
+        let base = c.len() - FOOTER_LEN;
+        c[base + off] = v;
+    }
+
+    // ------------------------------------------------------------------
+    // 1) Falscher Schluessel
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn s1_falscher_schluessel_liefert_keinen_klartext() {
+        let klartext = muster(300);
+        let c = seal(&klartext, &master(), KexId::X25519).expect("seal");
+
+        let mut falsche: Vec<Vec<u8>> = Vec::new();
+        falsche.push(vec![0u8; 32]);
+        for i in 0..32usize {
+            let mut k = master().to_vec();
+            k[i] ^= 0x01;
+            falsche.push(k);
+        }
+        falsche.push(vec![0x5au8; 31]);
+        falsche.push(vec![0x5au8; 33]);
+        falsche.push(vec![0x5au8; 1]);
+        falsche.push(vec![0x5au8; 16]);
+
+        for f in falsche {
+            if let Ok(plain) = open(&c, &f) {
+                panic!(
+                    "falscher Master-Key ({} Byte) lieferte {} Byte Klartext",
+                    f.len(),
+                    plain.len()
+                );
+            }
+        }
+        assert!(open(&c, &[]).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 2) Kein Panic: jedes Fussfeld auf Extremwerte
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn s2_kein_panic_bei_extremen_fussfeldern() {
+        let c = seal(&muster(300), &master(), KexId::X25519).expect("seal");
+        let werte = [
+            0u64,
+            1,
+            u64::MAX,
+            u64::MAX - 1,
+            1u64 << 63,
+            0xFFFF_FFFF,
+            0x1_0000_0000,
+        ];
+        let felder: Vec<(&str, usize, bool)> = vec![
+            ("plain_size", O_PLAIN_SIZE, true),
+            ("tags_len", O_TAGS_LEN, true),
+            ("ct_total", O_CT_TOTAL, true),
+            ("n_chunks", O_N_CHUNKS, false),
+            ("chunk_size", O_CHUNK_SIZE, false),
+            ("range0.plain_off", O_RANGE0, true),
+            ("range0.plain_len", O_RANGE0 + 8, true),
+            ("range0.ct_off", O_RANGE0 + 16, true),
+            ("range1.plain_off", O_RANGE0 + 24, true),
+            ("range1.plain_len", O_RANGE0 + 32, true),
+            ("range1.ct_off", O_RANGE0 + 40, true),
+            ("wrapped_dek", O_WRAPPED_DEK, true),
+            ("nonce_base", O_NONCE_BASE, true),
+            ("range_sha", O_RANGE_SHA, true),
+            ("host_id", O_HOST_ID, true),
+            ("build_id", O_BUILD_ID, true),
+            ("created_unix", O_CREATED, true),
+        ];
+        let mut panics: Vec<String> = Vec::new();
+        for (name, off, ist64) in felder.iter() {
+            for &w in werte.iter() {
+                let mut m = c.clone();
+                if *ist64 {
+                    set_u64(&mut m, *off, w);
+                } else {
+                    let base = m.len() - FOOTER_LEN;
+                    m[base + off..base + off + 4].copy_from_slice(&(w as u32).to_le_bytes());
+                }
+                crc_heile(&mut m);
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _ = open(&m, &master());
+                }));
+                if r.is_err() {
+                    panics.push(format!("{name} = {w}"));
+                }
+            }
+        }
+        assert!(
+            panics.is_empty(),
+            "open() panickt bei folgenden Fussfeldern: {panics:#?}"
+        );
+    }
+
+    #[test]
+    fn s3_kein_panic_beim_dekodieren_des_fusses() {
+        let c = seal(&muster(300), &master(), KexId::X25519).expect("seal");
+        let mut panics: Vec<String> = Vec::new();
+        for w in [0u64, 1, u64::MAX, u64::MAX - 1, 1u64 << 63] {
+            for off in [O_RANGE0, O_RANGE0 + 8, O_RANGE0 + 16, O_RANGE0 + 24].iter() {
+                let mut m = c.clone();
+                set_u64(&mut m, *off, w);
+                crc_heile(&mut m);
+                let base = m.len() - FOOTER_LEN;
+                let bytes = m[base..].to_vec();
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _ = crate::format::Footer::decode(&bytes);
+                }));
+                if r.is_err() {
+                    panics.push(format!("Fussfeld {off} = {w}"));
+                }
+            }
+        }
+        assert!(
+            panics.is_empty(),
+            "Footer::decode() panickt bei: {panics:#?}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 3) Fuzz: keine Mutation darf einen Panic ausloesen
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn s4_fuzz_keine_mutation_panickt() {
+        let mut zustand = 0x2545F4914F6CDD1Du64;
+        let mut wuerfel = move || {
+            zustand ^= zustand << 13;
+            zustand ^= zustand >> 7;
+            zustand ^= zustand << 17;
+            zustand
+        };
+        let c = seal(&muster(500), &master(), KexId::X25519).expect("seal");
+
+        for runde in 0..50_000u64 {
+            let mut m = c.clone();
+            let anz = (wuerfel() % 4 + 1) as usize;
+            for _ in 0..anz {
+                let pos = (wuerfel() as usize) % m.len();
+                m[pos] = (wuerfel() & 0xff) as u8;
+            }
+            match wuerfel() % 6 {
+                0 => {
+                    let n = (wuerfel() as usize) % m.len();
+                    m.truncate(n);
+                }
+                1 => {
+                    let n = (wuerfel() % 64) as usize;
+                    m.extend(std::iter::repeat(0xA5u8).take(n));
+                }
+                2 => {
+                    let n = (wuerfel() % 64) as usize;
+                    let pos = (wuerfel() as usize) % m.len();
+                    m.splice(pos..pos, std::iter::repeat(0x5Au8).take(n));
+                }
+                3 => crc_heile(&mut m),
+                _ => {}
+            }
+            let kopie = m.clone();
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = open(&kopie, &master());
+            }));
+            assert!(
+                r.is_ok(),
+                "open() panickt in Runde {runde} an einem Container der Laenge {}",
+                m.len()
+            );
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 4) Welche Fussfelder sind ungebunden?
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn s5_ungebundene_fussfelder() {
+        let c = seal(&muster(300), &master(), KexId::X25519).expect("seal");
+        let mut ungebunden: Vec<&'static str> = Vec::new();
+
+        macro_rules! probe {
+            ($name:expr, $f:expr) => {{
+                let mut m = c.clone();
+                $f(&mut m);
+                crc_heile(&mut m);
+                if open(&m, &master()).is_ok() {
+                    ungebunden.push($name);
+                }
+            }};
+        }
+
+        // Das KEX-Feld wird auf die *andere* gueltige Kennung gesetzt — sonst
+        // waere die Probe ein No-op (der Container traegt bereits 0).
+        probe!("kex", |m: &mut Vec<u8>| set_u8(m, O_KEX, 1));
+        probe!("flags=PARTIAL", |m: &mut Vec<u8>| set_u8(m, O_FLAGS, 1));
+        probe!("flags=LOCK_ONLY", |m: &mut Vec<u8>| set_u8(m, O_FLAGS, 8));
+        probe!("build_id", |m: &mut Vec<u8>| {
+            let b = m.len() - FOOTER_LEN;
+            m[b + O_BUILD_ID] ^= 0xFF;
+        });
+        probe!("created_unix", |m: &mut Vec<u8>| set_u64(m, O_CREATED, 0));
+        probe!("fussbytes 268..320 (ausserhalb der CRC)", |m: &mut Vec<
+            u8,
+        >| {
+            let b = m.len() - FOOTER_LEN;
+            m[b + 268] ^= 0xFF;
+            m[b + 319] ^= 0xFF;
+        });
+
+        // Diese muessen gebunden sein:
+        probe!("plain_size", |m: &mut Vec<u8>| set_u64(m, O_PLAIN_SIZE, 0));
+        probe!("tags_len", |m: &mut Vec<u8>| set_u64(m, O_TAGS_LEN, 0));
+        probe!("ct_total", |m: &mut Vec<u8>| set_u64(m, O_CT_TOTAL, 0));
+        probe!("nonce_base", |m: &mut Vec<u8>| {
+            let b = m.len() - FOOTER_LEN;
+            m[b + O_NONCE_BASE] ^= 0x01;
+        });
+        probe!("file_id", |m: &mut Vec<u8>| {
+            let b = m.len() - FOOTER_LEN;
+            m[b + 20] ^= 0x01;
+        });
+        probe!("wrapped_dek", |m: &mut Vec<u8>| {
+            let b = m.len() - FOOTER_LEN;
+            m[b + O_WRAPPED_DEK] ^= 0x01;
+        });
+        probe!("host_id", |m: &mut Vec<u8>| {
+            let b = m.len() - FOOTER_LEN;
+            m[b + O_HOST_ID] ^= 0x01;
+        });
+        probe!("range0.plain_len", |m: &mut Vec<u8>| {
+            let b = m.len() - FOOTER_LEN;
+            m[b + O_RANGE0 + 8] ^= 0x01;
+        });
+
+        println!("UNGEBUNDEN: {ungebunden:?}");
+        // `kex`, `build_id` und `created_unix` sind ueber die AAD des
+        // umschlossenen DEK gebunden, die Flags ueber die Pruefungen in
+        // `open`. Ungebunden bleibt nur der reservierte Bereich am Fussende.
+        assert_eq!(
+            ungebunden,
+            vec!["fussbytes 268..320 (ausserhalb der CRC)"],
+            "Nur der reservierte Bereich darf ungebunden bleiben"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 5) LOCK_ONLY auf einem Container mit Inhalt
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn s6_lock_only_auf_einem_datencontainer() {
+        let klartext = muster(300);
+        let c = seal(&klartext, &master(), KexId::X25519).expect("seal");
+        let mut m = c.clone();
+        set_u8(&mut m, O_FLAGS, FooterFlags::LOCK_ONLY);
+        crc_heile(&mut m);
+
+        // LOCK_ONLY ist eine Zusage ueber den Container: "leer". Ein Container
+        // mit Inhalt unter diesem Flag ist ein Widerspruch — `open` lehnt ihn
+        // ab, statt den Inhalt zu liefern. Das Review wollte hier das Gegenteil
+        // sehen; die Ablehnung ist die richtige Antwort.
+        let r = open(&m, &master());
+        assert!(
+            r.is_err(),
+            "LOCK_ONLY auf einem Container mit Inhalt muss abgelehnt werden"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 6) Ein Byte im Chiffriertext muss auffallen
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn s7_ein_byte_im_chiffriertext_faellt_auf() {
+        let c = seal(&muster(1000), &master(), KexId::X25519).expect("seal");
+        for pos in [0usize, 1, 100, 500, 999] {
+            let mut m = c.clone();
+            m[pos] ^= 0x01;
+            assert!(open(&m, &master()).is_err(), "Byte {pos} blieb unbemerkt");
+        }
+        // Ein Byte im umschlossenen DEK muss auffallen.
+        let mut m = c.clone();
+        let b = m.len() - FOOTER_LEN;
+        m[b + O_WRAPPED_DEK + 13] ^= 0x01;
+        assert!(open(&m, &master()).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // 7) Kuerzen und Erweitern
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn s8_kuerzen_und_erweitern() {
+        let c = seal(&muster(1000), &master(), KexId::X25519).expect("seal");
+        for n in 1..64usize {
+            let mut m = c.clone();
+            m.truncate(c.len() - n);
+            assert!(
+                open(&m, &master()).is_err(),
+                "Truncation um {n} blieb unbemerkt"
+            );
+            let mut m2 = c.clone();
+            m2.extend(std::iter::repeat(0xA5u8).take(n));
+            assert!(
+                open(&m2, &master()).is_err(),
+                "Erweiterung um {n} blieb unbemerkt"
+            );
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 8) Die Reichweiten sind ueber die AAD des DEK gebunden
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn s9_die_reichweiten_sind_ueber_den_dek_aad_gebunden() {
+        let c = seal(&muster(300), &master(), KexId::X25519).expect("seal");
+
+        // Der Angreifer faelscht die erste Reichweite und rechnet die
+        // range_sha256 sowie die CRC des Fusses nach.
+        let mut m = c.clone();
+        set_u64(&mut m, O_RANGE0, 12_345);
+        let neu = Range {
+            plain_off: 12_345,
+            plain_len: 300,
+            ct_off: 0,
+        };
+        let sha = super::sha256_32(&super::range_table_bytes(&[neu]));
+        let b = m.len() - FOOTER_LEN;
+        m[b + O_RANGE_SHA..b + O_RANGE_SHA + 32].copy_from_slice(&sha);
+        crc_heile(&mut m);
+
+        assert!(
+            open(&m, &master()).is_err(),
+            "eine gefaelschte Reichweite muss am AEAD des umschlossenen DEK scheitern"
         );
     }
 }
