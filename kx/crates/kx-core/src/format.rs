@@ -111,14 +111,6 @@ impl CipherId {
     }
 }
 
-// `KexId` stand hier ein zweites Mal — obwohl der Schluesselaustausch nichts
-// mit einem Container zu tun hat. Der Bericht vom 2026-11-15 hat das als
-// Fussnote festgehalten: wer das Containerformat entfernt, bricht damit die
-// Kryptografie. `kex.rs` traegt das Enum seit dem Umbau; die Dublette hier
-// war tote Kopie (niemand ausserhalb dieses Moduls hat sie benutzt) und ist
-// weg. Die Fusszeile verweist jetzt auf `crate::kex::KexId` — die Kennung im
-// Byte bleibt dieselbe.
-
 /// Footer-Flags. Bewusst 8 Bit, damit spaetere Versionen Platz haben.
 /// Handgeschrieben statt `bitflags`-Crate: der Core soll ohne Makro-Crate
 /// kompilieren, und die Bitwerte sind fester Bestandteil des Formats.
@@ -196,7 +188,7 @@ impl Range {
 pub struct Footer {
     pub format_version: u8,
     pub cipher: CipherId,
-    pub kex: KexId,
+    pub kex: crate::kex::KexId,
     pub flags: FooterFlags,
     pub chunk_size: u32,
     pub n_chunks: u32,
@@ -405,7 +397,7 @@ impl Footer {
         let footer = Footer {
             format_version,
             cipher: CipherId::from_u8(bytes[off::CIPHER])?,
-            kex: KexId::from_u8(bytes[off::KEX])?,
+            kex: crate::kex::KexId::from_u8(bytes[off::KEX])?,
             flags: FooterFlags::from(bytes[off::FLAGS]),
             chunk_size: read_u32(bytes, off::CHUNK_SIZE),
             n_chunks: read_u32(bytes, off::N_CHUNKS),
@@ -669,7 +661,7 @@ mod tests {
         Footer {
             format_version: FORMAT_VERSION,
             cipher: CipherId::ChaCha20Poly1305Detached,
-            kex: KexId::HybridX25519MlKem768,
+            kex: crate::kex::KexId::HybridX25519MlKem768,
             flags: FooterFlags::empty(),
             chunk_size: chunk as u32,
             n_chunks: n as u32,

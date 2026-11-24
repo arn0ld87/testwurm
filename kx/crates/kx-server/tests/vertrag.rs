@@ -74,6 +74,7 @@ async fn die_api_beantwortet_ueber_ihr_oeffentliches_interface() {
         source: Some("smb_relay".into()),
         master_key: None,
         sealed_password: Some("kx1:siegel".into()),
+        sealed_master: None,
     };
     let antwort = router
         .clone()

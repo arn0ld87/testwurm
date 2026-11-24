@@ -89,6 +89,7 @@ async fn die_beutekette_laueft_vom_agent_bis_zum_operator() {
         source: Some("default_creds".into()),
         master_key: None,
         sealed_password: Some(sealed_password),
+        sealed_master: None,
     };
     let antwort = app
         .clone()
@@ -187,6 +188,7 @@ async fn ein_wiederholter_upload_verdoppelt_die_secrets_nicht() {
         source: Some("default_creds".into()),
         master_key: None,
         sealed_password: Some("kx1:siegel".into()),
+        sealed_master: None,
     };
 
     // Der Agent laedt dasselbe Secret zweimal hoch — etwa weil der Lauf
@@ -244,6 +246,7 @@ async fn eine_beute_ohne_bekannten_host_wird_abgewiesen() {
         source: Some("default_creds".into()),
         master_key: None,
         sealed_password: Some("kx1:siegel".into()),
+        sealed_master: None,
     };
     let antwort = app
         .clone()
