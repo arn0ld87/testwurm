@@ -27,8 +27,19 @@
 #
 # Der Ignore gilt nur fuer genau diese beiden Dateien. Fuer kx-server, kx-agent,
 # kx-cli, kx-win und kx-posix laeuft die Erkennung uneingeschraenkt.
+
+#
+# Das Docker-Labor unter lab/ benutzt bewusst Wegwerf-Credentials
+# (root:root im Zielcontainer, Beispielschluessel als Koeder fuer den
+# Agenten). Sie existieren NUR innerhalb des isolierten --internal-
+# Docker-Netzes, schuetzen nichts Echtes und sind Teil des
+# Demonstrationszwecks (Default-Credential-Angriff zeigen).
+# GitGuardian meldet sie als "Username Password" — False Positive.
+# Echte Geheimnisse (privater Server-Key, Bearer-Token) entstehen zur
+# Laufzeit unter lab/run/ und sind gitignored; sie stehen nie im Repo.
 ignore:
   paths:
     - "kx/crates/kx-core/src/c2.rs"
     - "kx/crates/kx-core/src/secretbox.rs"
     - "kx/crates/kx-server/src/e2e_test.rs"
+    - "lab/**"
