@@ -42,3 +42,20 @@ Extraktion in einem Lauf ausfällt und die Zeile eines früheren Laufs zurückbl
   unversiegelt, und die Zeile trägt dann keinen Schlüssel.
 - Die Beutezeile ist jetzt für sich lesbar — die Aussage „der Server hält die
   Beute" stimmt ohne Zusatzannahme.
+
+## Nachtrag (2026-11-25): Datei-Container tragen ihren Schlüssel auch
+
+Mit der Datei-Exfiltration (Issue #31) stellt sich dieselbe Frage für
+KXENC-Container: der DEK eines Containers ist mit dem Master-Key des Hosts
+umschlossen, und der Host bekommt im nächsten Lauf einen neuen. Die Antwort
+ist dieselbe: `FileUpload` und `ExfiltratedFile` tragen `sealed_master`, der
+Server speichert es mit der Zeile, und `kx-cli file-open` entsiegelt zuerst das
+Material der Datei selbst — der Host-Eintrag ist nur die zweite Wahl. Eine
+Datei ohne eigenes Material (älterer Agent) bleibt an den Host-Schlüssel
+gebunden; passt der nicht, ist sie ausdrücklich unlesbar und der Fehler wird
+gemeldet, nicht verschwiegen.
+
+Testabdeckung: `kx-cli/src/decrypt.rs` —
+`eine_datei_bleibt_lesbar_wenn_der_host_einen_anderen_schluessel_fuehrt`
+(Datei), `die_beute_bleibt_lesbar_wenn_der_host_einen_anderen_schluessel_fuehrt`
+(Secret).

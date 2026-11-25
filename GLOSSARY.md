@@ -19,6 +19,12 @@ _Avoid_: C2 client (the client is an adapter over the transport), HTTP layer
 **Exfiltrated Secret**: A credential that has been extracted from a compromised host and transferred to the operator. It carries the identity of the host it was taken from, so that every exfiltrated secret points back to a known host. It carries the key it was sealed with, so that every exfiltrated secret opens on its own — even when the host entry has since moved on to another key.
 _Avoid_: Secret (an extracted secret still lives on the compromised host and has not been transferred)
 
+**KXENC Container**: The encrypted form of one exfiltrated file — the whole file sealed with a fresh per-file key (DEK), which is itself wrapped with the host's master key and stored in the container's footer. The container is written next to the original (`<name>.kxenc`), never over it; the original stays untouched. One container carries exactly one file.
+_Avoid_: encrypted file (the original is not encrypted in place), archive (a container is not a bundle of files)
+
+**Exfiltrated File**: A KXENC container that the server has accepted and stored. It carries the identity of the host it was taken from and the key it was sealed with, so it opens on its own — even after a later agent run has given the host a new key. The server keeps exactly one row per `(host_id, file_id)`; a repeated upload is rejected, not overwritten.
+_Avoid_: file upload (one call, not the stored record)
+
 **Meldung**: What the agent reports to the C2 — the hosts it knows and the loot it found on them, in the order the contract requires: first the host, then its loot. A Meldung carries its own outcome: what was delivered and what was lost. Loot whose host could not be announced stays with the agent; it is lost, not transferred.
 _Avoid_: Upload (one call, not the whole report), Reporting (the act without the outcome)
 

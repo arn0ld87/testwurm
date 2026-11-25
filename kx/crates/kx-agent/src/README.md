@@ -3,21 +3,28 @@
 ## Overview
 
 Quellmodulbaum des Binary-Crates `kx-agent`. `main.rs` ist der einzige
-Entry-Point und erzeugt das Executable `kx-agent`; `c2.rs`, `hostkey.rs`,
-`lauf.rs`, `meldung.rs`, `propagate.rs` und `tasks.rs` sind die Module
-(`mod c2;`, `mod hostkey;`, `mod lauf;`, `mod meldung;`, `mod propagate;`,
-`mod tasks;` in [main.rs:main]). Alle Module sind **private** —
+Entry-Point und erzeugt das Executable `kx-agent`; `c2.rs`, `datei.rs`,
+`hostkey.rs`, `lauf.rs`, `meldung.rs`, `propagate.rs` und `tasks.rs` sind die Module
+(`mod c2;`, `mod datei;`, `mod hostkey;`, `mod lauf;`, `mod meldung;`,
+`mod propagate;`, `mod tasks;` in [main.rs:main]). Alle Module sind **private** —
 `pub`-Symbole darin sind deshalb nur crate-intern erreichbar, das Crate stellt
-keine Bibliotheks-API bereit [main.rs:mod c2] [main.rs:mod hostkey]
-[main.rs:mod lauf] [main.rs:mod meldung] [main.rs:mod propagate]
-[main.rs:mod tasks].
+keine Bibliotheks-API bereit [main.rs:mod c2] [main.rs:mod datei]
+[main.rs:mod hostkey] [main.rs:mod lauf] [main.rs:mod meldung]
+[main.rs:mod propagate] [main.rs:mod tasks].
 
 `hostkey.rs` kapselt die Host-Master-Keys gegen den oeffentlichen
 Server-Schluessel (Option `--server-key`): je Host ein eigener Master-Key, das
 Passwort wird damit verschluesselt und der Klartext verlaesst den Agenten
 nicht mehr [hostkey.rs:KeySealer] [hostkey.rs:schluessel_fuer].
 
+`datei.rs` exfiltriert Dateien als KXENC-Container (Option `--exfil-file`,
+Issue #31): lesen, mit dem Master-Key des Hosts versiegeln, den Container
+**neben** das Original schreiben (`<name>.kxenc`) und an den C2 melden. Das
+Original bleibt unangetastet; ohne `--server-key` geht keine Datei raus und
+jede zählt als verloren [datei.rs:exfiltriere_dateien].
+
 `lauf.rs` **besitzt die Reihenfolge des Laufs**: die eigene Beute melden, die
+Dateien exfiltrieren (`--exfil-file`), die
 Persistenz installieren, die Hosts entdecken (ARP-Sweep oder vorgegebene
 `--hosts`-Liste), die Propagation ausfuehren, die Funde melden, die Tasks
 abarbeiten. Vorher lag das in einer Funktion im Einstiegspunkt — der
@@ -59,7 +66,9 @@ Plattformabhängige Zugriffe (Secret-Extraktion, Persistenz) sind über
   `192.168.1.100`), `hosts` (`--hosts`, optional, kommagetrennt),
   `relay_script` (`--relay-script`, Default `assets/smbrelayx.py`), `server_cert`
   (`--server-cert`,
-  Pflicht). Es existieren **keine** Subcommands.
+  Pflicht), `server_key` (`--server-key`, optional, JSON-Datei),
+  `exfil_file` (`--exfil-file`, mehrfach angebbar, `Vec<PathBuf>`).
+  Es existieren **keine** Subcommands.
 - `[main.rs:main]` — `async fn main()` mit `#[tokio::main]`, einziger
   Prozess-Einstiegspunkt. Parst die Argumente, baut die Abhängigkeiten
   (Schlüsselvorrat, C2-Client, Umgebung), startet den Lauf und meldet den
@@ -100,9 +109,10 @@ Der Client ist ein dünner Adapter über den Transport aus
 `kx_core::c2::transport` — TLS-Aufbau, Bearer-Header, URL-Bildung und
 Status→Fehler stehen dort, nicht in diesem Crate.
 
-- `[c2.rs:C2Port]` — `pub trait C2Port` mit genau vier Aufrufen:
+- `[c2.rs:C2Port]` — `pub trait C2Port` mit genau fünf Aufrufen:
   `registriere_host(&self, req: &RegisterRequest)`, `melde_beute(&self, upload: &SecretUpload)`,
-  `hole_tasks(&self)` und `melde_task_ergebnis(&self, report: &TaskResultRequest)`.
+  `hole_tasks(&self)`, `melde_task_ergebnis(&self, report: &TaskResultRequest)`
+  und `melde_datei(&self, upload: &FileUpload)`.
   Das ist der Seam, an dem der Meldeweg und der Lauf testbar werden: hinter ihm
   stehen die `C2Client` im Betrieb und ein Aufzeichner im Test. Der Transport
   ist blockierend, die Methoden sind deshalb ehrlich synchron.
@@ -113,7 +123,19 @@ Status→Fehler stehen dort, nicht in diesem Crate.
 - `[c2.rs:C2Client]` — implementiert `C2Port`; `registriere_host` POST
   `{base_url}/api/register`, `melde_beute` POST `{base_url}/api/secrets`,
   `hole_tasks` GET `{base_url}/api/tasks`, `melde_task_ergebnis` POST
-  `{base_url}/api/tasks/result`.
+  `{base_url}/api/tasks/result`, `melde_datei` POST `{base_url}/api/files`.
+
+### datei.rs — Datei-Exfiltration (Issue #31)
+
+- `[datei.rs:DateiBilanz]` — `pub struct DateiBilanz` mit `uebertragen` und
+  `verloren`. Wie bei der Beute zählt die zugestellte Datei, nicht die
+  vorbereitete.
+- `[datei.rs:exfiltriere_dateien]` — `pub fn exfiltriere_dateien(port, sealer, host_id, pfade) -> DateiBilanz`;
+  je Datei: lesen → `kx_core::kxenc::seal` → `<name>.kxenc` neben das Original
+  → `melde_datei`. Ohne Server-Schlüssel gibt es keinen Container und keinen
+  Klartext-Upload — jede Datei zählt als verloren. Ein Fehlschlag bricht die
+  übrigen Dateien nicht ab. Der Upload trägt `sealed_master` mit (ADR-0005):
+  die Datei bleibt auch nach einem neuen Agent-Lauf lesbar.
 
 ### meldung.rs — die Meldung an den C2
 
@@ -124,8 +146,10 @@ erzeugt die Beute nicht — es meldet sie.
   `ip: String`, `os: Option<String>`, `status: String` und
   `secrets: Vec<Secret>`. Die Einheit ist der Host, nicht das Stück: Beute
   ohne Host ist für den Operator wertlos.
-- `[meldung.rs:Ergebnis]` — `pub struct Ergebnis` mit vier Zählern:
-  `hosts_registriert`, `hosts_verloren`, `beute_gemeldet`, `beute_verloren`.
+- `[meldung.rs:Ergebnis]` — `pub struct Ergebnis` mit den Zählern
+  `hosts_registriert`, `hosts_verloren`, `beute_uebertragen`, `beute_verloren`,
+  `beute_nicht_extrahiert`, `tasks_verloren`, `dateien_uebertragen`,
+  `dateien_verloren` und dem Flag `persistenz_fehlgeschlagen`.
 - `[meldung.rs:Ergebnis::c2_nicht_erreichbar]` — `pub fn c2_nicht_erreichbar(&self) -> bool`;
   kein Host kam an.
 - `[meldung.rs:Ergebnis::fehlgeschlagen]` — `pub fn fehlgeschlagen(&self) -> bool`; jede verlorene
@@ -180,8 +204,9 @@ erzeugt die Beute nicht — es meldet sie.
 
 ## Invariants
 
-- Die Host-Kennung des Agenten ist seine eigene IP: `let own_ip: Ipv4Addr = args.own_ip.parse()...; let host_id = own_ip.to_string();`.
-  Eine Funktion `local_host_id` existiert im Crate **nicht** [main.rs:main].
+- Die Host-Kennung des Agenten ist seine eigene IP: `args.own_ip.to_string()`
+  [lauf.rs:Lauf::host_kennung]. Eine Funktion `local_host_id` existiert im
+  Crate **nicht**; die Kennung liegt im Lauf-Modul, nicht in `main.rs`.
 - Der Agent meldet sich selbst **zusammen mit seiner Beute**: ein Fund, ein
   Aufruf. Das Melde-Modul registriert den Host und meldet danach seine Beute
   — die Reihenfolge liegt dort, nicht beim Aufrufer [meldung.rs:melde].
@@ -219,14 +244,21 @@ erzeugt die Beute nicht — es meldet sie.
   lesbar, der die Datei lesen darf. Die Unit referenziert `${KX_C2_TOKEN}`, das
   systemd aus der Environment-Datei `/etc/kx/kx-agent.env` (0600) auflöst
   [lauf.rs:Lauf::install_persistenz] [kx-posix/src/persist.rs:install_systemd_service](../../kx-posix/src/persist.rs).
-- Das Crate hat keine Task-Verarbeitung: kein Task-Endpunkt wird abgefragt und es existiert kein Task-Handler, obwohl `kx_core::c2` `PATH_TASKS` anbietet [main.rs:main].
-- Ungültige IP-Konfiguration führt zum Panic, nicht zu einem Fehlerpfad: `.expect("Ungültige eigene IP")`, `.expect("Ungültige Start-IP")`, `.expect("Ungültige End-IP")` [lauf.rs:Lauf::host_kennung] [lauf.rs:Lauf::entdecken].
-- Fehler der Secret-Extraktion werden verschluckt: jeder Extractor wird mit `.unwrap_or_default()` konsumiert, ein Fehlschlag liefert also null Secrets statt einen Abbruch [lauf.rs:sammle_lokale_beute].
-- Im `--hosts`-Zweig wird an `,` getrennt, getrimmt und per `filter_map(...ok())` geparst; nicht parsebare Einträge werden stillschweigend verworfen. Die erzeugten `DiscoveredHost` tragen `mac: [0; 6]` [lauf.rs:Lauf::entdecken].
+- Der Agent arbeitet offene Tasks ab: nach den Funden holt
+  `tasks::run_pending_tasks` die offenen Tasks des eigenen Hosts, führt jedes
+  Kommando unter einer Zeitgrenze von 300 s aus und meldet das Ergebnis über
+  `POST /api/tasks/result` zurück [lauf.rs:Lauf::start] [tasks.rs:run_pending_tasks].
+- Ungültige IP-Konfiguration lehnt clap bei der Argumentübergabe ab (`Args`
+  trägt `Ipv4Addr`-Felder); im Lauf selbst gibt es keinen `.expect`-Panic-Pfad
+  für IPs [main.rs:Args] [lauf.rs:Lauf::host_kennung].
+- Fehler der Secret-Extraktion werden **nicht** verschluckt: jeder Extraktor
+  liefert ein `Result`, ein Fehlschlag landet in `LokaleBeute.fehler`, wird
+  geloggt und als `beute_nicht_extrahiert` gezählt [lauf.rs:sammle] [lauf.rs:Lauf::start].
+- Im `--hosts`-Zweig parst clap die kommagetrennte Liste in `Vec<Ipv4Addr>`; nicht parsebare Einträge werden bei der Argumentübergabe abgelehnt, nicht stillschweigend verworfen. Die erzeugten `DiscoveredHost` tragen `mac: [0; 6]` [main.rs:Args] [lauf.rs:Lauf::entdecken].
 - Die MAC-Adresse für den ARP-Sweep kommt vom Interface (`kx_scanner::read_mac`), nicht aus einem Platzhalter — der Sweep antwortet sonst nicht [lauf.rs:Lauf::entdecken].
 - Der Logfilter stammt aus `tracing_subscriber::EnvFilter::try_from_default_env()` (liest `RUST_LOG`) und fällt bei Fehlschlag auf `"info"` zurück [main.rs:main].
-- `std::process::exit(1)` wird bei fehlgeschlagener C2-Client-Initialisierung und bei fehlgeschlagenem ARP-Sweep ausgelöst [main.rs:main].
-- `std::process::exit(1)` wird am Ende des Laufs ausgelöst, wenn **eine** Host-Anmeldung oder **eine** Beute verloren ging. Das umfasst die eigene Anmeldung des Agenten: der C2-Server kennt den Agenten sonst nicht. Ein gescheiterter Exploit ist **kein** Fehlschlag — nichts gefunden ist ein Ergebnis [meldung.rs:Ergebnis::fehlgeschlagen] [main.rs:main].
+- `std::process::exit(1)` wird bei fehlgeschlagener C2-Client-Initialisierung und bei einer unbrauchbaren Server-Schlüssel-Datei ausgelöst. Ein fehlgeschlagener ARP-Sweep ist **kein** Exit-Pfad — der Agent klopft dann den Bereich ab [main.rs:main] [lauf.rs:Lauf::entdecken].
+- `std::process::exit(1)` wird am Ende des Laufs ausgelöst, wenn **eine** Host-Anmeldung oder **eine** Beute verloren ging oder **eine** Quelle nicht extrahierbar war. Das umfasst die eigene Anmeldung des Agenten: der C2-Server kennt den Agenten sonst nicht. Ein gescheiterter Exploit ist **kein** Fehlschlag — nichts gefunden ist ein Ergebnis [meldung.rs:Ergebnis::fehlgeschlagen] [main.rs:main].
 - Fehler beim Melden werden **nicht** verworfen: jeder fehlgeschlagene Upload und jede fehlgeschlagene Registrierung wird geloggt und gezählt. Der Zähler entscheidet über den Exit-Code [meldung.rs:melde].
 - Ist ein Server-Schlüssel konfiguriert und schlägt die Kapselung für einen Host fehl, geht die Beute **nicht** im Klartext hinaus — sie bleibt beim Agenten und zählt als verloren. Ohne Server-Schlüssel geht die Beute im Klartext; das ist der dokumentierte Normalfall [meldung.rs:melde] [kx-core/src/exfil.rs:upload].
 - Feste `cred_type`/`source`-Paare: Windows-LSASS nutzt `secret_type` mit Quelle `"lsass"`, Credential Manager nutzt `"credential_manager"` mit Quelle `"cmdkey"`; unix nutzt `"shadow"` mit Quelle `"/etc/shadow"` und `"aws"` mit Quelle `"~/.aws/credentials"` [lauf.rs:sammle_lokale_beute].
@@ -252,7 +284,7 @@ erzeugt die Beute nicht — es meldet sie.
 - `[meldung.rs:melde]` — Lädt jedes Stück Beute per `client.melde_beute(upload)` an den C2-Server hoch; Fehler je Stück werden geloggt und gezählt, die Schleife läuft weiter.
 - `[meldung.rs:melde]` — Meldet alle propagierten Hosts und ihre Beute an den C2-Server; die Reihenfolge ist Host zuerst, Beute danach, die Rueckgabewerte werden nicht verworfen.
 - `[lauf.rs:Lauf::install_persistenz]` — Liest den Pfad der eigenen Executable über `std::env::current_exe()`.
-- `[lauf.rs:Lauf::install_persistenz]` — Installiert und startet unter Windows den Dienst via `kx_win::install_service("kx-agent", &exe, "Kx Agent")` und `kx_win::start_service("kx-agent")`; unter unix via `kx_posix::install_systemd_service(&SystemdService { … })`.
+- `[lauf.rs:Lauf::install_persistenz]` — Installiert unter Windows den Run-Key via `kx_win::install_run_key`; unter unix zuerst `kx_posix::install_systemd_service`, bei einem Fehler `kx_posix::install_cron_service` (`@reboot`-Cron-Job als zweiter Weg, z.B. im Container ohne systemd). Erst wenn beide scheitern, zählt die Persistenz als fehlgeschlagen.
 - `[lauf.rs:Lauf::install_persistenz]` — Schreibt unter unix die Unit-Datei `/etc/systemd/system/kx-agent.service`, die Timer-Datei `/etc/systemd/system/kx-agent.timer` und die Environment-Datei `/etc/kx/kx-agent.env` (0600, Verzeichnis 0700); jede Datei nur, wenn sich ihr Inhalt ändert. Führt `systemctl daemon-reload` (nur nach einer Änderung), `systemctl enable kx-agent` und `systemctl enable --now kx-agent.timer` aus [kx-posix/src/persist.rs:install_systemd_service](../../kx-posix/src/persist.rs).
 - `[lauf.rs:resolve_relay_script]` — Prüft, ob der Assetpfad neben dem Binary liegt (`<binary-dir>/assets/smbrelayx.py`), und gibt sonst den relativen Pfad zurück; der persistierte Agent bekommt den aufgelösten Pfad in seiner Argumentliste.
 - `[lauf.rs:Lauf::install_persistenz]` — Spawnt unter Windows `cmd.exe /C sc.exe create kx-agent binPath= "<exe>" start= auto DisplayName= "Kx Agent"` und danach `sc.exe start kx-agent` [kx-win/src/persist.rs:install_service](../../kx-win/src/persist.rs) [kx-win/src/persist.rs:start_service](../../kx-win/src/persist.rs).

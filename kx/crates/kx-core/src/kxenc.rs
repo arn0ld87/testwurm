@@ -276,6 +276,24 @@ pub fn seal(klartext: &[u8], master_key: &[u8], kex: KexId) -> Result<Vec<u8>> {
     Ok(container)
 }
 
+/// Die Datei-Kennung eines Containers, hex-kodiert — so, wie der
+/// Wire-Vertrag sie fuehrt ([`crate::c2::FileUpload::file_id`]).
+///
+/// Der Fuss wird dekodiert (Magic, Version, CRC), aber nicht entschluesselt:
+/// die Kennung ist eine Identitaet, kein Geheimnis. Der Server dedupliziert
+/// mit ihr, bevor er den Container ueberhaupt annimmt.
+pub fn file_id_hex(container: &[u8]) -> Result<String> {
+    if container.len() < FOOTER_LEN {
+        return Err(Error::Format(format!(
+            "Container hat {} Byte, mindestens {} (Fusszeile) noetig",
+            container.len(),
+            FOOTER_LEN
+        )));
+    }
+    let footer = Footer::decode(&container[container.len() - FOOTER_LEN..])?;
+    Ok(footer.file_id.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// Oeffnet einen KXENC-Container. Prueft Laenge, Fusszeile, AAD und Schluessel.
 pub fn open(container: &[u8], master_key: &[u8]) -> Result<Vec<u8>> {
     if master_key.is_empty() {

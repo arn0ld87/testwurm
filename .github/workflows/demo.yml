@@ -1,0 +1,106 @@
+name: Demo-CI
+
+# Gates für die Testwurm-Präsentations-Demo (GUI, Orchestrator, Labor).
+#
+# Zwei Jobs:
+#   demo-check — schnelle Gates: Node-Unit-Tests, JS-Syntax, Shell-Syntax +
+#                shellcheck, Frische des Architektur-Graphen. Kein Rust nötig.
+#   lab-e2e    — der echte Beweis: Release-Binaries bauen, C2 + Agent + Ziele
+#                als Docker-Container auf dem Runner starten und alle drei
+#                Szenarien gegen das laufende Labor fahren (orchestrator/e2e.mjs).
+#                Das Labor-Netz ist --internal; nichts davon berührt externe Ziele.
+#
+# Der Rust-Workspace selbst wird von ci.yml geprüft (build/fmt/windows/smoke).
+
+on:
+  push:
+    branches:
+      - main
+      - 'feat/**'
+      - 'fix/**'
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  demo-check:
+    name: demo-check (node + shell + graph)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node installieren
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # shellcheck ist auf ubuntu-latest vorinstalliert; scripts/check.sh
+      # nutzt es, sobald es im PATH liegt.
+      - name: Qualitäts-Gates (identisch zu `make check`)
+        run: bash scripts/check.sh
+
+  lab-e2e:
+    name: lab-e2e (echter Wurm im Docker-Labor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node installieren
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rust installieren
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Abhängigkeiten cachen
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: kx
+
+      - name: Release-Binaries bauen
+        run: bash kx/scripts/build.sh
+
+      - name: Server-Schlüssel erzeugen (Wegwerf-Laborwert)
+        run: |
+          mkdir -p lab/run
+          (cd kx && cargo run --release -p kx-core --example gen_server_key -- \
+            hybrid ../lab/run/server-key.json ../lab/run/server-pub.json)
+          chmod 600 lab/run/server-key.json
+
+      - name: Orchestrator starten (Labor-Setup läuft automatisch)
+        run: |
+          NO_OPEN=1 node orchestrator/server.mjs > /tmp/orchestrator.log 2>&1 &
+          echo "ORCH_PID=$!" >> "$GITHUB_ENV"
+          for _ in $(seq 1 120); do
+            if curl -sf http://127.0.0.1:8321/api/state >/dev/null; then
+              echo "Orchestrator bereit."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "FEHLER: Orchestrator nicht bereit. Log:" >&2
+          cat /tmp/orchestrator.log >&2
+          exit 1
+
+      - name: E2E – alle drei Szenarien gegen das echte Labor
+        run: node orchestrator/e2e.mjs
+
+      - name: Fehler-Diagnose (nur bei Fehlschlag)
+        if: failure()
+        run: |
+          echo "== Orchestrator-Log =="
+          tail -n 100 /tmp/orchestrator.log || true
+          for c in kx-lab-c2 kx-lab-patient0 kx-lab-target1 kx-lab-target2; do
+            echo "== docker logs $c =="
+            docker logs --tail 50 "$c" 2>&1 || true
+          done
+
+      - name: Labor aufräumen (immer)
+        if: always()
+        run: |
+          kill "$ORCH_PID" 2>/dev/null || true
+          docker rm -f kx-lab-patient0 kx-lab-target1 kx-lab-target2 kx-lab-c2 2>/dev/null || true
+          docker network rm kx-lab 2>/dev/null || true

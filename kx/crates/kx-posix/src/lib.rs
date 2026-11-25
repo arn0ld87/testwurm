@@ -11,8 +11,11 @@ pub mod persist;
 pub mod secrets;
 
 pub use error::PosixError;
+#[cfg(unix)]
+pub use persist::cron_command;
 pub use persist::{
-    install_systemd_service, systemd_env_content, systemd_env_file_path, systemd_timer_content,
-    systemd_timer_name, systemd_unit_content, write_cron_persistence, ENV_DIR,
+    install_cron_service, install_systemd_service, systemd_env_content, systemd_env_file_path,
+    systemd_timer_content, systemd_timer_name, systemd_unit_content, write_cron_persistence,
+    ENV_DIR,
 };
 pub use secrets::{extract_aws_credentials, extract_shadow_hashes, extract_ssh_keys, Secret};

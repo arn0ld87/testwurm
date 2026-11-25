@@ -1,0 +1,17 @@
+{
+  "name": "testwurm-demo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Präsentations-Demo des kx-Netzwerkwurms im isolierten Docker-Labor (autorisierte Fachinformatiker-Ausbildung).",
+  "scripts": {
+    "start": "node orchestrator/server.mjs",
+    "setup": "bash lab/setup.sh",
+    "test": "node --test orchestrator/*.test.mjs",
+    "check": "bash scripts/check.sh",
+    "lint": "bash scripts/check.sh --with-rust",
+    "e2e": "node orchestrator/e2e.mjs",
+    "graph": "node scripts/review-graph.mjs"
+  },
+  "engines": { "node": ">=18" }
+}

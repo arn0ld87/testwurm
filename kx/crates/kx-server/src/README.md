@@ -42,9 +42,13 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   - `GET PATH_TASKS` → `list_tasks` [lib.rs:list_tasks]
   - `POST PATH_TASKS_CREATE` → `create_task` [lib.rs:create_task]
   - `POST PATH_TASKS_RESULT` → `report_task_result` [lib.rs:report_task_result]
+  - `POST PATH_FILES` → `upload_file` [lib.rs:upload_file] — KXENC-Container annehmen;
+    leerer `host_id`/`file_id`/`container` → 400, unbekannter Host → 400 (ADR-0004),
+    Duplikat je `(host_id, file_id)` → 409, Erfolg → 201
+  - `GET PATH_FILES` → `list_files` [lib.rs:list_files]
   - Die Pfade stammen aus den Konstanten `PATH_REGISTER`, `PATH_HEARTBEAT`,
     `PATH_SECRETS`, `PATH_HOSTS`, `PATH_TASKS`, `PATH_TASKS_CREATE`,
-    `PATH_TASKS_RESULT` und `PATH_LOGIN`, die aus `kx_core::c2` importiert werden
+    `PATH_TASKS_RESULT`, `PATH_FILES` und `PATH_LOGIN`, die aus `kx_core::c2` importiert werden
     [lib.rs:app]; die wörtlichen Pfade stehen zusätzlich im Hilfetext [main.rs:HELP]
   - Die fünf Datenpfade hängen an einem eigenen API-Router mit
     `route_layer(require_auth)`; `GET /` und `POST /api/login` stehen daneben
@@ -52,7 +56,8 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
 - Hilfetext `HELP` — private Konstante, listet die sechs API-Endpunkte [main.rs:HELP]
 - CLI-Flags (clap) [main.rs:Cli]: `--host` (`String`, Default `127.0.0.1`), `--port`
   (`u16`, Default `8443`), `--db` (`PathBuf`, Default `kx.db`), `--token`
-  (`Option<String>`, Env `KX_SERVER_TOKEN`), `--cn` (`String`, Default `kx.local`)
+  (`Option<String>`, Env `KX_SERVER_TOKEN`), `--cn` (`String`, Default `kx.local`),
+  `--cert`/`--key` (`Option<PathBuf>`, Default `kx-server.crt`/`.key` neben der Datenbank)
 - Request-Bodies aus `kx_core::c2`, importiert in [lib.rs:app]: `RegisterRequest`
   (`host_id: String`, `ip: String`, `hostname: Option<String>`, `os: Option<String>`,
   `status: Option<String>`) [lib.rs:register], `HeartbeatRequest`
@@ -61,9 +66,12 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   `source: Option<String>`, `master_key: Option<String>`) [lib.rs:upload_secret],
   `CreateTaskRequest` (`host_id: String`, `command: String`) [lib.rs:create_task],
   `TaskResultRequest` (`task_id: String`, `status: String`, `result: String`)
-  [lib.rs:report_task_result]
+  [lib.rs:report_task_result], `FileUpload` (`host_id: String`, `file_id: String`,
+  `filename: String`, `plain_size: u64`, `container: String`, `sealed_master: String`)
+  [lib.rs:upload_file]
 - Antwort-Wire-Typen aus `kx_core::c2` [lib.rs:list_hosts] [lib.rs:list_secrets]
-  [lib.rs:list_tasks]: `c2::Host`, `c2::ExfiltratedSecret`, `c2::Task`
+  [lib.rs:list_tasks] [lib.rs:list_files]: `c2::Host`, `c2::ExfiltratedSecret`,
+  `c2::Task`, `c2::ExfiltratedFile`
 - Persistenztypen ohne serde — Zeilen, per Positionsindex gelesen [db.rs:HostRow]
   (`id`, `ip`, `hostname`, `os`, `status`, `first_seen`, `last_seen`),
   [db.rs:SecretRow] (`id`, `host_id`, `cred_type`, `username`, `password`, `source`,
@@ -81,13 +89,20 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
   - `Db::update_task_result(&self, task_id, status, result) -> Result<bool, DbError>`
     [db.rs:Db::update_task_result]
   - `Db::list_tasks(&self) -> Result<Vec<TaskRow>, DbError>` [db.rs:Db::list_tasks]
+  - `Db::insert_file(&self, upload: &c2::FileUpload) -> Result<c2::ExfiltratedFile, DbError>`
+    [db.rs:Db::insert_file] — Host muss bekannt sein (ADR-0004); je
+    `(host_id, file_id)` genau eine Zeile, ein Duplikat wird abgewiesen
+    (`DbError::DoppelteDatei`), nicht ueberschrieben
+  - `Db::list_files(&self) -> Result<Vec<c2::ExfiltratedFile>, DbError>` [db.rs:Db::list_files]
 - Umwandlung Zeile → Wire-Typ [db.rs:From<HostRow> for c2::Host]
   [db.rs:From<SecretRow> for c2::ExfiltratedSecret] [db.rs:From<TaskRow> for c2::Task]
 - SQL-Tabellen (DDL in [db.rs:Db::open]): `hosts` (`id TEXT PRIMARY KEY`, `ip`, `hostname`,
   `os`, `status`, `first_seen`, `last_seen`), `secrets` (`id TEXT PRIMARY KEY`, `host_id`,
   `cred_type`, `username`, `password`, `source`, `collected_at`) mit dem UNIQUE-Index
   `idx_secrets_identitaet` auf `(host_id, cred_type, username, source)`, `tasks`
-  (`id TEXT PRIMARY KEY`, `host_id`, `command`, `status`, `result`, `created_at`)
+  (`id TEXT PRIMARY KEY`, `host_id`, `command`, `status`, `result`, `created_at`),
+  `files` (`id TEXT PRIMARY KEY`, `host_id`, `file_id`, `filename`, `plain_size`,
+  `container`, `sealed_master`, `collected_at`) mit `UNIQUE(host_id, file_id)`
 - Authentifizierung: `verify(parts: &Parts, expected: &str) -> bool` [auth.rs:verify],
   `verify_token(candidate: &str, expected: &str) -> bool` [auth.rs:verify_token] und
   die Middleware `require_auth(req: Request, next: Next) -> Response`
@@ -278,8 +293,11 @@ Typen; die Umwandlung der Datenbankzeilen in die Wire-Typen passiert hier über
 - Schreibt eine Hinweiszeile nach stderr, wenn kein Token vorgegeben wurde — **ohne**
   den Tokenwert zu nennen; er steht in `KX_SERVER_TOKEN` [lib.rs:app]
 - Loggt die Bind-Adresse und die API-Übersicht auf INFO-Level [lib.rs:app]
-- Erzeugt ein selbstsigniertes TLS-Zertifikat und einen Schlüssel im Speicher (CN aus `--cn`);
-  es wird keine Zertifikatsdatei geschrieben [lib.rs:app]
+- Lädt das TLS-Material von der Platte oder erzeugt es beim ersten Start
+  (`kx_tls::load_or_generate_server_tls`, CN aus `--cn`): Zertifikat und Schlüssel
+  persistieren neben der Datenbank (`--cert`/`--key`), der Schlüssel mit `0600`.
+  Ein Neustart behält dasselbe Paar — gepinnte Agenten kommen durch (ADR-0006,
+  Issue #65) [main.rs:main]
 - Startet einen TLS-Listener (`axum_server::bind_rustls`) auf `host:port` (Default
   `127.0.0.1:8443`) [lib.rs:app]
 - Liest das Bearer-Token aus dem `AppState` zur Token-Prüfung — nicht aus der

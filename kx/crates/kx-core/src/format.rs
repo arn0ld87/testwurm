@@ -42,7 +42,6 @@
 //! umschlossenen DEK binden (siehe [`crate::kxenc`]): die CRC allein schuetzt
 //! es nicht.
 use crate::codec::hex;
-use crate::kex::KexId;
 use crate::{Error, Result, FORMAT_VERSION, MAX_RANGES};
 
 pub const FOOTER_MAGIC: [u8; 4] = *b"KXNF";

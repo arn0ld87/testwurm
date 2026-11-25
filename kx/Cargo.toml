@@ -24,6 +24,9 @@ kx-core = { path = "crates/kx-core" }
 kx-win = { path = "crates/kx-win" }
 kx-posix = { path = "crates/kx-posix" }
 kx-tls = { path = "crates/kx-tls" }
+# Nur als dev-dependency des Agenten: der Integrationstest des C2-Client-
+# Adapters faehrt den echten Server ueber echtes TLS (Issue #69).
+kx-server = { path = "crates/kx-server" }
 kx-scanner = { path = "crates/kx-scanner" }
 kx-exploit = { path = "crates/kx-exploit" }
 

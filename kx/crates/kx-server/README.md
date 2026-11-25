@@ -44,7 +44,9 @@ Rollup aus [`src/`](./src/README.md):
   Die Pfade stammen aus den Konstanten `PATH_REGISTER`, `PATH_HEARTBEAT`, `PATH_SECRETS`,
   `PATH_HOSTS` und `PATH_TASKS` in `kx_core::c2` [src/main.rs:main].
 - CLI-Flags `--host` (Default `127.0.0.1`), `--port` (Default `8443`), `--db` (Default
-  `kx.db`), `--token` (Env `KX_SERVER_TOKEN`), `--cn` (Default `kx.local`)
+  `kx.db`), `--token` (Env `KX_SERVER_TOKEN`), `--cn` (Default `kx.local`),
+  `--cert`/`--key` (Default `kx-server.crt`/`.key` neben der Datenbank; TLS-Material
+  persistiert über Neustarts, Schlüssel `0600` — ADR-0006)
   [src/main.rs:Cli].
 - Request-Typen aus dem gemeinsamen Protokollmodul `kx_core::c2`: `RegisterRequest`
   [src/main.rs:register], `HeartbeatRequest` [src/main.rs:heartbeat], `SecretUpload`

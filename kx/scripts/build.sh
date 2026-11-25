@@ -25,7 +25,11 @@ echo "== Release-Build =="
 cargo build --release -p kx-server -p kx-agent -p kx-cli
 
 for bin in kx-server kx-agent kx-cli; do
-    cp "target/release/$bin" "$ZIEL/"
+    # Atomarer Austausch: ein laufender Container kann das Binary gemountet
+    # halten ("Text file busy"); rename ersetzt den Verzeichniseintrag, der
+    # laufende Prozess behält seinen alten Inode.
+    cp "target/release/$bin" "$ZIEL/.$bin.tmp"
+    mv -f "$ZIEL/.$bin.tmp" "$ZIEL/$bin"
 done
 
 echo "== fertig in $ZIEL =="

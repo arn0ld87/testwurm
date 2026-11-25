@@ -1,5 +1,8 @@
 # kx — autonomer Netzwerkwurm für autorisierte Penetrationstests
 
+[![CI](https://github.com/arn0ld87/testwurm/actions/workflows/ci.yml/badge.svg)](https://github.com/arn0ld87/testwurm/actions/workflows/ci.yml)
+[![Demo-CI](https://github.com/arn0ld87/testwurm/actions/workflows/demo.yml/badge.svg)](https://github.com/arn0ld87/testwurm/actions/workflows/demo.yml)
+
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │   kx  ·  Rust-Workspace mit 9 Crates                                   │
@@ -19,6 +22,37 @@ Dieses README ist das **Betriebshandbuch**: Installation, Einsatz, Steuerung,
 Fehlersuche. Die reine Architektur-/Vertragsdokumentation liegt getrennt davon
 in [`kx/README.md`](./kx/README.md) (Workspace) und
 [`docs/egm-blueprint.md`](./docs/egm-blueprint.md) (Repository-Blueprint).
+
+---
+
+## Präsentations-Demo (Testwurm) — ein Befehl
+
+Obendrauf liegt eine **präsentationsreife Demo**: deutsche Offline-GUI, echtes
+Docker-Labor (C2 + Agent + zwei SSH-Ziele im `--internal`-Netz, kein Egress),
+drei Szenarien, ehrliche Fehlerbehandlung. Kein Fake, keine Simulation.
+
+```bash
+./start.sh          # prüft Abhängigkeiten, baut einmalig, startet GUI + Labor
+# Browser: http://127.0.0.1:8321 · Strg+C räumt alles ab
+```
+
+Voraussetzung: **Linux-Host** mit Docker – die Labor-Container brauchen
+Linux-Binaries; auf anderen Hosts lehnt `start.sh` den Start ehrlich ab.
+
+| Befehl | Zweck |
+|---|---|
+| `make check` | Schnelle Qualitäts-Gates (Node-Tests, Syntax, shellcheck, Graph-Frische) |
+| `make lint` | Wie `check`, plus `cargo fmt --check` + Rust-Workspace-Tests |
+| `make e2e` | E2E gegen das laufende Labor (vorher `make start`) |
+| `make graph` | Architektur-Graph der GUI neu erzeugen |
+| `make crg` | Optional: code-review-graph-Exporte (braucht die crg-CLI) |
+
+Doku: [`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md) (60–90s-Ablauf mit Sprechtext),
+[`docs/ABSCHLUSSBERICHT.md`](./docs/ABSCHLUSSBERICHT.md) (Struktur, Addons,
+Verifikation), [`docs/API_CONTRACT.md`](./docs/API_CONTRACT.md) (GUI-Contract),
+[`SETUP_LOG.md`](./SETUP_LOG.md) (Bautagebuch), [`review/abnahme.md`](./review/abnahme.md)
+(unabhängige Abnahme). CI: `ci.yml` (Rust: build/fmt/windows/smoke) und
+`demo.yml` (Demo-Gates + echtes Docker-E2E auf dem Runner).
 
 ---
 
@@ -562,6 +596,8 @@ rm -f /tmp/beute.csv /tmp/kx-demo.db
 | `--db` | – | `kx.db` | SQLite-Datei |
 | `--token` | `KX_SERVER_TOKEN` | **Pflicht** | Bearer-Token — ein leerer Wert startet den Server nicht |
 | `--cn` | – | `kx.local` | Name im SubjectAlternativeName des Zertifikats — **muss zum Host in `--server`/`KX_C2_URL` passen** |
+| `--cert` | – | `kx-server.crt` neben `--db` | Zertifikatsdatei (PEM) — wird beim ersten Start erzeugt, danach geladen (ADR-0006) |
+| `--key` | – | `kx-server.key` neben `--db` | Schlüsseldatei (PEM, `0600`) — persistiert mit dem Zertifikat, damit Agenten einen Neustart überstehen |
 
 **Token-Auflösungsreihenfolge:** `--token` → `KX_SERVER_TOKEN`. Ist keines
 gesetzt oder ist der Wert leer, startet der Server nicht (Exit-Code 1) — ein
@@ -597,22 +633,28 @@ KX_SERVER_TOKEN=<hier das Token>
 Token **nie** an die Kommandozeile hängen: `/proc/<pid>/cmdline` ist für jeden
 Prozess im System lesbar, ein Environment-File mit 0600 ist es nicht.
 
-**Datenbank-Schema** (SQLite, drei Tabellen):
+**Datenbank-Schema** (SQLite, vier Tabellen):
 
 | Tabelle | Spalten |
 |---|---|
-| `hosts` | `id, ip, hostname, os, status, first_seen, last_seen` |
-| `secrets` | `id, host_id, cred_type, username, password, source, collected_at` |
+| `hosts` | `id, ip, hostname, os, status, first_seen, last_seen, sealed_master` |
+| `secrets` | `id, host_id, cred_type, username, password, source, collected_at, sealed_password, sealed_master` |
 | `tasks` | `id, host_id, command, status, result, created_at` |
+| `files` | `id, host_id, file_id, filename, plain_size, container, sealed_master, collected_at` |
 
 `status` bei Hosts: `discovered`, `compromised`, `agent`.
 
 Die Tabelle `secrets` hält die Beute ohne Duplikate: die Identität eines
 Secrets ist `(host_id, cred_type, username, source)`. Der Agent meldet dieselben
 Secrets bei jedem Lauf erneut — der Server aktualisiert damit die bekannte
-Zeile, statt eine zweite anzulegen. Dabei wird auch der versiegelte Wert
-überschrieben: nur der Chiffretext des jüngsten Laufs passt zum aktuellen
-Master-Key des Hosts.
+Zeile, statt eine zweite anzulegen. Jede Zeile trägt dabei ihr eigenes
+versiegeltes Schlüsselmaterial (`sealed_master`): die Beute eines älteren
+Laufs bleibt lesbar, auch wenn der Host-Eintrag inzwischen einen neuen
+Master-Key führt ([ADR-0005](./docs/adr/0005-die-beute-traegt-ihren-schluessel-mit.md)).
+
+Die Tabelle `files` hält die KXENC-Datei-Container. Je `(host_id, file_id)`
+genau eine Zeile — ein wiederholter Upload wird mit 409 abgewiesen, nicht
+überschrieben. Der Host muss vor seiner Datei registriert sein (ADR-0004).
 
 ### 6.2 Agent (`kx-agent`)
 
@@ -627,12 +669,15 @@ Master-Key des Hosts.
 | `--own-ip` | – | `192.168.1.100` | eigene IP = Host-Kennung des Agenten |
 | `--hosts` | – | – | kommagetrennte Zielliste, umgeht ARP |
 | `--relay-script` | – | `assets/smbrelayx.py` | Pfad zum Impacket-Skript |
+| `--server-key` | – | – | öffentlicher Server-Schlüssel (JSON); ohne ihn geht die Beute im Klartext |
+| `--exfil-file` | – | – | Datei, die als KXENC-Container exfiltriert wird (mehrfach angebbar; braucht `--server-key`) |
 
 **Ablauf eines Laufs**
 
 ```
 0  Selbst-Registrierung    POST /api/register   (host_id = eigene IP)
 1  Lokale Secrets           LSASS | shadow | SSH-Keys | AWS  → POST /api/secrets
+1b Datei-Exfiltration       --exfil-file → KXENC-Container neben das Original → POST /api/files
 2  Persistenz               systemd-Unit / Crontab / Windows-Dienst
 3  Entdeckung               ARP-Sweep  ODER  --hosts-Liste
 4  Scan + Exploit           TCP-Scan (12 Ports) → SMB-Relay (445) / SSH (22)
@@ -675,6 +720,8 @@ Weiterleiten über einen Router hinweg nicht.
 | `export <pfad>` | Secrets in eine Datei schreiben | `--format json\|csv` (Default `json`) |
 | `tasks` | alle Tasks listen | — |
 | `task-create` | einen Task anlegen (der Agent führt ihn aus) | `--host_id <kennung> --command <befehl>` |
+| `files` | alle exfiltrierten Datei-Container listen | — |
+| `file-open` | einen KXENC-Container entschlüsseln und ablegen | `--file-id <kennung> --out <pfad> --server-key <datei>` |
 
 **Exportformate**
 
@@ -730,13 +777,15 @@ Pfad nur an einer Stelle ändert, bricht den Vertrag.
 | `GET` | `/api/tasks` | Bearer | Agent/Client → Server | Tasks listen (Agent: eigene offene) |
 | `POST` | `/api/tasks/new` | Bearer | Client → Server | Task anlegen |
 | `POST` | `/api/tasks/result` | Bearer | Agent → Server | Task-Ergebnis melden |
+| `POST` | `/api/files` | Bearer | Agent → Server | KXENC-Datei-Container hochladen (Duplikat → 409) |
+| `GET` | `/api/files` | Bearer | Client → Server | Datei-Container listen |
 | `GET` | `/` | nein | Client → Server | Dashboard |
 | `POST` | `/api/login` | nein | Browser → Server | Token-Prüfung |
 
 **Striktheitsregel (ADR-0001):** Antworttypen (`Host`, `ExfiltratedSecret`,
-`Task`) tragen `deny_unknown_fields` — streng, weil hier der Schaden entsteht.
+`Task`, `ExfiltratedFile`) tragen `deny_unknown_fields` — streng, weil hier der Schaden entsteht.
 Request-Typen (`RegisterRequest`, `HeartbeatRequest`, `SecretUpload`,
-`CreateTaskRequest`) sind lenient — unbekannte Felder werden ignoriert, damit
+`CreateTaskRequest`, `FileUpload`) sind lenient — unbekannte Felder werden ignoriert, damit
 ein neuerer Agent einen älteren Server nicht bricht. Ein neues Feld in einem
 Antworttyp erfordert Server **und** Client gleichzeitig, ein neues Feld in
 einem Request-Typ nur den Client.
@@ -1011,12 +1060,16 @@ Dasselbe gilt für die Beute: sie geht nur dann verschlüsselt über die Leitung
 wenn der Agent mit `--server-key` den öffentlichen Server-Schlüssel bekommt
 (siehe [Schritt 6](#schritt-6--server-schlüssel-erzeugen)).
 
-**Was noch nicht geht: Dateiexfiltration.** Das KXENC-Containerformat in
-`kx/crates/kx-core/src/format.rs` beschreibt Header, Footer, Chunk-Nummerierung,
-AAD und Noncen — aber es verschlüsselt nichts. Der Wurm transportiert Passwörter
-und NT-Hashes, keine Dateien. Erfasst als ISSUE-15 in
-[`.scratch/c2-operability/issues/`](./.scratch/c2-operability/issues/) — das ist
-das **einzige** noch offene Issue, die Datei steht auf `status: open`.
+**Dateiexfiltration (ISSUE-15, erledigt).** Der Agent exfiltriert Dateien als
+KXENC-Container: `--exfil-file <pfad>` liest die Datei, versiegelt sie mit dem
+Master-Key des Hosts (`kx-core/src/kxenc.rs`, ChaCha20-Poly1305, Vollverschlüsselung)
+und schreibt den Container **neben** das Original (`<name>.kxenc`) — das Original
+bleibt unangetastet. Der Container geht an `POST /api/files`; der Operator
+listet ihn mit `kx-cli files` und holt den Klartext mit
+`kx-cli file-open --file-id <kennung> --out <pfad> --server-key <bundle>`.
+Ohne `--server-key` gibt es keinen Master-Key und damit keine Datei-Exfiltration
+— jede Datei zählt dann als verloren. Die Secret-Exfiltration läuft weiterhin
+über `kx-core/src/secretbox.rs`.
 
 Die Felder `sealed_master` und `master_key` gehören zum Wire-Vertrag. Der Agent
 füllt sie, wenn er mit `--server-key` den öffentlichen Server-Schlüssel bekommt.

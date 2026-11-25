@@ -1,12 +1,44 @@
 ---
 id: ISSUE-15
 title: Das KXENC-Containerformat hat keine Chiffre — Dateiexfiltration ist nicht möglich
-status: open
+status: done
 priority: medium
 handoff: briefs/ISSUE-15-handoff.md
 category: enhancement
 triage_state: spezifiziert
 ---
+
+## Erledigt (2026-11-25, GitHub #31)
+
+- **Chiffre:** `kx-core/src/kxenc.rs` (PR #76) — ChaCha20-Poly1305 je Chunk mit
+  der AAD aus `aad_for`, Nonce je Chunk aus `nonce_for`, frischer DEK je
+  Container, im Fuss mit dem Master-Key des Hosts umschlossen. Vollverschluesselung
+  (`head_len = plain_size`), Roundtrip- und Bitflip-Tests (`s1_…`–`s9_…`).
+- **Agent:** `kx-agent/src/datei.rs`, Flag `--exfil-file` (mehrfach). Der
+  Container wird **neben** das Original geschrieben (`<name>.kxenc`), das
+  Original bleibt unangetastet. Ohne `--server-key` geht keine Datei raus;
+  jede zaehlt dann als verloren (`DateiBilanz`, `Ergebnis::dateien_verloren`).
+- **Server:** `POST/GET /api/files`, Tabelle `files` mit
+  `UNIQUE(host_id, file_id)`; Waise → 400 (ADR-0004), Duplikat → 409.
+  `file_id` steht in der AAD des Containers.
+- **Operator:** `kx-cli files` listet, `kx-cli file-open --file-id --out
+  --server-key` entschluesselt. Die Datei traegt ihr `sealed_master` selbst
+  (ADR-0005, Nachtrag) — sie bleibt nach einem neuen Agent-Lauf lesbar.
+- **Tests:** Klartext-Snippet kommt im Container nicht vor
+  (`datei::tests::der_container_liegt_neben_dem_original_und_traegt_den_klartext_nicht`),
+  Deduplizierung (`db::tests::dieselbe_datei_wird_nicht_zweimal_abgelegt`,
+  Vertragstest), Operator-Roundtrip (`decrypt::tests`).
+
+**Abweichungen zur Spezifikation (durch PR #76 merged, beibehalten):**
+- `chunk_size` ist 64 KiB statt 1 MiB (`kxenc::CHUNK_SIZE`). Die Chunk-Groesse
+  steht im Fuss und in der AAD — eine Aenderung waere eine Formatentscheidung
+  des Maintainers, kein Bugfix.
+- Das byte-orientierte DEK-Wrapping lebt inline in `kxenc.rs` (HKDF mit
+  eigenem Info-String `kx/kxenc/dek/v1` und eigenem Salt) statt als
+  `seal_bytes`/`open_bytes` in `secretbox.rs`. Funktional gleichwertig;
+  `secretbox` bleibt unveraendert String-only.
+- Der Empfaenger entpackt den DEK mit dem **Master-Key des Hosts** (den er
+  aus `sealed_master` entsiegelt), nicht direkt mit dem privaten KEM-Schluessel.
 
 ## Description
 

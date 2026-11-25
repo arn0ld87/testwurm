@@ -1,0 +1,11 @@
+# Labor-Ziel: SSH-Server mit kontrollierten Credentials.
+# Nur für das isolierte kx-Labor (Netz kx-lab). Kein Produktivbetrieb.
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/sshd
+COPY target-entrypoint.sh /usr/local/bin/target-entrypoint.sh
+RUN chmod +x /usr/local/bin/target-entrypoint.sh
+EXPOSE 22
+ENTRYPOINT ["/usr/local/bin/target-entrypoint.sh"]

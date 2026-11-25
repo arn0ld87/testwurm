@@ -10,8 +10,8 @@ use std::path::Path;
 
 use kx_core::c2::transport::{Transport, TransportError};
 use kx_core::c2::{
-    CreateTaskRequest, ExfiltratedSecret, Host, Task, PATH_HOSTS, PATH_SECRETS, PATH_TASKS,
-    PATH_TASKS_CREATE,
+    CreateTaskRequest, ExfiltratedFile, ExfiltratedSecret, Host, Task, PATH_FILES, PATH_HOSTS,
+    PATH_SECRETS, PATH_TASKS, PATH_TASKS_CREATE,
 };
 use thiserror::Error;
 
@@ -56,6 +56,11 @@ impl Client {
     /// Liefert alle Tasks.
     pub async fn tasks(&self) -> Result<Vec<Task>, ApiError> {
         Ok(self.transport.get_json(PATH_TASKS)?)
+    }
+
+    /// Liefert alle Datei-Container (Issue #31).
+    pub async fn files(&self) -> Result<Vec<ExfiltratedFile>, ApiError> {
+        Ok(self.transport.get_json(PATH_FILES)?)
     }
 
     /// Legt einen Task an und liefert die ID zurueck.
