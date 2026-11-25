@@ -1,11 +1,19 @@
-//! kx-core — plattformneutraler Kern des Encoder-Projekts.
+//! kx-core — der plattformneutrale Kern des kx-Workspace.
 //!
-//! Schichtgrenzen (Abhängigkeitsrichtung ist vorgegeben, Band 14 §1):
-//! `format` → `crypto` → `engine` → `beacon`. Das Beacon kennt den Encoder,
-//! der Encoder kennt kein Beacon.
+//! Die Module stehen nebeneinander, nicht in Schichten:
+//!
+//! - `c2` — der C2-Wire-Vertrag: Pfade, Typen und der Transport (ADR-0001,
+//!   ADR-0002). Die einzige Definition des Protokolls.
+//! - `secret`, `exfil` — die Form der Beute und ihr Upload: versiegelt
+//!   schlägt Klartext, ein Versiegelungsfehler ist ein Fehler.
+//! - `hostkey`, `kex`, `secretbox` — der Master-Key je Host, die
+//!   Schlüsselarten und die Einzelversiegelung der Beute.
+//! - `format`, `kxenc` — das KXENC-Containerformat und seine Chiffre.
+//! - `persist` — die Persistenz-Invocation, die der Agent installiert.
+//! - `codec`, `error` — Textkodierungen und die Fehlertaxonomie.
 //!
 //! Alles hier ist Plattformcode-frei: Windows- und POSIX-Spezifika stecken in
-//! `platform::PlatformHooks`, implementiert in `kx-win` und `kx-posix`.
+//! `kx-win` und `kx-posix`.
 
 pub mod c2;
 pub mod codec;
@@ -21,7 +29,7 @@ pub mod secretbox;
 
 pub use error::{Error, Result};
 
-/// Formatversion, die dieser Build lesen und schreiben kann (B005).
+/// Formatversion des KXENC-Containers, die dieser Build lesen und schreiben kann.
 pub const FORMAT_VERSION: u8 = 1;
 /// Aeltere Formatversionen, die dieser Build noch lesen kann.
 pub const READABLE_FORMAT_VERSIONS: [u8; 1] = [1];

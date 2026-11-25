@@ -22,6 +22,15 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+# Das Labor braucht Linux-Binaries: C2 und Agent laufen als Linux-Container.
+# Ein nativer macOS-Build würde im Container nicht starten (Exec format error).
+HOST_OS="$(uname -s)"
+if [ "$HOST_OS" != "Linux" ]; then
+  echo "FEHLER: Das Labor braucht Linux-Binaries (Container). Dieser Host ist $HOST_OS." >&2
+  echo "Bitte auf einem Linux-Host starten – oder die Binaries dort bauen und kx/dist/ mitbringen." >&2
+  exit 1
+fi
+
 # 2. Release-Binaries (einmaliger Build, danach sofort startklar)
 if [ ! -x kx/dist/kx-server ] || [ ! -x kx/dist/kx-agent ]; then
   export PATH="$HOME/.cargo/bin:$PATH"

@@ -11,3 +11,9 @@ state/
 # Keine Quelltextpfade ins Binary: --remap-pathlines wird in scripts/build.* gesetzt.
 # Crate-Versionslock ist Pflicht, damit Decryptor und Encoder dasselbe Format erzeugen.
 Cargo.lock
+
+# TLS-Material des C2 (ADR-0006) — Betriebsgeheimnis, nicht ins Repository
+kx-server.crt
+kx-server.key
+*.crt.tmp
+*.key.tmp

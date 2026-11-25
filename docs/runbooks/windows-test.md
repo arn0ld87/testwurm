@@ -63,11 +63,13 @@ bash kx/scripts/kx-vm-test.sh 45
 
 ## Stolperfallen
 
-**Der C2 erzeugt bei jedem Start ein neues Zertifikat.** `rcgen` signiert
-selbstsigniert und frisch. Liegt in dem HTTP-Verzeichnis noch das alte,
-meldet der Agent `BadSignature`. Deshalb holt das Skript das Zertifikat
-**nach** dem Kopieren der Dateien — in der anderen Reihenfolge gewinnt die
-alte Kopie.
+**Der C2 behält sein Zertifikat über Neustarts (ADR-0006).** Zertifikat und
+Schlüssel liegen neben der Datenbank (`kx-server.crt`/`.key`, Schlüssel `0600`)
+und werden beim ersten Start erzeugt, danach geladen. Ein Agent, der das
+Zertifikat pinnt, kommt über einen Server-Neustart hinweg. Nur wenn die Dateien
+fehlen oder die `--cn` wechselt, entsteht ein neues Paar — dann holt das Skript
+das Zertifikat **nach** dem Kopieren der Dateien, in der anderen Reihenfolge
+gewinnt die alte Kopie (`BadSignature`).
 
 **`rsync -a` überträgt die Zeitstempel der Quelle.** Der Workspace liegt auf
 einer anderen Zeitzone als der Host, und Cargo baut nur neu, was neuer

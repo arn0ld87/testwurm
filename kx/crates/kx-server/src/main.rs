@@ -49,6 +49,18 @@ struct Cli {
     /// "certificate not valid for name" fehl.
     #[arg(long, default_value = "kx.local")]
     cn: String,
+    /// Pfad zur Zertifikatsdatei (PEM). Default: `kx-server.crt` neben der
+    /// Datenbank. Beim ersten Start erzeugt, danach geladen — Agenten
+    /// überstehen einen Neustart, ohne ihr gepinntes Zertifikat zu erneuern
+    /// (Issue #65, ADR-0006).
+    #[arg(long)]
+    cert: Option<PathBuf>,
+    /// Pfad zur Schlüsseldatei (PEM). Default: `kx-server.key` neben der
+    /// Datenbank. Rechte `0600` wie die Datenbank. TLS bindet das Zertifikat
+    /// an den Schlüssel — beide persistieren, sonst bricht der Neustart die
+    /// gepinnten Agenten (ADR-0006).
+    #[arg(long)]
+    key: Option<PathBuf>,
 }
 
 /// Server-Zustand: Datenbank.
@@ -99,8 +111,31 @@ async fn main() {
         token: Arc::new(token),
     };
 
-    // TLS-Material: selbstsigniert generieren.
-    let tls = kx_tls::generate_server_tls(&cli.cn).expect("TLS-Zertifikat erzeugbar");
+    // TLS-Material: beim ersten Start erzeugen und ablegen, danach laden.
+    // Zertifikat und Schlüssel liegen neben der Datenbank (oder unter --cert /
+    // --key). Ein Neustart behält dasselbe Paar — die gepinnten Agenten kommen
+    // durch (Issue #65, ADR-0006).
+    let db_dir = cli
+        .db
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let cert_path = cli
+        .cert
+        .clone()
+        .unwrap_or_else(|| db_dir.join("kx-server.crt"));
+    let key_path = cli
+        .key
+        .clone()
+        .unwrap_or_else(|| db_dir.join("kx-server.key"));
+    let tls = kx_tls::load_or_generate_server_tls(&cli.cn, &cert_path, &key_path)
+        .expect("TLS-Material ladbar oder erzeugbar");
+    tracing::info!(
+        "TLS-Zertifikat: {} (Schlüssel: {})",
+        cert_path.display(),
+        key_path.display()
+    );
     let cert_pem = tls.cert_pem.clone();
     let key_pem = tls.key_pem;
 

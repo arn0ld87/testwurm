@@ -87,6 +87,12 @@ impl KeySealer {
             roh: kapselung.master_key,
         })
     }
+
+    /// Das KEM-Verfahren des Server-Schluessels. Der KXENC-Fuss nennt es —
+    /// er darf nicht ein anderes behaupten, als der Operator benutzt.
+    pub fn kex(&self) -> kx_core::kex::KexId {
+        self.server.kex
+    }
 }
 
 #[cfg(test)]

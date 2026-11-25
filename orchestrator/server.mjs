@@ -213,9 +213,18 @@ async function ensureTargets() {
 async function startRun() {
   const scen = SCENARIOS.find((s) => s.id === scenarioId) ?? SCENARIOS[0];
   const runId = ++runCounter;
+  if (logProc) { logProc.kill('SIGKILL'); logProc = null; }
+  // Frischer Lauf = frische Daten: C2 und DB zurücksetzen. Sonst meldet der
+  // nächste Poll Registration, Beute und Tasks des Vorlaufs als Ergebnisse
+  // dieses Laufs (und alte Tasks zählen in die Recovery-Statistik hinein).
+  snap = { hosts: [], secrets: [], tasks: [] };
+  serverGen++;
+  await exec('docker', ['rm', '-f', 'kx-lab-c2']);
+  for (const f of ['kx.db', 'kx.db-wal', 'kx.db-shm', 'kx-server.crt', 'kx-server.key', 'kx-server.crt.tmp', 'kx-server.key.tmp']) {
+    try { fs.unlinkSync(path.join(RUN, f)); } catch { /* egal */ }
+  }
   await ensureServer();
   await ensureTargets();
-  snap = { hosts: [], secrets: [], tasks: [] };
   events = events.slice(-2);
   startedAt = Date.now();
 
@@ -330,7 +339,7 @@ async function resetDemo(newScenarioId) {
   serverGen++;
   await exec('docker', ['rm', '-f', 'kx-lab-c2']);
   await sleep(300);
-  for (const f of ['kx.db', 'kx.db-wal', 'kx.db-shm']) {
+  for (const f of ['kx.db', 'kx.db-wal', 'kx.db-shm', 'kx-server.crt', 'kx-server.key', 'kx-server.crt.tmp', 'kx-server.key.tmp']) {
     try { fs.unlinkSync(path.join(RUN, f)); } catch { /* egal */ }
   }
   if (typeof newScenarioId === 'string' && SCENARIOS.some((s) => s.id === newScenarioId)) {
@@ -346,6 +355,18 @@ async function resetDemo(newScenarioId) {
 }
 
 // ---------------------------------------------------------------- HTTP-API
+
+/** Lebenszyklus-Operationen strikt serialisieren: parallele Klicks (Start
+ *  doppelt, Szenario-Wahl + Start) dürfen sich nicht in die Container-
+ *  Operationen funken. Jede Aktion wartet auf die vorherige; der Zustand
+ *  wird erst nach Abschluss der laufenden Aktion neu bewertet. */
+let opChain = Promise.resolve();
+/** @param {() => Promise<void>} op */
+function serialize(op) {
+  const run = opChain.then(op, op);
+  opChain = run.then(() => {}, () => {});
+  return run;
+}
 
 /** @returns {ReturnType<typeof deriveState>} */
 function currentState() {
@@ -381,12 +402,14 @@ const httpServer = http.createServer(async (req, res) => {
         return sendJson(res, 400, { ok: false, error: 'Unbekannte Aktion' });
       }
       try {
-        if (action === 'start') {
-          if (phase === 'paused') { await docker(['unpause', 'kx-lab-patient0']); phase = 'running'; logEvent('Lauf fortgesetzt'); }
-          else if (phase !== 'running') await startRun();
-        } else if (action === 'pause') await pauseRun();
-        else if (action === 'step') await stepRun();
-        else if (action === 'reset') await resetDemo(body.scenarioId);
+        await serialize(async () => {
+          if (action === 'start') {
+            if (phase === 'paused') { await docker(['unpause', 'kx-lab-patient0']); phase = 'running'; logEvent('Lauf fortgesetzt'); }
+            else if (phase !== 'running') await startRun();
+          } else if (action === 'pause') await pauseRun();
+          else if (action === 'step') await stepRun();
+          else if (action === 'reset') await resetDemo(body.scenarioId);
+        });
       } catch (e) {
         phase = 'error_contained';
         logEvent(`Aktion "${action}" fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`, 'error');

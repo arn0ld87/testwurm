@@ -20,6 +20,8 @@ Die Datenmodelle stammen aus `kx_core::c2` — derselben Quelle der Wahrheit, di
 - [main.rs:Command::Secrets] — Subcommand `secrets` mit Flag `--user` (`Option<String>`, Doc: „Optionaler Filter nach Benutzername (Teilstring)“), Flag `--decrypt` (`bool`) und Flag `--server-key` (`Option<PathBuf>`) — `--decrypt` entschluesselt die Secrets mit dem geheimen Server-Schluessel.
 - [main.rs:Command::Export] — Subcommand `export` mit positionellem Argument `path: PathBuf`, Flag `--format` (`default_value = "json"`), Flag `--decrypt` (`bool`) und Flag `--server-key` (`Option<PathBuf>`).
 - [main.rs:Command::Tasks] — Subcommand `tasks`, keine Flags.
+- [main.rs:Command::Files] — Subcommand `files`, keine Flags; listet die exfiltrierten Datei-Container (Issue #31).
+- [main.rs:Command::FileOpen] — Subcommand `file-open` mit `--file-id` (`String`), `--out` (`PathBuf`) und `--server-key` (`PathBuf`); entschluesselt einen KXENC-Container und schreibt den Klartext nach `--out`. Der Klartext entsteht auf dem Rechner des Operators, nicht auf dem Server.
 
 ### Client-API (crate-intern)
 
@@ -29,6 +31,7 @@ Die Datenmodelle stammen aus `kx_core::c2` — derselben Quelle der Wahrheit, di
 - [client.rs:Client::hosts] — `pub async fn hosts(&self) -> Result<Vec<Host>, ApiError>`; HTTP GET auf `{base_url}{PATH_HOSTS}`.
 - [client.rs:Client::secrets] — `pub async fn secrets(&self) -> Result<Vec<ExfiltratedSecret>, ApiError>`; HTTP GET auf `{base_url}{PATH_SECRETS}`.
 - [client.rs:Client::tasks] — `pub async fn tasks(&self) -> Result<Vec<Task>, ApiError>`; HTTP GET auf `{base_url}{PATH_TASKS}`.
+- [client.rs:Client::files] — `pub async fn files(&self) -> Result<Vec<ExfiltratedFile>, ApiError>`; HTTP GET auf `{base_url}{PATH_FILES}`.
 - [client.rs:Client::create_task] — `pub async fn create_task(&self, req: &CreateTaskRequest) -> Result<String, ApiError>`; HTTP POST auf `{base_url}{PATH_TASKS_CREATE}`, liefert die `id` des angelegten Tasks.
 - [client.rs:export] — `pub fn export(secrets: &[ExfiltratedSecret], path: &Path, format: &str) -> Result<(), ApiError>`; exportiert als JSON oder CSV.
 
@@ -37,6 +40,7 @@ Die Datenmodelle stammen aus `kx_core::c2` — derselben Quelle der Wahrheit, di
 - [decrypt.rs:Decryptor] — `pub struct Decryptor` mit privatem Feld `server: ServerKeyPair`; gewinnt aus den Hosts die Master-Keys und entschlüsselt damit die Secrets.
 - [decrypt.rs:Decryptor::load] — `pub fn load(pfad: &Path) -> Result<Self, String>`; liest das `ServerKeyBundle` aus der JSON-Datei.
 - [decrypt.rs:Decryptor::decrypt_all] — `pub fn decrypt_all(&self, hosts: &[Host], secrets: &[ExfiltratedSecret]) -> Vec<ExfiltratedSecret>`; liefert **denselben Typ** wie die Eingabe, mit gefülltem `password` und leerem `sealed_password`. `id` und `collected_at` bleiben erhalten — es gibt keinen zweiten Typ für die entschlüsselte Beute.
+- [decrypt.rs:Decryptor::decrypt_file] — `pub fn decrypt_file(&self, file: &ExfiltratedFile, hosts: &[Host]) -> Result<Vec<u8>, String>`; öffnet einen KXENC-Container. Erste Wahl ist das `sealed_master` der Datei selbst (ADR-0005), zweite Wahl der Schlüssel des Host-Eintrags. Ohne passenden Schlüssel ein Fehler, kein halber Klartext.
 
 ### Transport (aus `kx_core::c2::transport`)
 
@@ -47,12 +51,14 @@ Die Datenmodelle stammen aus `kx_core::c2` — derselben Quelle der Wahrheit, di
 
 ### Protokolltypen (aus `kx_core::c2`)
 
-- [kx-core/src/c2.rs:Host](../../kx-core/src/c2.rs) — `pub struct Host`, Felder `host_id`, `ip`, `hostname`, `os`, `status`, `first_seen`, `last_seen` (alle `String`); trägt `#[serde(deny_unknown_fields)]`.
-- [kx-core/src/c2.rs:ExfiltratedSecret](../../kx-core/src/c2.rs) — `pub struct ExfiltratedSecret`, Felder `id`, `host_id`, `cred_type`, `username`, `password`, `source`, `collected_at` (alle `String`); trägt `#[serde(deny_unknown_fields)]`.
-- [kx-core/src/c2.rs:Task](../../kx-core/src/c2.rs) — `pub struct Task`, Felder `id`, `host_id`, `command`, `status`, `result: String` (verpflichtend, nicht optional) und `created_at`; trägt `#[serde(deny_unknown_fields)]`.
+- [kx-core/src/c2.rs:Host](../../kx-core/src/c2.rs) — `pub struct Host`; die Feldliste steht **an einer Stelle**: `Host::FIELDS` (inklusive `sealed_master`). Der Typ trägt `#[serde(deny_unknown_fields)]`.
+- [kx-core/src/c2.rs:ExfiltratedSecret](../../kx-core/src/c2.rs) — `pub struct ExfiltratedSecret`; die Feldliste steht **an einer Stelle**: `ExfiltratedSecret::FIELDS` (inklusive `sealed_password` und `sealed_master`). Der Typ trägt `#[serde(deny_unknown_fields)]`.
+- [kx-core/src/c2.rs:Task](../../kx-core/src/c2.rs) — `pub struct Task`; die Feldliste steht **an einer Stelle**: `Task::FIELDS`. `result` ist ein verpflichtendes `String`-Feld, kein `Option`. Der Typ trägt `#[serde(deny_unknown_fields)]`.
+- [kx-core/src/c2.rs:ExfiltratedFile](../../kx-core/src/c2.rs) — `pub struct ExfiltratedFile`; die Feldliste steht **an einer Stelle**: `ExfiltratedFile::FIELDS` (inklusive `sealed_master`). Der Typ trägt `#[serde(deny_unknown_fields)]`.
 - [kx-core/src/c2.rs:PATH_HOSTS](../../kx-core/src/c2.rs) — `pub const PATH_HOSTS: &str = "/api/hosts"`.
 - [kx-core/src/c2.rs:PATH_SECRETS](../../kx-core/src/c2.rs) — `pub const PATH_SECRETS: &str = "/api/secrets"`.
 - [kx-core/src/c2.rs:PATH_TASKS](../../kx-core/src/c2.rs) — `pub const PATH_TASKS: &str = "/api/tasks"`.
+- [kx-core/src/c2.rs:PATH_FILES](../../kx-core/src/c2.rs) — `pub const PATH_FILES: &str = "/api/files"`.
 
 ### Tests
 
@@ -73,14 +79,14 @@ Die Datenmodelle stammen aus `kx_core::c2` — derselben Quelle der Wahrheit, di
 - [kx-core/src/c2/transport.rs:Transport::new](../../kx-core/src/c2/transport.rs) — `base_url` normalisiert den Serverwert über `server.trim_end_matches('/')`; alle abschließenden `/` werden entfernt, bevor Pfade angehängt werden.
 - [kx-core/src/c2/transport.rs:build_request](../../kx-core/src/c2/transport.rs) — Der Auth-Header ist exakt `Authorization: Bearer {token}`; Query-Parameter werden nie angehängt.
 - [client.rs:export] — Die Formatierung verzweigt auf ein exaktes Match gegen das Literal `"csv"`; jeder andere Wert (einschließlich `"json"` und unbekannter Strings) fällt in den `_`-Zweig und wird als Pretty-JSON serialisiert.
-- [client.rs:export] — Die CSV-Kopfzeile lautet exakt `host_id,cred_type,username,password,source,collected_at`; die Datenzeilen folgen derselben Spaltenreihenfolge, `ExfiltratedSecret.id` wird im CSV nicht ausgegeben.
+- [client.rs:export] — Die CSV-Kopfzeile lautet exakt `host_id,cred_type,username,password,sealed_password,sealed_master,source,collected_at`; die Datenzeilen folgen derselben Spaltenreihenfolge, `ExfiltratedSecret.id` wird im CSV nicht ausgegeben. Kopfzeile und Zeilen entstehen aus **einer** Liste (`CSV_SPALTEN`) [client.rs:CSV_SPALTEN].
 - [client.rs:export] — Der JSON-Zweig serialisiert das vollständige `Vec<ExfiltratedSecret>` (alle Felder inklusive `id` und `password`) via `serde_json::to_writer_pretty`.
 - [client.rs:export] — Fehler beim Anlegen der Datei sowie bei jedem Schreibvorgang werden zu `ApiError::Io`.
 - [kx-tls/src/lib.rs:client_config_trusting](../../kx-tls/src/lib.rs) — Das TLS-Vertrauen ist auf exakt die im `--cert`-PEM enthaltenen Zertifikate gepinnt; der Root-Store startet leer, es wird kein Client-Zertifikat präsentiert.
 - [main.rs:Command::Secrets] — Der Filter `--user` ist ein Substring-Test auf `s.username`; ohne `--user` bleiben alle Secrets erhalten.
 - [main.rs:main] — Jeder Fehlerpfad beendet den Prozess mit Exit-Code 1: Client-Init, Host-Abfrage, Secret-Abfrage, Export und Task-Abfrage. Argumentationsfehler von clap beenden dagegen mit **Exit-Code 2** (`Cli::parse()` in `main.rs:61`), `--help` endet mit 0.
 - [main.rs:main] — Der Logfilter fällt auf `"info"` zurück, wenn `tracing_subscriber::EnvFilter::try_from_default_env()` fehlschlägt (also `RUST_LOG` fehlt oder unparsbar ist).
-- [main.rs:main] — Die stdout-Zeilenformate sind fest: Hosts `{:<15} {:<20} {:<15} {}` über `ip, hostname, os, status`; Secrets `{:<20} {:<30} {:<15} {}` über `cred_type, username, source, collected_at`; Tasks `{:<36} {:<20} {}` über `id, status, created_at`.
+- [main.rs:main] — Die stdout-Zeilenformate sind fest: Hosts `{:<15} {:<20} {:<15} {}` über `ip, hostname, os, status`; Secrets `{:<20} {:<20} {:<30} {:<15} {}` über `host_id, cred_type, username, source, passwort`; Tasks `{:<36} {:<20} {}` über `id, status, created_at`.
 - [main.rs:main] — `export` filtert nicht: die Bestätigung meldet die Anzahl aller abgerufenen Secrets, unabhängig von `--user` (das der Subcommand `export` gar nicht kennt).
 
 ## Side Effects
@@ -91,9 +97,9 @@ Die Datenmodelle stammen aus `kx_core::c2` — derselben Quelle der Wahrheit, di
 - [client.rs:Client::secrets] — Netzwerk: HTTP GET auf `{base_url}/api/secrets` mit Header `Authorization: Bearer {token}`.
 - [client.rs:Client::tasks] — Netzwerk: HTTP GET auf `{base_url}/api/tasks` mit Header `Authorization: Bearer {token}`.
 - [client.rs:export] — Dateisystem-Schreibzugriff: `std::fs::File::create(path)` legt die Exportdatei an oder überschreibt sie; das Anlegen erfolgt in beiden Zweigen vor dem verzweigungsspezifischen Schreiben.
-- [client.rs:export] — Dateisystem-Schreibzugriff (CSV-Zweig): die Kopfzeile entsteht aus `CSV_SPALTEN` — alle Felder des Wire-Typs außer `id`, also `host_id,cred_type,username,password,sealed_password,source,collected_at` — gefolgt von einer Zeile pro Secret im Klartext. Kopfzeile und Zeilen entstehen aus **einer** Liste, sie können nicht auseinanderlaufen [client.rs:CSV_SPALTEN].
+- [client.rs:export] — Dateisystem-Schreibzugriff (CSV-Zweig): die Kopfzeile entsteht aus `CSV_SPALTEN` — alle Felder des Wire-Typs außer `id`, also `host_id,cred_type,username,password,sealed_password,sealed_master,source,collected_at` — gefolgt von einer Zeile pro Secret. Kopfzeile und Zeilen entstehen aus **einer** Liste, sie können nicht auseinanderlaufen [client.rs:CSV_SPALTEN].
 - [client.rs:export] — Dateisystem-Schreibzugriff (JSON-Zweig): `serde_json::to_writer_pretty(&mut file, secrets)` schreibt das vollständige `Vec<ExfiltratedSecret>` als formatiertes JSON, einschließlich `id` und `password`.
-- [main.rs:main] — stdout-Schreibzugriffe: `println!` pro Host (`ip, hostname, os, status`), pro Secret (`cred_type, username, source, collected_at` — das Passwort wird nicht ausgegeben) und pro Task (`id, status, created_at`).
+- [main.rs:main] — stdout-Schreibzugriffe: `println!` pro Host (`ip, hostname, os, status`), pro Secret (`host_id, cred_type, username, source, passwort` — das Passwort **wird** ausgegeben: mit `--decrypt` entschlüsselt, sonst der Klartextwert oder `<verschluesselt>` für versiegelte Beute) und pro Task (`id, status, created_at`).
 - [main.rs:main] — Prozessabbruch: `std::process::exit(1)` bei Client-Init-Fehler sowie bei fehlgeschlagener Host-, Secret-, Export- und Task-Abfrage.
 - [main.rs:main] — Globaler Zustand: `tracing_subscriber::fmt().with_env_filter(...).init()` installiert den globalen Tracing-Subscriber; `info!` meldet Ergebnisanzahlen und Exportbestätigung, `error!` jeden Fehler.
 - [main.rs:main] — Der Client wird vor dem Subcommand-Dispatch unbedingt konstruiert, sodass die Zertifikatsdatei bei jedem Aufruf gelesen und der TLS-Agent aufgebaut wird — auch beim reinen Export.
