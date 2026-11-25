@@ -1,5 +1,8 @@
 # kx — autonomer Netzwerkwurm für autorisierte Penetrationstests
 
+[![CI](https://github.com/arn0ld87/testwurm/actions/workflows/ci.yml/badge.svg)](https://github.com/arn0ld87/testwurm/actions/workflows/ci.yml)
+[![Demo-CI](https://github.com/arn0ld87/testwurm/actions/workflows/demo.yml/badge.svg)](https://github.com/arn0ld87/testwurm/actions/workflows/demo.yml)
+
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │   kx  ·  Rust-Workspace mit 9 Crates                                   │
@@ -19,6 +22,34 @@ Dieses README ist das **Betriebshandbuch**: Installation, Einsatz, Steuerung,
 Fehlersuche. Die reine Architektur-/Vertragsdokumentation liegt getrennt davon
 in [`kx/README.md`](./kx/README.md) (Workspace) und
 [`docs/egm-blueprint.md`](./docs/egm-blueprint.md) (Repository-Blueprint).
+
+---
+
+## Präsentations-Demo (Testwurm) — ein Befehl
+
+Obendrauf liegt eine **präsentationsreife Demo**: deutsche Offline-GUI, echtes
+Docker-Labor (C2 + Agent + zwei SSH-Ziele im `--internal`-Netz, kein Egress),
+drei Szenarien, ehrliche Fehlerbehandlung. Kein Fake, keine Simulation.
+
+```bash
+./start.sh          # prüft Abhängigkeiten, baut einmalig, startet GUI + Labor
+# Browser: http://127.0.0.1:8321 · Strg+C räumt alles ab
+```
+
+| Befehl | Zweck |
+|---|---|
+| `make check` | Schnelle Qualitäts-Gates (Node-Tests, Syntax, shellcheck, Graph-Frische) |
+| `make lint` | Wie `check`, plus `cargo fmt --check` + Rust-Workspace-Tests |
+| `make e2e` | E2E gegen das laufende Labor (vorher `make start`) |
+| `make graph` | Architektur-Graph der GUI neu erzeugen |
+| `make crg` | Optional: code-review-graph-Exporte (braucht die crg-CLI) |
+
+Doku: [`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md) (60–90s-Ablauf mit Sprechtext),
+[`docs/ABSCHLUSSBERICHT.md`](./docs/ABSCHLUSSBERICHT.md) (Struktur, Addons,
+Verifikation), [`docs/API_CONTRACT.md`](./docs/API_CONTRACT.md) (GUI-Contract),
+[`SETUP_LOG.md`](./SETUP_LOG.md) (Bautagebuch), [`review/abnahme.md`](./review/abnahme.md)
+(unabhängige Abnahme). CI: `ci.yml` (Rust: build/fmt/windows/smoke) und
+`demo.yml` (Demo-Gates + echtes Docker-E2E auf dem Runner).
 
 ---
 

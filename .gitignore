@@ -15,3 +15,10 @@
 .windsurf/
 WARP.md
 .github/copilot-instructions.md
+
+# Testwurm-Demo: lokale Betriebsartefakte
+lab/run/
+kx/dist/
+kx/target/
+node_modules/
+.code-review-graph/

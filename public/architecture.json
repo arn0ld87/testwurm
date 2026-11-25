@@ -1,0 +1,98 @@
+{
+  "ok": true,
+  "graph": {
+    "nodes": [
+      {
+        "id": "kx-core",
+        "label": "kx-core",
+        "group": "core"
+      },
+      {
+        "id": "kx-win",
+        "label": "kx-win",
+        "group": "core"
+      },
+      {
+        "id": "kx-posix",
+        "label": "kx-posix",
+        "group": "core"
+      },
+      {
+        "id": "kx-tls",
+        "label": "kx-tls",
+        "group": "core"
+      },
+      {
+        "id": "kx-agent",
+        "label": "kx-agent",
+        "group": "agent"
+      },
+      {
+        "id": "kx-server",
+        "label": "kx-server",
+        "group": "server"
+      },
+      {
+        "id": "kx-cli",
+        "label": "kx-cli",
+        "group": "cli"
+      },
+      {
+        "id": "kx-scanner",
+        "label": "kx-scanner",
+        "group": "core"
+      },
+      {
+        "id": "kx-exploit",
+        "label": "kx-exploit",
+        "group": "core"
+      }
+    ],
+    "edges": [
+      {
+        "from": "kx-core",
+        "to": "kx-tls"
+      },
+      {
+        "from": "kx-win",
+        "to": "kx-core"
+      },
+      {
+        "from": "kx-posix",
+        "to": "kx-core"
+      },
+      {
+        "from": "kx-agent",
+        "to": "kx-core"
+      },
+      {
+        "from": "kx-agent",
+        "to": "kx-scanner"
+      },
+      {
+        "from": "kx-agent",
+        "to": "kx-exploit"
+      },
+      {
+        "from": "kx-agent",
+        "to": "kx-win"
+      },
+      {
+        "from": "kx-agent",
+        "to": "kx-posix"
+      },
+      {
+        "from": "kx-server",
+        "to": "kx-core"
+      },
+      {
+        "from": "kx-server",
+        "to": "kx-tls"
+      },
+      {
+        "from": "kx-cli",
+        "to": "kx-core"
+      }
+    ]
+  }
+}

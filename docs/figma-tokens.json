@@ -1,0 +1,227 @@
+{
+  "color": {
+    "bg-primary": {
+      "value": "#0f172a",
+      "type": "color",
+      "description": "Primärer Hintergrund"
+    },
+    "bg-secondary": {
+      "value": "#1e293b",
+      "type": "color",
+      "description": "Sekundärer Hintergrund"
+    },
+    "bg-tertiary": {
+      "value": "#334155",
+      "type": "color",
+      "description": "Tertiärer Hintergrund"
+    },
+    "text-primary": {
+      "value": "#f1f5f9",
+      "type": "color",
+      "description": "Primärer Text"
+    },
+    "text-secondary": {
+      "value": "#94a3b8",
+      "type": "color",
+      "description": "Sekundärer Text"
+    },
+    "text-muted": {
+      "value": "#64748b",
+      "type": "color",
+      "description": "Gedämpfter Text"
+    },
+    "pending": {
+      "value": "#6b7280",
+      "type": "color",
+      "description": "Status: Ausstehend"
+    },
+    "active": {
+      "value": "#3b82f6",
+      "type": "color",
+      "description": "Status: Aktiv"
+    },
+    "passed": {
+      "value": "#22c55e",
+      "type": "color",
+      "description": "Status: Bestanden"
+    },
+    "warning": {
+      "value": "#f59e0b",
+      "type": "color",
+      "description": "Status: Warnung"
+    },
+    "failed": {
+      "value": "#ef4444",
+      "type": "color",
+      "description": "Status: Fehlgeschlagen"
+    },
+    "recovered": {
+      "value": "#14b8a6",
+      "type": "color",
+      "description": "Status: Erholt"
+    },
+    "skipped": {
+      "value": "#4b5563",
+      "type": "color",
+      "description": "Status: Übersprungen"
+    },
+    "primary": {
+      "value": "#3b82f6",
+      "type": "color",
+      "description": "Primäre UI-Farbe"
+    },
+    "secondary": {
+      "value": "#64748b",
+      "type": "color",
+      "description": "Sekundäre UI-Farbe"
+    },
+    "danger": {
+      "value": "#ef4444",
+      "type": "color",
+      "description": "Gefahren-/Fehler-Farbe"
+    },
+    "success": {
+      "value": "#22c55e",
+      "type": "color",
+      "description": "Erfolgs-Farbe"
+    },
+    "border": {
+      "value": "#475569",
+      "type": "color",
+      "description": "Rahmenfarbe"
+    }
+  },
+  "spacing": {
+    "xs": {
+      "value": "4px",
+      "type": "spacing",
+      "description": "Extra kleiner Abstand"
+    },
+    "sm": {
+      "value": "8px",
+      "type": "spacing",
+      "description": "Kleiner Abstand"
+    },
+    "md": {
+      "value": "16px",
+      "type": "spacing",
+      "description": "Mittlerer Abstand"
+    },
+    "lg": {
+      "value": "24px",
+      "type": "spacing",
+      "description": "Großer Abstand"
+    },
+    "xl": {
+      "value": "32px",
+      "type": "spacing",
+      "description": "Extra großer Abstand"
+    },
+    "2xl": {
+      "value": "48px",
+      "type": "spacing",
+      "description": "Doppelt großer Abstand"
+    }
+  },
+  "borderRadius": {
+    "sm": {
+      "value": "6px",
+      "type": "borderRadius",
+      "description": "Kleiner Radius"
+    },
+    "md": {
+      "value": "12px",
+      "type": "borderRadius",
+      "description": "Mittlerer Radius"
+    },
+    "lg": {
+      "value": "16px",
+      "type": "borderRadius",
+      "description": "Großer Radius"
+    },
+    "xl": {
+      "value": "24px",
+      "type": "borderRadius",
+      "description": "Extra großer Radius"
+    }
+  },
+  "typography": {
+    "fontFamily": {
+      "value": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif",
+      "type": "fontFamily",
+      "description": "System-Fontstack"
+    },
+    "fontSize-xs": {
+      "value": "12px",
+      "type": "fontSize",
+      "description": "Extra kleine Schrift"
+    },
+    "fontSize-sm": {
+      "value": "14px",
+      "type": "fontSize",
+      "description": "Kleine Schrift"
+    },
+    "fontSize-md": {
+      "value": "16px",
+      "type": "fontSize",
+      "description": "Mittlere Schrift"
+    },
+    "fontSize-lg": {
+      "value": "18px",
+      "type": "fontSize",
+      "description": "Große Schrift"
+    },
+    "fontSize-xl": {
+      "value": "24px",
+      "type": "fontSize",
+      "description": "Extra große Schrift"
+    },
+    "fontSize-2xl": {
+      "value": "32px",
+      "type": "fontSize",
+      "description": "Doppelt große Schrift"
+    },
+    "fontSize-3xl": {
+      "value": "48px",
+      "type": "fontSize",
+      "description": "Dreifach große Schrift"
+    },
+    "fontWeight-normal": {
+      "value": "400",
+      "type": "fontWeight",
+      "description": "Normale Schriftstärke"
+    },
+    "fontWeight-medium": {
+      "value": "500",
+      "type": "fontWeight",
+      "description": "Mittlere Schriftstärke"
+    },
+    "fontWeight-bold": {
+      "value": "700",
+      "type": "fontWeight",
+      "description": "Fette Schrift"
+    }
+  },
+  "shadow": {
+    "sm": {
+      "value": "0 1px 2px rgba(0, 0, 0, 0.3)",
+      "type": "shadow",
+      "description": "Kleiner Schatten"
+    },
+    "md": {
+      "value": "0 4px 6px rgba(0, 0, 0, 0.4)",
+      "type": "shadow",
+      "description": "Mittlerer Schatten"
+    },
+    "lg": {
+      "value": "0 10px 15px rgba(0, 0, 0, 0.5)",
+      "type": "shadow",
+      "description": "Großer Schatten"
+    },
+    "xl": {
+      "value": "0 20px 25px rgba(0, 0, 0, 0.6)",
+      "type": "shadow",
+      "description": "Extra großer Schatten"
+    }
+  }
+}

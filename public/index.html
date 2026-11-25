@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Testwurm – Live-Labor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header mit Status-Banner -->
+    <header class="header">
+      <h1 class="header-title">Testwurm</h1>
+      <div id="status-banner" class="status-banner status-ready">Bereit</div>
+    </header>
+
+    <!-- Fehler-Banner (versteckt) -->
+    <div id="error-banner" class="error-banner hidden">
+      <span id="error-banner-text">Fehler abgefangen – Oberfläche bleibt bedienbar</span>
+    </div>
+
+    <!-- Hauptinhalt: 3 Spalten -->
+    <main class="main-content">
+      <!-- Linke Spalte: Steuerung -->
+      <aside class="panel panel-left">
+        <h2 class="panel-title">Steuerung</h2>
+        
+        <!-- Button-Gruppe -->
+        <div class="button-group">
+          <button id="btn-start" class="btn btn-primary">Start</button>
+          <button id="btn-pause" class="btn btn-secondary" disabled>Pause</button>
+          <button id="btn-step" class="btn btn-secondary">Einzelschritt</button>
+          <button id="btn-reset" class="btn btn-danger">Reset Demo</button>
+        </div>
+
+        <!-- Szenario-Auswahl -->
+        <h3 class="section-title">Szenario wählen</h3>
+        <div class="scenario-cards">
+          <div class="scenario-card" data-scenario="happy-path">
+            <div class="scenario-name">Happy Path</div>
+            <div class="scenario-desc">Alle Tests bestehen, Wurm läuft durch</div>
+          </div>
+          <div class="scenario-card" data-scenario="error-recovery">
+            <div class="scenario-name">Fehler & Recovery</div>
+            <div class="scenario-desc">Fehler wird erkannt und behoben</div>
+          </div>
+          <div class="scenario-card" data-scenario="full-traversal">
+            <div class="scenario-name">Full Traversal</div>
+            <div class="scenario-desc">Vollständige Traversierung</div>
+          </div>
+        </div>
+
+        <!-- Tab-Toggle -->
+        <div class="tab-toggle">
+          <button id="tab-simulation" class="tab-btn active">Live-Labor</button>
+          <button id="tab-architecture" class="tab-btn">Architektur</button>
+        </div>
+      </aside>
+
+      <!-- Mittlere Spalte: SVG-Graph -->
+      <section class="panel panel-center">
+        <div id="graph-container" class="graph-container">
+          <svg id="graph-svg" class="graph-svg" viewBox="0 0 800 600">
+            <!-- Dynamisch gefüllt -->
+          </svg>
+        </div>
+        <!-- Legende -->
+        <div class="legend">
+          <div class="legend-item"><span class="legend-dot dot-pending"></span> Ausstehend</div>
+          <div class="legend-item"><span class="legend-dot dot-active"></span> Aktiv</div>
+          <div class="legend-item"><span class="legend-dot dot-passed"></span> Bestanden</div>
+          <div class="legend-item"><span class="legend-dot dot-warning"></span> Warnung</div>
+          <div class="legend-item"><span class="legend-dot dot-failed"></span> Fehlgeschlagen</div>
+          <div class="legend-item"><span class="legend-dot dot-recovered"></span> Erholt</div>
+          <div class="legend-item"><span class="legend-dot dot-skipped"></span> Übersprungen</div>
+        </div>
+      </section>
+
+      <!-- Rechte Spalte: Kontext & Telemetrie -->
+      <aside class="panel panel-right">
+        <!-- Kontext-Modus -->
+        <div class="context-panel">
+          <h2 class="panel-title">Kontext-Modus</h2>
+          <div class="saved-pct-container">
+            <div id="saved-pct" class="saved-pct">0%</div>
+            <div class="saved-label">Ersparnis</div>
+          </div>
+          <div class="context-details">
+            <div class="context-row">
+              <span class="context-label">Raw Tokens:</span>
+              <span id="raw-tokens" class="context-value">0</span>
+            </div>
+            <div class="context-row">
+              <span class="context-label">Kept Tokens:</span>
+              <span id="kept-tokens" class="context-value">0</span>
+            </div>
+            <div class="context-row">
+              <span class="context-label">Summaries:</span>
+              <span id="summaries" class="context-value">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Telemetrie -->
+        <div class="telemetry-panel">
+          <h2 class="panel-title">Telemetrie</h2>
+          <div class="telemetry-grid">
+            <div class="telemetry-item">
+              <div id="nodes-visited" class="telemetry-value">0</div>
+              <div class="telemetry-label">Knoten besucht</div>
+            </div>
+            <div class="telemetry-item">
+              <div id="checks-run" class="telemetry-value">0</div>
+              <div class="telemetry-label">Prüfungen</div>
+            </div>
+            <div class="telemetry-item">
+              <div id="errors-caught" class="telemetry-value">0</div>
+              <div class="telemetry-label">Fehler</div>
+            </div>
+            <div class="telemetry-item">
+              <div id="recoveries" class="telemetry-value">0</div>
+              <div class="telemetry-label">Erholungen</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Live-Log -->
+    <section class="log-section">
+      <h2 class="panel-title">Live-Log</h2>
+      <div id="log-container" class="log-container">
+        <!-- Dynamisch gefüllt -->
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
