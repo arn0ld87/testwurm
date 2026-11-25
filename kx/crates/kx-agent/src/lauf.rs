@@ -79,9 +79,23 @@ impl Umgebung for System {
         }
         #[cfg(unix)]
         {
-            kx_posix::install_systemd_service(invocation)
-                .await
-                .map_err(|e| e.to_string())
+            match kx_posix::install_systemd_service(invocation).await {
+                Ok(()) => Ok(()),
+                Err(systemd_fehler) => {
+                    // Kein systemd (Container, minimales Image): Cron ist der
+                    // zweite Weg. Erst wenn beide scheitern, ist die Persistenz
+                    // fehlgeschlagen — ein @reboot-Job überlebt den Neustart
+                    // genauso wie ein Timer.
+                    warn!(
+                        "systemd-Persistenz nicht möglich ({systemd_fehler}) — weiche auf Cron aus"
+                    );
+                    kx_posix::install_cron_service(invocation)
+                        .await
+                        .map_err(|cron_fehler| {
+                            format!("systemd: {systemd_fehler}; cron: {cron_fehler}")
+                        })
+                }
+            }
         }
     }
 }

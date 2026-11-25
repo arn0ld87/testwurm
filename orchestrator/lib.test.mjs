@@ -60,7 +60,7 @@ test('Happy Path: registrierter Agent + Beute + kompromittiertes Ziel → grüne
   const byId = Object.fromEntries(s.nodes.map((n) => [n.id, n.status]));
   assert.equal(byId.register, 'passed');
   assert.equal(byId.loot, 'passed');
-  assert.equal(byId.persist, 'warning'); // ehrlich: kein systemd im Container
+  assert.equal(byId.persist, 'warning'); // eine fehlgeschlagene Persistenz ist ein Warning, kein Erfolg
   assert.equal(byId.t1, 'passed');
   assert.equal(byId.t2, 'skipped');
   assert.equal(byId.report, 'passed');

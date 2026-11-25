@@ -10,7 +10,8 @@ und die Persistenz (`persist.rs`).
 Die Extraktionsfunktionen lesen Passwort-Hashes aus `/etc/shadow`, SSH-Private-Keys aus
 `$HOME/.ssh` und AWS-Credentials aus `$HOME/.aws/credentials`. Die Persistenzfunktionen
 installieren einen systemd-Systemdienst mit Timer unter `/etc/systemd/system/` oder einen
-Cron-Eintrag über `crontab`. Jede öffentliche POSIX-Funktion existiert doppelt: eine
+Cron-Eintrag über `crontab`. Der Agent versucht zuerst systemd und fällt bei einem
+Fehler auf `install_cron_service` zurück (`@reboot`-Zeile, dieselbe Environment-Datei). Jede öffentliche POSIX-Funktion existiert doppelt: eine
 `#[cfg(unix)]`-Variante mit echter Logik und eine `#[cfg(not(unix))]`-Variante als Stub, damit
 der Crate auf Nicht-Unix-Zielplattformen kompiliert.
 
@@ -37,6 +38,8 @@ in keiner Datei dieses Verzeichnisses importiert; nachweislich verwendet werden 
 - `pub fn systemd_env_file_path(service_name: &str) -> PathBuf` [persist.rs:systemd_env_file_path]
 - `pub const ENV_DIR: &str = "/etc/kx"` [persist.rs:ENV_DIR]
 - `pub async fn write_cron_persistence(minute: i32, command: &str) -> Result<(), PosixError>` [persist.rs:write_cron_persistence]
+- `pub fn cron_command(inv: &Invocation) -> String` [persist.rs:cron_command] — Crontab-Befehl: lädt die Environment-Datei (`set -a; . …; set +a`), `exec` des Binaries, `${NAME}`-Platzhalter bleiben für die Shell; `%` wird als `\%` escaped. Kein Variablenwert steht im Befehl.
+- `pub async fn install_cron_service(inv: &Invocation) -> Result<(), PosixError>` [persist.rs:install_cron_service] — schreibt die Environment-Datei (0600, Verzeichnis 0700) und trägt `cron_command` als `@reboot`-Zeile ein; der zweite Persistenz-Weg ohne systemd
 
 ## Invariants
 

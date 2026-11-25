@@ -4,7 +4,7 @@
 # Basis ubuntu:24.04: das Host-Binary braucht glibc >= 2.39 (bookworm: 2.36).
 FROM ubuntu:24.04
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends sshpass openssh-client \
+    && apt-get install -y --no-install-recommends sshpass openssh-client cron \
     && rm -rf /var/lib/apt/lists/*
 # Demo-Beute, nur in diesem Container: ein echtes Wegwerf-Schlüsselpaar,
 # eine Beispiel-AWS-Datei (RFC-Beispielwerte) und ein Root-Passwort,

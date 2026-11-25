@@ -48,7 +48,7 @@ export const NODE_DEFS = [
   { id: 'agent', label: 'patient0 · Agent', kind: 'module', x: 0, y: 1, detail: 'Der Wurm startet im Labor-Container patient0 (172.31.99.10).' },
   { id: 'register', label: 'C2-Registrierung', kind: 'module', x: 1, y: 1, detail: 'POST /api/register – der Agent meldet sich beim C2-Server.' },
   { id: 'loot', label: 'Lokale Beute', kind: 'module', x: 2, y: 0, detail: 'Extraktion von /etc/shadow, SSH-Keys und AWS-Credentials – nur im Container.' },
-  { id: 'persist', label: 'Persistenz', kind: 'module', x: 2, y: 2, detail: 'systemd-Unit + Timer. Im Container ohne systemd wird der Fehler sauber abgefangen.' },
+  { id: 'persist', label: 'Persistenz', kind: 'module', x: 2, y: 2, detail: 'systemd-Unit + Timer; ohne systemd (Container) fällt der Agent auf einen @reboot-Cron-Job zurück.' },
   { id: 'scan', label: 'Netz-Scan', kind: 'module', x: 3, y: 1, detail: 'TCP-Connect-Scan der Zielhosts über die 12 Standarddienste.' },
   { id: 't1', label: 'target1 · SSH', kind: 'target', x: 4, y: 0, detail: 'Labor-Ziel 172.31.99.11 – SSH mit Default-Credentials (root:root).' },
   { id: 't2', label: 'target2 · SSH', kind: 'target', x: 4, y: 2, detail: 'Labor-Ziel 172.31.99.12 – SSH mit starkem Passwort.' },

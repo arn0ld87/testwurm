@@ -37,8 +37,12 @@
 # GitGuardian meldet sie als "Username Password" — False Positive.
 # Echte Geheimnisse (privater Server-Key, Bearer-Token) entstehen zur
 # Laufzeit unter lab/run/ und sind gitignored; sie stehen nie im Repo.
-ignore:
-  paths:
+#
+# Format version: 2 — das alte `ignore: paths:`-Schema (v1) liest der
+# aktuelle Scanner nicht mehr; die Ignores waren damit wirkungslos.
+version: 2
+secret:
+  ignored-paths:
     - "kx/crates/kx-core/src/c2.rs"
     - "kx/crates/kx-core/src/secretbox.rs"
     - "kx/crates/kx-server/src/e2e_test.rs"

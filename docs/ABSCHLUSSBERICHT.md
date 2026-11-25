@@ -57,7 +57,7 @@ Vollständig mit Sprechtext in `DEMO_SCRIPT.md`. Kurzfassung:
 | Zeit | Klick | Was passiert |
 |---|---|---|
 | 0–10 s | – | GUI zeigen: Banner „Bereit", Steuerung links, Live-Graph Mitte, Kontext-Panel rechts |
-| 10–35 s | Karte „Happy Path" → **Start** | Echter Wurm: Registrierung → Beute (22 Objekte) → Scan → target1 per root:root → Beute-Meldung. Knoten werden grün, Persistenz ehrlich gelb (kein systemd im Container), savedPct steigt |
+| 10–35 s | Karte „Happy Path" → **Start** | Echter Wurm: Registrierung → Beute (22 Objekte) → Scan → target1 per root:root → Beute-Meldung. Knoten werden grün; die Persistenz läuft im Container ohne systemd über den @reboot-Cron-Job (Fallback). savedPct steigt |
 | 35–60 s | **Reset Demo** → „Fehler & Recovery" → **Start** | target2 mit starkem Passwort: Zugriff scheitert sauber (gelb), Operator-Task wird trotzdem ausgeführt (grün), Telemetrie zählt Fehler + Erholung |
 | 60–80 s | Tab **Architektur** | 9 Crates, 11 echte Abhängigkeitskanten aus Cargo-Manifesten |
 | 80–90 s | Tab **Live-Labor** → **Reset Demo** | Container weg, alles wieder „Bereit". Fazit |

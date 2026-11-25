@@ -285,10 +285,69 @@ pub async fn write_cron_persistence(minute: i32, command: &str) -> Result<(), Po
     Ok(())
 }
 
+/// Escaped einen Wert für einfache Anführungszeichen in der Shell.
+#[cfg(unix)]
+fn shell_single_quote(wert: &str) -> String {
+    format!("'{}'", wert.replace('\'', "'\\''"))
+}
+
+/// Baut den Crontab-Befehl für eine Invocation.
+///
+/// Die Werte (das Token!) stehen in der Environment-Datei, nicht in der
+/// Crontab — dieselbe Trennung wie bei der systemd-Unit. Der Befehl lädt die
+/// Datei, exportiert die Variablen (`set -a`) und startet das Binary; die
+/// `${NAME}`-Platzhalter in den Argumenten löst die Shell daraus auf.
+///
+/// `%` wird als `\%` escaped: cron behandelt ein nacktes Prozentzeichen als
+/// Zeilenumbruch und würde den Befehl dort abschneiden.
+#[cfg(unix)]
+pub fn cron_command(inv: &Invocation) -> String {
+    let env_path = systemd_env_file_path(&inv.name);
+    let mut inner = format!(
+        "set -a; . {}; set +a; exec {}",
+        shell_single_quote(&env_path.to_string_lossy()),
+        shell_single_quote(&inv.binary_path.to_string_lossy())
+    );
+    for arg in &inv.args {
+        // Doppelte Anführungszeichen: die Shell expandiert ${NAME}, aber
+        // ein Wert mit Leerzeichen bleibt ein Argument.
+        inner.push_str(" \"");
+        inner.push_str(arg);
+        inner.push('"');
+    }
+    format!("/bin/sh -c {}", shell_single_quote(&inner)).replace('%', "\\%")
+}
+
+/// Installiert die Persistenz als `@reboot`-Cron-Job — der zweite Weg,
+/// wenn kein systemd läuft (Container, minimales Image).
+///
+/// Schreibt dieselbe Environment-Datei wie der systemd-Dienst (0600 in
+/// einem Verzeichnis mit 0700) und trägt [`cron_command`] als `@reboot`-Zeile
+/// in die Crontab ein. Die Werte der Variablen stehen nicht in der Crontab.
+#[cfg(unix)]
+pub async fn install_cron_service(inv: &Invocation) -> Result<(), PosixError> {
+    let env_dir = Path::new(ENV_DIR);
+    std::fs::create_dir_all(env_dir).map_err(|e| PosixError::Cron(e.to_string()))?;
+    set_mode(env_dir, 0o700)?;
+
+    let env_path = systemd_env_file_path(&inv.name);
+    write_if_changed(&env_path, &systemd_env_content(inv))?;
+    set_mode(&env_path, 0o600)?;
+
+    write_cron_persistence(-1, &cron_command(inv)).await
+}
+
 // Nicht-Unix-Plattformen: Fehler-Implementierungen.
 #[cfg(not(unix))]
 pub async fn install_systemd_service(_inv: &Invocation) -> Result<(), PosixError> {
     Err(PosixError::Systemd(
+        "nicht auf dieser Plattform verfügbar".into(),
+    ))
+}
+
+#[cfg(not(unix))]
+pub async fn install_cron_service(_inv: &Invocation) -> Result<(), PosixError> {
+    Err(PosixError::Cron(
         "nicht auf dieser Plattform verfügbar".into(),
     ))
 }
@@ -470,6 +529,53 @@ mod tests {
             unit.contains("WantedBy=kx-agent.timer"),
             "die Service-Unit hängt nicht am Timer: {unit}"
         );
+    }
+
+    /// Der Cron-Befehl lädt die Environment-Datei und kennt das Token nicht.
+    ///
+    /// Die Werte gehören in die Datei mit 0600, nicht in die Crontab —
+    /// dieselbe Trennung wie bei der systemd-Unit.
+    #[cfg(unix)]
+    #[test]
+    fn der_cron_befehl_laedt_die_env_datei_und_traegt_kein_token() {
+        let cmd = cron_command(&sample_invocation());
+        assert!(cmd.starts_with("/bin/sh -c '"), "Shell-Aufruf: {cmd}");
+        // Die inneren einfachen Quotes sind escaped ('\'') — die Shell
+        // entpackt sie; der Pfad selbst muss unverändert vorkommen.
+        assert!(cmd.contains("set -a"), "Export an: {cmd}");
+        assert!(cmd.contains("/etc/kx/kx-agent.env"), "Env-Datei: {cmd}");
+        assert!(cmd.contains("set +a"), "Export aus: {cmd}");
+        assert!(cmd.contains("exec"), "exec: {cmd}");
+        assert!(cmd.contains("/usr/local/bin/kx-agent"), "Binary: {cmd}");
+        assert!(
+            cmd.contains("\"${KX_C2_TOKEN}\""),
+            "Platzhalter bleibt: {cmd}"
+        );
+        assert!(
+            !cmd.contains("geheim-token"),
+            "kein Wert in der Crontab: {cmd}"
+        );
+    }
+
+    /// Ein Prozentzeichen wird escaped: cron schneidet den Befehl sonst ab.
+    #[cfg(unix)]
+    #[test]
+    fn ein_prozentzeichen_im_cron_befehl_wird_escaped() {
+        let mut inv = sample_invocation();
+        inv.args.push("100%".to_string());
+        let cmd = cron_command(&inv);
+        assert!(cmd.contains("100\\%"), "escaped: {cmd}");
+        assert!(!cmd.contains("100%\""), "kein nacktes Prozent: {cmd}");
+    }
+
+    /// Ein einfaches Anführungszeichen im Pfad bricht die Shell-Quoting nicht.
+    #[cfg(unix)]
+    #[test]
+    fn einfache_anfuehrungszeichen_im_pfad_werden_escaped() {
+        let mut inv = sample_invocation();
+        inv.binary_path = PathBuf::from("/opt/kx'agent/kx-agent");
+        let cmd = cron_command(&inv);
+        assert!(cmd.contains("'\\''"), "Quote-Escape: {cmd}");
     }
 
     /// Eine Datei wird nur geschrieben, wenn sich ihr Inhalt ändert.
